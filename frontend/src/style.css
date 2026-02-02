@@ -1,0 +1,618 @@
+:root {
+  /* Typography */
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Theme tokens - light (default) */
+  --bg-gradient: radial-gradient(circle at top left, #e0f2fe, #f9fafb 40%, #f5f3ff);
+  --color-text-main: #0f172a;
+  --color-text-muted: #6b7280;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f9fafb;
+  --color-border-subtle: rgba(148, 163, 184, 0.4);
+  --shadow-soft: 0 10px 24px rgba(15, 23, 42, 0.18);
+  --shadow-strong: 0 18px 40px rgba(15, 23, 42, 0.24);
+
+  /* Primary & accent (override via JS for custom palette) */
+  --color-primary: #2563eb;
+  --color-primary-soft: #dbeafe;
+  --color-primary-strong: #1d4ed8;
+  --color-accent: #4f46e5;
+  --color-accent-soft: #ede9fe;
+
+  /* Status colors */
+  --error: #dc2626;
+  --warning: #f59e0b;
+  --success: #10b981;
+  --text-secondary: #6b7280;
+
+  /* Topbar */
+  --color-topbar-bg: rgba(15, 23, 42, 0.9);
+  --color-topbar-text: #e5e7eb;
+}
+
+:root[data-theme='dark'] {
+  --bg-gradient: radial-gradient(circle at top left, #020617, #020617 40%, #020617);
+  --color-text-main: #e5e7eb;
+  --color-text-muted: #9ca3af;
+  --color-surface: #020617;
+  --color-surface-soft: #020617;
+  --color-border-subtle: rgba(51, 65, 85, 0.9);
+  --shadow-soft: 0 16px 40px rgba(0, 0, 0, 0.7);
+  --shadow-strong: 0 24px 60px rgba(0, 0, 0, 0.9);
+
+  --color-topbar-bg: rgba(15, 23, 42, 0.98);
+  --color-topbar-text: #e5e7eb;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--color-text-main);
+  background: var(--bg-gradient);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem;
+  background: var(--color-topbar-bg);
+  color: var(--color-topbar-text);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.4);
+}
+
+.topbar-left .logo-text {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  font-size: 1rem;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.topbar-theme {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.theme-toggle {
+  border-radius: 999px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.7);
+  color: #e5e7eb;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.7);
+}
+
+.theme-toggle:hover {
+  background: rgba(30, 64, 175, 0.95);
+}
+
+.theme-select {
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.7);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.user-pill {
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  font-size: 0.85rem;
+}
+
+.main {
+  padding: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.login-layout {
+  min-height: calc(100vh - 56px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 1.5rem;
+  padding: 2rem 2.25rem 2.5rem;
+  box-shadow:
+    0 22px 45px rgba(15, 23, 42, 0.22),
+    0 0 0 1px rgba(148, 163, 184, 0.35);
+  backdrop-filter: blur(18px);
+}
+
+.login-card h1 {
+  margin: 0 0 0.3rem;
+  font-size: 1.6rem;
+  color: #0f172a;
+}
+
+.subtitle {
+  margin: 0 0 1.5rem;
+  font-size: 0.95rem;
+  color: #6b7280;
+}
+
+.role-selector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1.75rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: #e5e7eb;
+  transition: background 0.2s ease;
+}
+
+:root[data-theme='dark'] .role-selector {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+}
+
+.role-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.9rem;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.05s ease;
+}
+
+:root[data-theme='dark'] .role-btn {
+  color: #cbd5e1;
+}
+
+.role-btn:hover {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+:root[data-theme='dark'] .role-btn:hover {
+  background: rgba(51, 65, 85, 0.6);
+  color: #f1f5f9;
+}
+
+.role-btn.active {
+  background: #111827;
+  color: #f9fafb;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.4);
+  transform: translateY(-1px);
+}
+
+:root[data-theme='dark'] .role-btn.active {
+  background: linear-gradient(
+    135deg,
+    var(--color-primary),
+    var(--color-accent)
+  );
+  color: #f9fafb;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.5);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card .form {
+  gap: 0.8rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.field span {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+input {
+  border-radius: 0.7rem;
+  border: 1px solid #d1d5db;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+  background: #f9fafb;
+}
+
+input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 60%, transparent);
+  background: #ffffff;
+}
+
+select,
+textarea {
+  border-radius: 0.7rem;
+  border: 1px solid #d1d5db;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  background: #f9fafb;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+select:focus,
+textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 60%, transparent);
+  background: #ffffff;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #6b7280 50%),
+    linear-gradient(135deg, #6b7280 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 2rem;
+}
+
+button {
+  border-radius: 0.75rem;
+  border: none;
+  padding: 0.75rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.05s ease,
+    box-shadow 0.15s ease;
+  background: linear-gradient(
+    135deg,
+    var(--color-primary),
+    var(--color-accent)
+  );
+  color: #f9fafb;
+  box-shadow: 0 14px 32px rgba(37, 99, 235, 0.5);
+}
+
+button:hover {
+  background: linear-gradient(
+    135deg,
+    var(--color-primary-strong),
+    var(--color-accent)
+  );
+  transform: translateY(-1px);
+}
+
+button:active {
+  transform: translateY(0);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.4);
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: default;
+  box-shadow: none;
+}
+
+.error {
+  margin-top: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.7rem;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.hint {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.hint code {
+  background: #e5e7eb;
+  border-radius: 999px;
+  padding: 0.15rem 0.45rem;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  width: 100%;
+  padding-top: 1rem;
+}
+
+.panel h2 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  font-size: 1.7rem;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+  background: linear-gradient(120deg, var(--color-primary), var(--color-accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.stat-card {
+  padding: 0.85rem 1rem;
+  border-radius: 1rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-soft);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.stat-clickable {
+  cursor: pointer;
+}
+
+.stat-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-strong);
+  border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.26);
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.2rem;
+}
+
+.stat-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--color-text-main);
+}
+
+.card {
+  padding: 1rem 1.25rem;
+  border-radius: 1rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-soft);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+
+:root[data-theme='dark'] .card {
+  background: radial-gradient(
+    circle at top left,
+    rgba(15, 23, 42, 0.96),
+    rgba(15, 23, 42, 0.99)
+  );
+  border-color: rgba(30, 64, 175, 0.4);
+  backdrop-filter: blur(18px);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-strong);
+  border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+  background: var(--color-surface);
+}
+
+/* Daha rafine form kartları (örn. hedef oluşturma) */
+.card.card-form {
+  max-width: 420px;
+  width: 100%;
+}
+
+.card.card-form .form {
+  gap: 0.75rem;
+}
+
+.card.card-form .field span {
+  font-size: 0.85rem;
+}
+
+.card.card-form input,
+.card.card-form select,
+.card.card-form textarea {
+  padding: 0.55rem 0.8rem;
+  font-size: 0.9rem;
+  border-radius: 0.6rem;
+}
+
+.card.card-form button[type='submit'] {
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.card h3 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.card ul {
+  padding-left: 1.1rem;
+  margin: 0.5rem 0 0;
+}
+
+.card li {
+  font-size: 0.9rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Tabs Navigation */
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 2px solid var(--color-border-subtle);
+  margin-bottom: 2rem;
+  overflow-x: auto;
+}
+
+.tabs button {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.tabs button:hover {
+  color: var(--color-text-main);
+  background: var(--color-surface-soft);
+}
+
+.tabs button.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.panel-container {
+  width: 100%;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.badge-success {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.badge-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge-error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    padding-inline: 1rem;
+  }
+
+  .main {
+    padding-inline: 1rem;
+  }
+
+  .login-card {
+    padding-inline: 1.5rem;
+  }
+
+  .role-selector {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(120px, 1fr);
+    overflow-x: auto;
+    padding: 0.25rem;
+  }
+
+  .role-btn {
+    white-space: nowrap;
+  }
+
+  .tabs {
+    gap: 0.25rem;
+  }
+
+  .tabs button {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+  }
+}
