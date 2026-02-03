@@ -268,6 +268,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ role }) => {
                   textAlign: 'center',
                   fontWeight: 'bold',
                   background: 'var(--color-bg-secondary, #f5f5f5)',
+                  color: '#1e293b',
                 }}
               >
                 {day}
@@ -292,12 +293,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ role }) => {
                         ? 'var(--color-bg, white)'
                         : 'var(--color-bg-muted, #f9f9f9)',
                     opacity: isCurrentMonth ? 1 : 0.5,
+                    color: '#1e293b',
                   }}
                 >
                   <div
                     style={{
                       fontWeight: isToday ? 'bold' : 'normal',
                       marginBottom: '0.25rem',
+                      color: '#1e293b',
                     }}
                   >
                     {date.getDate()}

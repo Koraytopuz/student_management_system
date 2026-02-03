@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticate, AuthenticatedRequest } from './auth';
 import {
+  allUsers,
   assignments,
   contents,
   goals,
@@ -474,15 +475,24 @@ router.get(
   },
 );
 
-// Mesajlar
+// Mesajlar (gönderen ve alıcı isimleriyle)
 router.get(
   '/messages',
   authenticate('student'),
   (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const userMessages = messages.filter(
-      (m) => m.fromUserId === userId || m.toUserId === userId,
-    );
+    const users = allUsers();
+    const userMessages = messages
+      .filter((m) => m.fromUserId === userId || m.toUserId === userId)
+      .map((m) => {
+        const fromUser = users.find((u) => u.id === m.fromUserId);
+        const toUser = users.find((u) => u.id === m.toUserId);
+        return {
+          ...m,
+          fromUserName: fromUser?.name ?? m.fromUserId,
+          toUserName: toUser?.name ?? m.toUserId,
+        };
+      });
     return res.json(userMessages);
   },
 );

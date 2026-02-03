@@ -20,6 +20,18 @@ export interface LoginResponse {
 }
 
 const API_BASE_URL = 'http://localhost:4000';
+const AUTH_STORAGE_KEY = 'student_mgmt_auth';
+
+function clearAuthAndRedirectToLogin() {
+  try {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+  if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    window.location.href = '/login';
+  }
+}
 
 export async function apiRequest<T>(
   path: string,
@@ -41,6 +53,9 @@ export async function apiRequest<T>(
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
+    if (res.status === 401 && !path.includes('/auth/login')) {
+      clearAuthAndRedirectToLogin();
+    }
     throw new Error(errorBody.error ?? `API error: ${res.status}`);
   }
 

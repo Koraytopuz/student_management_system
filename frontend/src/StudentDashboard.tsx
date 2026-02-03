@@ -43,6 +43,8 @@ interface Message {
   toUserId: string;
   text: string;
   createdAt: string;
+  fromUserName?: string;
+  toUserName?: string;
 }
 
 interface Meeting {
@@ -1429,7 +1431,7 @@ export const StudentDashboard: React.FC = () => {
             <ul>
               {messages.map((m) => (
                 <li key={m.id}>
-                  <strong>{m.fromUserId}</strong> → {m.toUserId} : {m.text}
+                  <strong>{m.fromUserName ?? m.fromUserId}</strong> → {m.toUserName ?? m.toUserId} : {m.text}
                 </li>
               ))}
               {messages.length === 0 && <p>Henüz mesaj yok.</p>}

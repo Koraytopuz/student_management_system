@@ -3,6 +3,13 @@ import { login, type UserRole } from './api';
 import { useAuth } from './AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+const DEMO_EMAILS: Record<UserRole, string> = {
+  teacher: 'ayse.teacher@example.com',
+  student: 'ali.student@example.com',
+  parent: 'mehmet.parent@example.com',
+  admin: 'admin@example.com',
+};
+
 const roles: { value: UserRole; label: string }[] = [
   { value: 'teacher', label: 'Öğretmen' },
   { value: 'student', label: 'Öğrenci' },
@@ -11,13 +18,19 @@ const roles: { value: UserRole; label: string }[] = [
 ];
 
 export const LoginPage: React.FC = () => {
-  const [selectedRole, setSelectedRole] = useState<UserRole>('student');
-  const [email, setEmail] = useState('');
+  const [selectedRole, setSelectedRole] = useState<UserRole>('teacher');
+  const [email, setEmail] = useState(DEMO_EMAILS.teacher);
   const [password, setPassword] = useState('password123');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { loginSuccess } = useAuth();
   const navigate = useNavigate();
+
+  const handleRoleChange = (role: UserRole) => {
+    setSelectedRole(role);
+    setEmail(DEMO_EMAILS[role]);
+    setError(null);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,7 +66,7 @@ export const LoginPage: React.FC = () => {
               className={
                 selectedRole === role.value ? 'role-btn active' : 'role-btn'
               }
-              onClick={() => setSelectedRole(role.value)}
+              onClick={() => handleRoleChange(role.value)}
             >
               {role.label}
             </button>
@@ -67,7 +80,7 @@ export const LoginPage: React.FC = () => {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="demo e-posta adresi"
+              placeholder={DEMO_EMAILS[selectedRole]}
               required
             />
           </label>

@@ -62,6 +62,8 @@ interface Message {
   toUserId: string;
   text: string;
   createdAt: string;
+  fromUserName?: string;
+  toUserName?: string;
 }
 
 interface Meeting {
@@ -142,8 +144,8 @@ export const TeacherDashboard: React.FC = () => {
       .then(setSummary)
       .catch((e) => setError(e.message));
 
-    // Öğretmenin tüm yardımcı verilerini paralel çekelim
-    Promise.all([
+    // Öğretmenin tüm yardımcı verilerini paralel çekelim (bir istek hata verse bile diğerleri yüklensin)
+    const requests = [
       apiRequest<ContentItem[]>('/teacher/contents', {}, token),
       apiRequest<TestItem[]>('/teacher/tests', {}, token),
       apiRequest<Assignment[]>('/teacher/assignments', {}, token),
@@ -151,18 +153,36 @@ export const TeacherDashboard: React.FC = () => {
       apiRequest<Message[]>('/teacher/messages', {}, token),
       apiRequest<Meeting[]>('/teacher/meetings', {}, token),
       apiRequest<{ id: string; name: string; email: string }[]>('/teacher/parents', {}, token),
-    ])
-      .then(([c, t, a, s, m, mt, p]) => {
-        setContents(c);
-        setTests(t);
-        setAssignments(a);
-        setStudents(s);
-        setMessages(m);
-        setMeetings(mt);
-        setParents(p);
-      })
-      .catch((e) => setError(e.message));
+    ] as const;
+    Promise.allSettled(requests).then((results) => {
+      const [c, t, a, s, m, mt, p] = results;
+      if (c.status === 'fulfilled') setContents(c.value);
+      else if (c.reason) setError((c.reason as Error)?.message ?? 'İçerikler yüklenemedi');
+      if (t.status === 'fulfilled') setTests(t.value);
+      if (a.status === 'fulfilled') setAssignments(a.value);
+      if (s.status === 'fulfilled') setStudents(s.value);
+      else if (s.reason) setError((s.reason as Error)?.message ?? 'Öğrenci listesi yüklenemedi');
+      if (m.status === 'fulfilled') setMessages(m.value);
+      if (mt.status === 'fulfilled') setMeetings(mt.value);
+      if (p.status === 'fulfilled') setParents(p.value);
+      else if (p.reason) setError((p.reason as Error)?.message ?? 'Veli listesi yüklenemedi');
+    });
   }, [token]);
+
+  // Mesajlar sekmesine girildiğinde öğrenci/veli listesi boşsa yeniden yükle
+  useEffect(() => {
+    if (!token || tab !== 'messages') return;
+    if (students.length === 0) {
+      apiRequest<Student[]>('/teacher/students', {}, token)
+        .then(setStudents)
+        .catch((e) => setError(e?.message ?? 'Öğrenci listesi yüklenemedi'));
+    }
+    if (parents.length === 0) {
+      apiRequest<{ id: string; name: string; email: string }[]>('/teacher/parents', {}, token)
+        .then(setParents)
+        .catch((e) => setError(e?.message ?? 'Veli listesi yüklenemedi'));
+    }
+  }, [token, tab]);
 
   async function refreshStudents() {
     if (!token) return;
@@ -707,7 +727,7 @@ export const TeacherDashboard: React.FC = () => {
                     }}
                   >
                     {students.length === 0 ? (
-                      <p style={{ margin: 0, color: 'var(--color-text-muted, #666)' }}>
+                      <p style={{ margin: 0, color: '#475569' }}>
                         Öğrenci bulunamadı.
                       </p>
                     ) : (
@@ -735,8 +755,8 @@ export const TeacherDashboard: React.FC = () => {
                                 lineHeight: '1.5',
                               }}
                             >
-                              <div style={{ fontWeight: '500' }}>{student.name}</div>
-                              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #666)', marginTop: '0.25rem' }}>
+                              <div style={{ fontWeight: '500', color: '#1e293b' }}>{student.name}</div>
+                              <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '0.25rem' }}>
                                 {student.email}
                               </div>
                             </button>
@@ -759,7 +779,7 @@ export const TeacherDashboard: React.FC = () => {
                     }}
                   >
                     {parents.length === 0 ? (
-                      <p style={{ margin: 0, color: 'var(--color-text-muted, #666)' }}>
+                      <p style={{ margin: 0, color: '#475569' }}>
                         Veli bulunamadı.
                       </p>
                     ) : (
@@ -787,8 +807,8 @@ export const TeacherDashboard: React.FC = () => {
                                 lineHeight: '1.5',
                               }}
                             >
-                              <div style={{ fontWeight: '500' }}>{parent.name}</div>
-                              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #666)', marginTop: '0.25rem' }}>
+                              <div style={{ fontWeight: '500', color: '#1e293b' }}>{parent.name}</div>
+                              <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '0.25rem' }}>
                                 {parent.email}
                               </div>
                             </button>
@@ -810,7 +830,7 @@ export const TeacherDashboard: React.FC = () => {
                       overflow: 'visible',
                     }}
                   >
-                    <div style={{ marginBottom: '0.25rem' }}>
+                    <div style={{ marginBottom: '0.25rem', color: '#1e293b' }}>
                       <strong>Seçilen:</strong>{' '}
                       {students.find((s) => s.id === newMessage.toUserId)?.name ||
                         parents.find((p) => p.id === newMessage.toUserId)?.name ||
@@ -818,7 +838,7 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                     {(students.find((s) => s.id === newMessage.toUserId)?.email ||
                       parents.find((p) => p.id === newMessage.toUserId)?.email) && (
-                      <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #666)' }}>
+                      <div style={{ fontSize: '0.8rem', color: '#475569' }}>
                         {students.find((s) => s.id === newMessage.toUserId)?.email ||
                           parents.find((p) => p.id === newMessage.toUserId)?.email}
                       </div>
@@ -862,7 +882,7 @@ export const TeacherDashboard: React.FC = () => {
             <ul>
               {messages.map((m) => (
                 <li key={m.id}>
-                  <strong>{m.fromUserId}</strong> → {m.toUserId} : {m.text}
+                  <strong>{m.fromUserName ?? m.fromUserId}</strong> → {m.toUserName ?? m.toUserId} : {m.text}
                 </li>
               ))}
               {messages.length === 0 && <p>Henüz mesaj yok.</p>}
