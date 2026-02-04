@@ -1,4 +1,5 @@
 import React from 'react';
+import { Moon, Sun } from 'lucide-react';
 import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { LoginPage } from './LoginPage';
@@ -6,7 +7,6 @@ import { TeacherDashboard } from './TeacherDashboard';
 import { StudentDashboard } from './StudentDashboard';
 import { ParentDashboard } from './ParentDashboard';
 import { AdminDashboard } from './AdminDashboard';
-import { NotificationCenter } from './NotificationCenter';
 
 const ProtectedRoute: React.FC<{
   children: React.ReactElement;
@@ -53,13 +53,13 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               type="button"
               className="theme-toggle"
               onClick={() => setIsDark((prev) => !prev)}
+              aria-label={isDark ? 'Açık tema' : 'Koyu tema'}
             >
-              {isDark ? '☀️ Light' : '🌙 Dark'}
+              {isDark ? <Sun size={16} /> : <Moon size={16} />}
             </button>
           </div>
           {user ? (
             <>
-              <NotificationCenter role={user.role} />
               <span className="user-pill">
                 {user.name} ({user.role})
               </span>

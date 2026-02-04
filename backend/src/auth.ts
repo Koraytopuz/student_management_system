@@ -2,22 +2,11 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { z } from 'zod';
-import { allUsers, teachers, students, parents } from './data';
+import { prisma } from './db';
 import { User, UserRole } from './types';
+import type { User as PrismaUser } from '@prisma/client';
 
-const JWT_SECRET = 'dev-student-management-secret';
-
-// Demo için basit şifreler
-const PLAIN_PASSWORD = 'password123';
-
-// Uygulama başlangıcında demo kullanıcıları için hash üretelim
-let passwordHash: string | null = null;
-
-async function ensurePasswordHash() {
-  if (!passwordHash) {
-    passwordHash = await bcrypt.hash(PLAIN_PASSWORD, 10);
-  }
-}
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-student-management-secret';
 
 export interface AuthenticatedRequest extends express.Request {
   user?: User;
@@ -29,9 +18,33 @@ export const loginSchema = z.object({
   role: z.enum(['teacher', 'student', 'parent', 'admin']),
 });
 
-export const loginHandler: express.RequestHandler = async (req, res) => {
-  await ensurePasswordHash();
+function prismaUserToApiUser(dbUser: PrismaUser, studentIds?: string[]): User {
+  const base = {
+    id: dbUser.id,
+    name: dbUser.name,
+    email: dbUser.email,
+    role: dbUser.role as UserRole,
+  };
+  switch (dbUser.role) {
+    case 'teacher':
+      return { ...base, role: 'teacher', subjectAreas: dbUser.subjectAreas };
+    case 'student':
+      return {
+        ...base,
+        role: 'student',
+        gradeLevel: dbUser.gradeLevel ?? '',
+        classId: dbUser.classId ?? '',
+      };
+    case 'parent':
+      return { ...base, role: 'parent', studentIds: studentIds ?? [] };
+    case 'admin':
+      return { ...base, role: 'admin' };
+    default:
+      return base as User;
+  }
+}
 
+export const loginHandler: express.RequestHandler = async (req, res) => {
   const parseResult = loginSchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({ error: 'Geçersiz giriş verisi', details: parseResult.error.flatten() });
@@ -39,15 +52,28 @@ export const loginHandler: express.RequestHandler = async (req, res) => {
 
   const { email, password, role } = parseResult.data;
 
-  const user = allUsers().find((u) => u.email === email && u.role === role);
-  if (!user) {
+  const dbUser = await prisma.user.findFirst({
+    where: { email, role },
+    include: {
+      parentStudents: role === 'parent' ? { select: { studentId: true } } : false,
+    },
+  });
+
+  if (!dbUser) {
     return res.status(401).json({ error: 'E-posta veya rol hatalı' });
   }
 
-  const ok = await bcrypt.compare(password, passwordHash!);
+  const ok = await bcrypt.compare(password, dbUser.passwordHash);
   if (!ok) {
     return res.status(401).json({ error: 'Şifre hatalı' });
   }
+
+  const studentIds =
+    dbUser.role === 'parent' && dbUser.parentStudents
+      ? dbUser.parentStudents.map((ps) => ps.studentId)
+      : undefined;
+
+  const user = prismaUserToApiUser(dbUser, studentIds);
 
   const token = jwt.sign(
     {
@@ -58,21 +84,22 @@ export const loginHandler: express.RequestHandler = async (req, res) => {
     { expiresIn: '8h' },
   );
 
-  return res.json({
+  const response: { token: string; user: User; demoInfo?: Record<string, string> } = {
     token,
     user,
-    demoInfo: {
-      password: PLAIN_PASSWORD,
-      exampleAdminEmail: 'admin@example.com',
-      exampleTeacherEmail: teachers[0]?.email,
-      exampleStudentEmail: students[0]?.email,
-      exampleParentEmail: parents[0]?.email,
-    },
-  });
+  };
+
+  if (process.env.NODE_ENV !== 'production') {
+    response.demoInfo = {
+      hint: 'Geliştirme modu - demo kullanıcılar için seed çalıştırın',
+    };
+  }
+
+  return res.json(response);
 };
 
 export function authenticate(requiredRole?: UserRole): express.RequestHandler {
-  return (req: AuthenticatedRequest, res, next) => {
+  return async (req: AuthenticatedRequest, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Yetkilendirme başlığı gerekli' });
@@ -82,20 +109,29 @@ export function authenticate(requiredRole?: UserRole): express.RequestHandler {
 
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as { sub: string; role: UserRole };
-      const user = allUsers().find((u) => u.id === decoded.sub && u.role === decoded.role);
-      if (!user) {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: decoded.sub },
+        include: {
+          parentStudents: decoded.role === 'parent' ? { select: { studentId: true } } : false,
+        },
+      });
+
+      if (!dbUser || dbUser.role !== decoded.role) {
         return res.status(401).json({ error: 'Kullanıcı bulunamadı' });
       }
 
-      if (requiredRole && user.role !== requiredRole) {
+      if (requiredRole && dbUser.role !== requiredRole) {
         return res.status(403).json({ error: 'Bu kaynağa erişim izniniz yok' });
       }
 
-      req.user = user;
+      const studentIds =
+        dbUser.role === 'parent' && dbUser.parentStudents
+          ? dbUser.parentStudents.map((ps) => ps.studentId)
+          : undefined;
+      req.user = prismaUserToApiUser(dbUser, studentIds);
       next();
     } catch {
       return res.status(401).json({ error: 'Geçersiz veya süresi dolmuş token' });
     }
   };
 }
-

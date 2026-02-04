@@ -1,206 +1,231 @@
 import express from 'express';
+import bcrypt from 'bcrypt';
 import { authenticate, AuthenticatedRequest } from './auth';
-import {
-  admins,
-  assignments,
-  parents,
-  students,
-  teachers,
-} from './data';
+import { prisma } from './db';
 import type { Parent, Student, Teacher } from './types';
+import { UserRole } from '@prisma/client';
 
 const router = express.Router();
 
-// Yönetici dashboard için özet (şimdilik sadece sayılar)
-router.get(
-  '/summary',
-  authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
-    return res.json({
-      teacherCount: teachers.length,
-      studentCount: students.length,
-      parentCount: parents.length,
-      assignmentCount: assignments.length,
-    });
-  },
-);
+function toTeacher(u: { id: string; name: string; email: string; subjectAreas: string[] }): Teacher {
+  return { id: u.id, name: u.name, email: u.email, role: 'teacher', subjectAreas: u.subjectAreas };
+}
 
-// --- Listeleme uçları ---
+function toStudent(u: {
+  id: string;
+  name: string;
+  email: string;
+  gradeLevel: string | null;
+  classId: string | null;
+}): Student {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: 'student',
+    gradeLevel: u.gradeLevel ?? '',
+    classId: u.classId ?? '',
+  };
+}
 
-router.get('/teachers', authenticate('admin'), (_req, res) => {
-  res.json(teachers);
+function toParent(
+  u: { id: string; name: string; email: string },
+  studentIds: string[],
+): Parent {
+  return { id: u.id, name: u.name, email: u.email, role: 'parent', studentIds };
+}
+
+// Yönetici dashboard için özet
+router.get('/summary', authenticate('admin'), async (_req, res) => {
+  const [teacherCount, studentCount, parentCount, assignmentCount] = await Promise.all([
+    prisma.user.count({ where: { role: 'teacher' } }),
+    prisma.user.count({ where: { role: 'student' } }),
+    prisma.user.count({ where: { role: 'parent' } }),
+    prisma.assignment.count(),
+  ]);
+  return res.json({
+    teacherCount,
+    studentCount,
+    parentCount,
+    assignmentCount,
+  });
 });
 
-router.get('/students', authenticate('admin'), (_req, res) => {
-  res.json(students);
+router.get('/teachers', authenticate('admin'), async (_req, res) => {
+  const list = await prisma.user.findMany({
+    where: { role: 'teacher' },
+    select: { id: true, name: true, email: true, subjectAreas: true },
+  });
+  res.json(list.map(toTeacher));
 });
 
-router.get('/parents', authenticate('admin'), (_req, res) => {
-  res.json(parents);
+router.get('/students', authenticate('admin'), async (_req, res) => {
+  const list = await prisma.user.findMany({
+    where: { role: 'student' },
+    select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+  });
+  res.json(list.map(toStudent));
 });
 
-// --- Öğretmen ekleme / silme ---
+router.get('/parents', authenticate('admin'), async (_req, res) => {
+  const list = await prisma.user.findMany({
+    where: { role: 'parent' },
+    include: { parentStudents: { select: { studentId: true } } },
+  });
+  res.json(
+    list.map((u) =>
+      toParent(u, u.parentStudents.map((ps) => ps.studentId)),
+    ),
+  );
+});
 
-router.post(
-  '/teachers',
-  authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
-    const { name, email, subjectAreas } = req.body as {
-      name?: string;
-      email?: string;
-      subjectAreas?: string[] | string;
-    };
+router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const { name, email, subjectAreas, password } = req.body as {
+    name?: string;
+    email?: string;
+    subjectAreas?: string[] | string;
+    password?: string;
+  };
 
-    if (!name || !email) {
-      return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
-    }
+  if (!name || !email) {
+    return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
+  }
+  if (!password || password.length < 4) {
+    return res.status(400).json({ error: 'Şifre en az 4 karakter olmalıdır' });
+  }
 
-    const exists = teachers.some((t) => t.email === email);
-    if (exists) {
-      return res.status(400).json({ error: 'Bu e-posta ile kayıtlı öğretmen var' });
-    }
+  const exists = await prisma.user.findFirst({ where: { email, role: 'teacher' } });
+  if (exists) {
+    return res.status(400).json({ error: 'Bu e-posta ile kayıtlı öğretmen var' });
+  }
 
-    const areasArray: string[] =
-      typeof subjectAreas === 'string'
-        ? subjectAreas.split(',').map((s) => s.trim()).filter(Boolean)
-        : subjectAreas ?? [];
+  const areasArray: string[] =
+    typeof subjectAreas === 'string'
+      ? subjectAreas.split(',').map((s) => s.trim()).filter(Boolean)
+      : subjectAreas ?? [];
 
-    const teacher: Teacher = {
-      id: `t${Date.now()}`,
+  const passwordHash = await bcrypt.hash(password, 10);
+  const created = await prisma.user.create({
+    data: {
       name,
       email,
-      role: 'teacher',
+      role: 'teacher' as UserRole,
+      passwordHash,
       subjectAreas: areasArray,
-    };
+    },
+    select: { id: true, name: true, email: true, subjectAreas: true },
+  });
+  return res.status(201).json(toTeacher(created));
+});
 
-    teachers.push(teacher);
-    return res.status(201).json(teacher);
-  },
-);
+router.delete('/teachers/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const id = String(req.params.id);
+  const existing = await prisma.user.findFirst({ where: { id, role: 'teacher' } });
+  if (!existing) {
+    return res.status(404).json({ error: 'Öğretmen bulunamadı' });
+  }
+  await prisma.user.delete({ where: { id } });
+  return res.json(toTeacher(existing));
+});
 
-router.delete(
-  '/teachers/:id',
-  authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
-    const id = String(req.params.id);
-    const index = teachers.findIndex((t) => t.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Öğretmen bulunamadı' });
-    }
-    const [removed] = teachers.splice(index, 1);
-    return res.json(removed);
-  },
-);
+router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const { name, email, gradeLevel, classId, password } = req.body as {
+    name?: string;
+    email?: string;
+    gradeLevel?: string;
+    classId?: string;
+    password?: string;
+  };
 
-// --- Öğrenci ekleme / silme ---
+  if (!name || !email) {
+    return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
+  }
+  if (!password || password.length < 4) {
+    return res.status(400).json({ error: 'Şifre en az 4 karakter olmalıdır' });
+  }
 
-router.post(
-  '/students',
-  authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
-    const { name, email, gradeLevel, classId } = req.body as {
-      name?: string;
-      email?: string;
-      gradeLevel?: string;
-      classId?: string;
-    };
+  const exists = await prisma.user.findFirst({ where: { email, role: 'student' } });
+  if (exists) {
+    return res.status(400).json({ error: 'Bu e-posta ile kayıtlı öğrenci var' });
+  }
 
-    if (!name || !email) {
-      return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
-    }
-
-    const exists = students.some((s) => s.email === email);
-    if (exists) {
-      return res.status(400).json({ error: 'Bu e-posta ile kayıtlı öğrenci var' });
-    }
-
-    const student: Student = {
-      id: `s${Date.now()}`,
+  const passwordHash = await bcrypt.hash(password, 10);
+  const created = await prisma.user.create({
+    data: {
       name,
       email,
-      role: 'student',
+      role: 'student' as UserRole,
+      passwordHash,
       gradeLevel: gradeLevel ?? '',
       classId: classId ?? '',
-    };
+    },
+    select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+  });
+  return res.status(201).json(toStudent(created));
+});
 
-    students.push(student);
-    return res.status(201).json(student);
-  },
-);
+router.delete('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const id = String(req.params.id);
+  const existing = await prisma.user.findFirst({ where: { id, role: 'student' } });
+  if (!existing) {
+    return res.status(404).json({ error: 'Öğrenci bulunamadı' });
+  }
+  await prisma.parentStudent.deleteMany({ where: { studentId: id } });
+  await prisma.user.delete({ where: { id } });
+  return res.json(toStudent(existing));
+});
 
-router.delete(
-  '/students/:id',
-  authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
-    const id = String(req.params.id);
-    const index = students.findIndex((s) => s.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Öğrenci bulunamadı' });
-    }
-    const [removed] = students.splice(index, 1);
+router.post('/parents', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const { name, email, password } = req.body as {
+    name?: string;
+    email?: string;
+    password?: string;
+  };
 
-    // Öğrenciyi velilerin listelerinden de çıkar
-    parents.forEach((p) => {
-      p.studentIds = p.studentIds.filter((sid) => sid !== id);
-    });
+  if (!name || !email) {
+    return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
+  }
+  if (!password || password.length < 4) {
+    return res.status(400).json({ error: 'Şifre en az 4 karakter olmalıdır' });
+  }
 
-    return res.json(removed);
-  },
-);
+  const exists = await prisma.user.findFirst({ where: { email, role: 'parent' } });
+  if (exists) {
+    return res.status(400).json({ error: 'Bu e-posta ile kayıtlı veli var' });
+  }
 
-// --- Veli ekleme / silme ---
-
-router.post(
-  '/parents',
-  authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
-    const { name, email } = req.body as {
-      name?: string;
-      email?: string;
-    };
-
-    if (!name || !email) {
-      return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
-    }
-
-    const exists = parents.some((p) => p.email === email);
-    if (exists) {
-      return res.status(400).json({ error: 'Bu e-posta ile kayıtlı veli var' });
-    }
-
-    const parent: Parent = {
-      id: `p${Date.now()}`,
+  const passwordHash = await bcrypt.hash(password, 10);
+  const created = await prisma.user.create({
+    data: {
       name,
       email,
-      role: 'parent',
-      studentIds: [],
-    };
+      role: 'parent' as UserRole,
+      passwordHash,
+    },
+    select: { id: true, name: true, email: true },
+  });
+  return res.status(201).json(toParent(created, []));
+});
 
-    parents.push(parent);
-    return res.status(201).json(parent);
-  },
-);
-
-router.delete(
-  '/parents/:id',
-  authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
-    const id = String(req.params.id);
-    const index = parents.findIndex((p) => p.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Veli bulunamadı' });
-    }
-    const [removed] = parents.splice(index, 1);
-    return res.json(removed);
-  },
-);
-
-// --- Veliye öğrenci atama / çıkarma ---
+router.delete('/parents/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const id = String(req.params.id);
+  const existing = await prisma.user.findFirst({
+    where: { id, role: 'parent' },
+    include: { parentStudents: { select: { studentId: true } } },
+  });
+  if (!existing) {
+    return res.status(404).json({ error: 'Veli bulunamadı' });
+  }
+  await prisma.user.delete({ where: { id } });
+  return res.json(
+    toParent(existing, existing.parentStudents.map((ps) => ps.studentId)),
+  );
+});
 
 router.post(
   '/parents/:id/assign-student',
   authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = String(req.params.id);
     const { studentId } = req.body as { studentId?: string };
 
@@ -208,28 +233,43 @@ router.post(
       return res.status(400).json({ error: 'studentId zorunludur' });
     }
 
-    const parent = parents.find((p) => p.id === parentId);
+    const parent = await prisma.user.findFirst({
+      where: { id: parentId, role: 'parent' },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
     if (!parent) {
       return res.status(404).json({ error: 'Veli bulunamadı' });
     }
 
-    const studentExists = students.some((s) => s.id === studentId);
+    const studentExists = await prisma.user.findFirst({
+      where: { id: studentId, role: 'student' },
+    });
     if (!studentExists) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    if (!parent.studentIds.includes(studentId)) {
-      parent.studentIds.push(studentId);
-    }
+    await prisma.parentStudent.upsert({
+      where: {
+        parentId_studentId: { parentId, studentId },
+      },
+      create: { parentId, studentId },
+      update: {},
+    });
 
-    return res.json(parent);
+    const updated = await prisma.user.findFirst({
+      where: { id: parentId },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
+    return res.json(
+      toParent(updated!, updated!.parentStudents.map((ps) => ps.studentId)),
+    );
   },
 );
 
 router.post(
   '/parents/:id/unassign-student',
   authenticate('admin'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = String(req.params.id);
     const { studentId } = req.body as { studentId?: string };
 
@@ -237,15 +277,26 @@ router.post(
       return res.status(400).json({ error: 'studentId zorunludur' });
     }
 
-    const parent = parents.find((p) => p.id === parentId);
+    const parent = await prisma.user.findFirst({
+      where: { id: parentId, role: 'parent' },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
     if (!parent) {
       return res.status(404).json({ error: 'Veli bulunamadı' });
     }
 
-    parent.studentIds = parent.studentIds.filter((sid) => sid !== studentId);
-    return res.json(parent);
+    await prisma.parentStudent.deleteMany({
+      where: { parentId, studentId },
+    });
+
+    const updated = await prisma.user.findFirst({
+      where: { id: parentId },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
+    return res.json(
+      toParent(updated!, updated!.parentStudents.map((ps) => ps.studentId)),
+    );
   },
 );
 
 export default router;
-

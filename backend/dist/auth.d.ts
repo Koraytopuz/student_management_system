@@ -8,10 +8,10 @@ export declare const loginSchema: z.ZodObject<{
     email: z.ZodString;
     password: z.ZodString;
     role: z.ZodEnum<{
+        admin: "admin";
         teacher: "teacher";
         student: "student";
         parent: "parent";
-        admin: "admin";
     }>;
 }, z.core.$strip>;
 export declare const loginHandler: express.RequestHandler;

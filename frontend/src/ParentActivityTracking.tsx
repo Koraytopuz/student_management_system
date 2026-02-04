@@ -161,7 +161,10 @@ export const ParentActivityTracking: React.FC = () => {
 
   return (
     <div className="panel">
-      <h2>Aktivite Takibi</h2>
+      <h2>
+        Aktivite Takibi
+        {selectedStudentName ? ` · ${selectedStudentName}` : ''}
+      </h2>
 
       {students.length > 1 && (
         <div style={{ marginBottom: '1.5rem' }}>

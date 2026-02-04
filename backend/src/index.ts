@@ -1,11 +1,17 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 
 import { loginHandler } from './auth';
 import teacherRoutes from './routes.teacher';
 import studentRoutes from './routes.student';
 import parentRoutes from './routes.parent';
 import adminRoutes from './routes.admin';
+
+// Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
+dotenv.config();
 
 const app = express();
 const PORT = 4000;
@@ -26,7 +32,14 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
+
+// Yüklenen dosyalar için uploads klasörü (örn. video)
+const uploadsRoot = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadsRoot)) {
+  fs.mkdirSync(uploadsRoot, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsRoot));
 
 // Kök: tarayıcıda localhost:4000 açıldığında bilgilendirme sayfası
 app.get('/', (_req, res) => {

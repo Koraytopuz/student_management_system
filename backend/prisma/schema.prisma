@@ -1,0 +1,538 @@
+// Prisma schema for Student Management System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  admin
+  teacher
+  student
+  parent
+}
+
+enum ContentType {
+  video
+  audio
+  document
+}
+
+enum QuestionType {
+  multiple_choice
+  true_false
+  open_ended
+}
+
+enum MeetingType {
+  teacher_student
+  teacher_student_parent
+  class
+}
+
+enum TodoStatus {
+  pending
+  in_progress
+  completed
+}
+
+enum TodoPriority {
+  low
+  medium
+  high
+}
+
+enum GoalType {
+  weekly_questions
+  weekly_tests
+  topic_completion
+  score_percent
+}
+
+enum GoalStatus {
+  active
+  completed
+  failed
+  cancelled
+}
+
+enum TeacherAnnouncementStatus {
+  draft
+  planned
+  sent
+}
+
+enum NotificationType {
+  assignment_created
+  assignment_due_soon
+  assignment_overdue
+  test_result_ready
+  meeting_scheduled
+  weekly_summary
+  message_received
+  goal_achieved
+  content_assigned
+}
+
+enum RelatedEntityType {
+  assignment
+  test
+  meeting
+  message
+  content
+}
+
+enum AlertType {
+  low_activity
+  performance_decline
+  assignment_neglect
+}
+
+enum AlertSeverity {
+  low
+  medium
+  high
+}
+
+enum AlertStatus {
+  active
+  resolved
+  dismissed
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String
+  role         UserRole
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now())
+
+  // Teacher-specific
+  subjectAreas String[] @default([]) @map("subject_areas")
+
+  // Student-specific
+  gradeLevel String? @map("grade_level")
+  classId    String? @map("class_id")
+
+  // Relations
+  classGroupsAsTeacher  ClassGroup[]         @relation("ClassGroupTeacher")
+  classGroupStudents    ClassGroupStudent[]
+  parentStudents        ParentStudent[]      @relation("ParentStudents")
+  parentOfStudents      ParentStudent[]      @relation("ParentOfStudents")
+  contentStudents       ContentStudent[]
+  assignmentStudents    AssignmentStudent[]
+  watchRecords          WatchRecord[]
+  meetingStudents       MeetingStudent[]
+  meetingParents        MeetingParent[]
+
+  @@unique([email, role])
+  @@map("users")
+}
+
+model ParentStudent {
+  parentId  String
+  studentId String
+  parent    User   @relation("ParentStudents", fields: [parentId], references: [id], onDelete: Cascade)
+  student   User   @relation("ParentOfStudents", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([parentId, studentId])
+  @@map("parent_students")
+}
+
+model Subject {
+  id   String @id @default(cuid())
+  name String
+
+  contents ContentItem[]
+  tests    Test[]
+
+  @@map("subjects")
+}
+
+model ClassGroup {
+  id         String @id @default(cuid())
+  name       String
+  gradeLevel String @map("grade_level")
+  teacherId  String @map("teacher_id")
+
+  teacher       User                @relation("ClassGroupTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  students      ClassGroupStudent[]
+  assignments   Assignment[]
+  contentGroups ContentClassGroup[]
+
+  @@map("class_groups")
+}
+
+model ClassGroupStudent {
+  classGroupId String
+  studentId    String
+  classGroup   ClassGroup @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+  student      User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([classGroupId, studentId])
+  @@map("class_group_students")
+}
+
+model ContentItem {
+  id              String      @id @default(cuid())
+  title           String
+  description     String?
+  type            ContentType
+  subjectId       String      @map("subject_id")
+  topic           String
+  gradeLevel      String      @map("grade_level")
+  durationMinutes Int?        @map("duration_minutes")
+  tags            String[]    @default([])
+  url             String
+  createdAt       DateTime    @default(now())
+
+  subject        Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classGroups    ContentClassGroup[]
+  students       ContentStudent[]
+  watchRecords   WatchRecord[]
+  assignments    Assignment[]
+
+  @@map("contents")
+}
+
+model ContentClassGroup {
+  contentId   String
+  classGroupId String
+  content    ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  classGroup ClassGroup  @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+
+  @@id([contentId, classGroupId])
+  @@map("content_class_groups")
+}
+
+model ContentStudent {
+  contentId String
+  studentId String
+  content   ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  student   User        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([contentId, studentId])
+  @@map("content_students")
+}
+
+model Test {
+  id                  String   @id @default(cuid())
+  title               String
+  subjectId           String   @map("subject_id")
+  topic               String
+  createdByTeacherId  String   @map("created_by_teacher_id")
+  createdAt           DateTime @default(now())
+
+  subject     Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  questions   Question[]
+  assignments Assignment[]
+
+  @@map("tests")
+}
+
+model Question {
+  id                  String       @id @default(cuid())
+  testId              String       @map("test_id")
+  text                String
+  type                QuestionType
+  choices             Json?        // string[]
+  correctAnswer       String?      @map("correct_answer")
+  solutionExplanation String?      @map("solution_explanation")
+  topic               String
+  difficulty          String       // easy | medium | hard
+  orderIndex          Int          @default(0) @map("order_index")
+
+  test        Test          @relation(fields: [testId], references: [id], onDelete: Cascade)
+  testResults TestResultAnswer[]
+
+  @@map("questions")
+}
+
+model Assignment {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  testId      String?   @map("test_id")
+  contentId   String?   @map("content_id")
+  classId     String?   @map("class_id")
+  dueDate     DateTime  @map("due_date")
+  points      Int       @default(100)
+  createdAt   DateTime  @default(now())
+
+  test       Test?           @relation(fields: [testId], references: [id], onDelete: SetNull)
+  content    ContentItem?    @relation(fields: [contentId], references: [id], onDelete: SetNull)
+  classGroup ClassGroup?     @relation(fields: [classId], references: [id], onDelete: SetNull)
+  students   AssignmentStudent[]
+  testResults TestResult[]
+
+  @@map("assignments")
+}
+
+model AssignmentStudent {
+  assignmentId String
+  studentId    String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, studentId])
+  @@map("assignment_students")
+}
+
+model TestResult {
+  id             String   @id @default(cuid())
+  assignmentId   String   @map("assignment_id")
+  studentId      String   @map("student_id")
+  testId         String   @map("test_id")
+  correctCount   Int      @map("correct_count")
+  incorrectCount Int      @map("incorrect_count")
+  blankCount     Int      @map("blank_count")
+  scorePercent   Float    @map("score_percent")
+  durationSeconds Int     @map("duration_seconds")
+  completedAt    DateTime @map("completed_at")
+  createdAt      DateTime @default(now())
+
+  assignment Assignment           @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  answers    TestResultAnswer[]
+
+  @@map("test_results")
+}
+
+model TestResultAnswer {
+  id           String   @id @default(cuid())
+  testResultId String   @map("test_result_id")
+  questionId   String   @map("question_id")
+  answer       String
+  isCorrect    Boolean  @map("is_correct")
+  scratchpadImageData String? @map("scratchpad_image_data")
+
+  testResult TestResult @relation(fields: [testResultId], references: [id], onDelete: Cascade)
+  question   Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([testResultId, questionId])
+  @@map("test_result_answers")
+}
+
+model WatchRecord {
+  id            String   @id @default(cuid())
+  contentId     String   @map("content_id")
+  studentId     String   @map("student_id")
+  watchedSeconds Int     @map("watched_seconds")
+  completed     Boolean  @default(false)
+  lastWatchedAt DateTime @map("last_watched_at")
+
+  content ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  student User        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, studentId])
+  @@map("watch_records")
+}
+
+model Meeting {
+  id               String     @id @default(cuid())
+  type             MeetingType
+  title            String
+  teacherId        String     @map("teacher_id")
+  scheduledAt      DateTime   @map("scheduled_at")
+  durationMinutes  Int        @map("duration_minutes")
+  meetingUrl       String     @map("meeting_url")
+  /// Canlı ders sağlayıcısı (ör. internal_webrtc, zoom, meet)
+  provider         String?    @default("internal_webrtc")
+  /// Katılım modu: platform içi oda mı, harici link mi
+  joinMode         String?    @default("internal")
+  /// Canlı ders odası kimliği (örn. LiveKit room)
+  roomId           String?
+  createdAt        DateTime   @default(now())
+
+  students MeetingStudent[]
+  parents  MeetingParent[]
+
+  @@map("meetings")
+}
+
+model MeetingStudent {
+  meetingId String
+  studentId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  student   User    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([meetingId, studentId])
+  @@map("meeting_students")
+}
+
+model MeetingParent {
+  meetingId String
+  parentId  String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  parent    User    @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@id([meetingId, parentId])
+  @@map("meeting_parents")
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  fromUserId String   @map("from_user_id")
+  toUserId   String   @map("to_user_id")
+  studentId  String?  @map("student_id")
+  subject    String?
+  text       String
+  attachments Json?   // array of { id, fileName, fileType, fileSize, url }
+  read       Boolean  @default(false)
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime @default(now())
+
+  @@map("messages")
+}
+
+model Notification {
+  id                String            @id @default(cuid())
+  userId            String            @map("user_id")
+  type              NotificationType
+  title             String
+  body              String
+  read              Boolean           @default(false)
+  relatedEntityType RelatedEntityType? @map("related_entity_type")
+  relatedEntityId   String?           @map("related_entity_id")
+  readAt            DateTime?         @map("read_at")
+  createdAt         DateTime          @default(now())
+
+  @@map("notifications")
+}
+
+model TodoItem {
+  id                    String        @id @default(cuid())
+  studentId             String        @map("student_id")
+  title                 String
+  description           String?
+  status                TodoStatus    @default(pending)
+  priority              TodoPriority  @default(medium)
+  plannedDate           DateTime?     @map("planned_date")
+  completedAt           DateTime?     @map("completed_at")
+  relatedAssignmentId   String?       @map("related_assignment_id")
+  relatedContentId      String?       @map("related_content_id")
+  createdAt             DateTime      @default(now())
+
+  @@map("todos")
+}
+
+model Goal {
+  id          String    @id @default(cuid())
+  studentId   String    @map("student_id")
+  type        GoalType
+  targetValue Int       @map("target_value")
+  topic       String?
+  startDate   DateTime  @map("start_date")
+  endDate     DateTime  @map("end_date")
+  status      GoalStatus @default(active)
+  createdAt   DateTime  @default(now())
+
+  @@map("goals")
+}
+
+model ParentGoal {
+  id                String    @id @default(cuid())
+  studentId         String    @map("student_id")
+  createdByParentId String    @map("created_by_parent_id")
+  type              GoalType
+  targetValue       Int       @map("target_value")
+  topic             String?
+  startDate         DateTime  @map("start_date")
+  endDate           DateTime  @map("end_date")
+  status            GoalStatus @default(active)
+  reward            String?
+  completedAt       DateTime? @map("completed_at")
+  createdAt         DateTime  @default(now())
+
+  @@map("parent_goals")
+}
+
+model TeacherAnnouncement {
+  id            String                   @id @default(cuid())
+  teacherId     String                   @map("teacher_id")
+  title         String
+  message       String
+  status        TeacherAnnouncementStatus @default(draft)
+  scheduledDate DateTime?                @map("scheduled_date")
+  createdAt     DateTime                 @default(now())
+
+  @@map("teacher_announcements")
+}
+
+model TeacherFeedback {
+  id                  String   @id @default(cuid())
+  studentId           String   @map("student_id")
+  teacherId           String   @map("teacher_id")
+  teacherName         String   @map("teacher_name")
+  type                String   // test_feedback | general_feedback | performance_note
+  relatedTestId       String?  @map("related_test_id")
+  relatedAssignmentId String?  @map("related_assignment_id")
+  title               String
+  content             String
+  read                Boolean  @default(false)
+  readAt              DateTime? @map("read_at")
+  createdAt           DateTime @default(now())
+
+  @@map("teacher_feedbacks")
+}
+
+model Alert {
+  id          String       @id @default(cuid())
+  studentId   String       @map("student_id")
+  type        AlertType
+  severity    AlertSeverity
+  title       String
+  description String
+  status      AlertStatus  @default(active)
+  relatedData Json?        @map("related_data")
+  resolvedAt  DateTime?    @map("resolved_at")
+  detectedAt  DateTime     @map("detected_at")
+
+  @@map("alerts")
+}
+
+model WeeklyReport {
+  id            String   @id @default(cuid())
+  studentId     String   @map("student_id")
+  weekStartDate DateTime @map("week_start_date")
+  weekEndDate   DateTime @map("week_end_date")
+  generatedAt   DateTime @map("generated_at")
+  summary       Json
+  comparison    Json?
+  topicPerformance Json? @map("topic_performance")
+  teacherFeedback String? @map("teacher_feedback")
+  recommendations Json?
+
+  @@map("weekly_reports")
+}
+
+model MonthlyReport {
+  id           String   @id @default(cuid())
+  studentId    String   @map("student_id")
+  month        Int
+  year         Int
+  generatedAt  DateTime @map("generated_at")
+  summary      Json
+  weeklyBreakdown Json? @map("weekly_breakdown")
+  topicAnalysis Json?   @map("topic_analysis")
+  teacherEvaluation Json? @map("teacher_evaluation")
+
+  @@map("monthly_reports")
+}
+
+model CustomReport {
+  id         String   @id @default(cuid())
+  studentId  String   @map("student_id")
+  startDate  DateTime @map("start_date")
+  endDate    DateTime @map("end_date")
+  reportType String   @map("report_type")
+  generatedAt DateTime @map("generated_at")
+  status     String   // pending | completed | failed
+  data       Json?
+  error      String?
+
+  @@map("custom_reports")
+}

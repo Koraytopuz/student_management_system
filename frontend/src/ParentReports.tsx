@@ -96,7 +96,10 @@ export const ParentReports: React.FC = () => {
 
   return (
     <div className="panel">
-      <h2>Raporlar</h2>
+      <h2>
+        Raporlar
+        {selectedStudentName ? ` · ${selectedStudentName}` : ''}
+      </h2>
 
       {students.length > 1 && (
         <div style={{ marginBottom: '1.5rem' }}>

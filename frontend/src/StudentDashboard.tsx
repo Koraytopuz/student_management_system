@@ -1,1507 +1,1529 @@
-import React, { useEffect, useState } from 'react';
-import { apiRequest } from './api';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle, ClipboardList, ListChecks, Video } from 'lucide-react';
 import { useAuth } from './AuthContext';
-import { CalendarView } from './CalendarView';
+import {
+  getStudentAssignments,
+  getStudentAssignmentDetail,
+  getStudentCalendar,
+  getStudentContents,
+  getStudentDashboard,
+  getStudentMeetings,
+  getStudentProgressCharts,
+  getStudentProgressTopics,
+  getStudentTodos,
+  createStudentTodo,
+  updateStudentTodo,
+  deleteStudentTodo,
+  submitStudentAssignment,
+  watchStudentContent,
+  joinStudentLiveMeeting,
+  type CalendarEvent,
+  type ProgressCharts,
+  type ProgressOverview,
+  type StudentAssignment,
+  type StudentContent,
+  type StudentDashboardSummary,
+  type StudentMeeting,
+  type StudentTodo,
+  type Question,
+  type StudentAssignmentDetail,
+} from './api';
+import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
+import type { SidebarItem } from './components/DashboardPrimitives';
+import { useApiState } from './hooks/useApiState';
+import { StudentPlanner, type PlannerCreatePayload } from './components/StudentPlanner.tsx';
+import { DrawingCanvas } from './DrawingCanvas';
+import { LiveClassOverlay } from './LiveClassOverlay';
 
-interface LastWatchedContent {
-  contentId: string;
-  title: string;
-  lastPositionSeconds: number;
-}
+type StudentTab = 'overview' | 'assignments' | 'planner' | 'grades';
+type AssignmentStatus = 'todo' | 'in-progress' | 'done' | 'overdue';
 
-interface StudentDashboardSummary {
-  pendingAssignmentsCount: number;
-  testsSolvedThisWeek: number;
-  totalQuestionsThisWeek: number;
-  averageScorePercent: number;
-  lastWatchedContents: LastWatchedContent[];
-}
+const getWeekRange = () => {
+  const now = new Date();
+  const day = now.getDay() || 7;
+  const start = new Date(now);
+  start.setDate(now.getDate() - day + 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
 
-interface Assignment {
-  id: string;
-  title: string;
-  description?: string;
-  testId?: string;
-  contentId?: string;
-  dueDate: string;
-  points: number;
-}
+const formatShortDate = (iso?: string) => {
+  if (!iso) return '-';
+  return new Date(iso).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' });
+};
 
-interface ContentItem {
-  id: string;
-  title: string;
-  description?: string;
-  type: string;
-  topic: string;
-  gradeLevel: string;
-  durationMinutes?: number;
-}
+const deriveStatus = (assignment: StudentAssignment): AssignmentStatus => {
+  const due = new Date(assignment.dueDate).getTime();
+  if (Number.isNaN(due)) return 'todo';
+  return due < Date.now() ? 'overdue' : 'todo';
+};
 
-interface Message {
-  id: string;
-  fromUserId: string;
-  toUserId: string;
-  text: string;
-  createdAt: string;
-  fromUserName?: string;
-  toUserName?: string;
-}
-
-interface Meeting {
-  id: string;
-  title: string;
-  scheduledAt: string;
-  durationMinutes: number;
-  meetingUrl: string;
-}
-
-interface NotificationItem {
-  id: string;
-  type: string;
-  title: string;
-  body: string;
-  createdAt: string;
-  read: boolean;
-}
-
-interface Teacher {
-  id: string;
-  name: string;
-  email: string;
-}
-
-interface TodoItem {
-  id: string;
-  title: string;
-  description?: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  priority: 'low' | 'medium' | 'high';
-  createdAt: string;
-  plannedDate?: string;
-  completedAt?: string;
-  relatedAssignmentId?: string;
-  relatedContentId?: string;
-}
-
-interface TopicProgress {
-  topic: string;
-  subjectName: string;
-  completionPercent: number;
-  testsCompleted: number;
-  testsTotal: number;
-  averageScorePercent: number;
-  lastActivityDate?: string;
-  strengthLevel: 'weak' | 'average' | 'strong';
-}
-
-interface ProgressOverview {
-  topics: TopicProgress[];
-  overallCompletionPercent: number;
-  totalTestsCompleted: number;
-  totalQuestionsSolved: number;
-  averageScorePercent: number;
-}
-
-interface TimeSeriesPoint {
-  date: string;
-  questionsSolved: number;
-  testsCompleted: number;
-  averageScore: number;
-  studyMinutes: number;
-}
-
-interface ProgressCharts {
-  dailyData: TimeSeriesPoint[];
-}
-
-interface Goal {
-  id: string;
-  type: 'weekly_questions' | 'weekly_tests' | 'topic_completion' | 'score_percent';
-  targetValue: number;
-  topic?: string;
-  startDate: string;
-  endDate: string;
-  status: 'active' | 'completed' | 'failed' | 'cancelled';
-  createdAt: string;
-  currentValue?: number;
-  progressPercent?: number;
-}
-
-interface Question {
-  id: string;
-  text: string;
-  type: 'multiple_choice' | 'true_false' | 'open_ended';
-  choices?: string[];
-  correctAnswer?: string;
-  solutionExplanation?: string;
-}
-
-interface TestDetail {
-  id: string;
-  title: string;
-  questionIds: string[];
-}
-
-interface AssignmentDetail {
-  assignment: Assignment;
-  test?: TestDetail;
-  questions?: Question[];
-}
-
-type TabKey =
-  | 'overview'
-  | 'assignments'
-  | 'contents'
-  | 'todos'
-  | 'goals'
-  | 'progress'
-  | 'messages'
-  | 'meetings'
-  | 'notifications'
-  | 'calendar';
+const resolveContentUrl = (url: string): string => {
+  if (!url) return url;
+  // Backend yüklemeleri
+  if (url.startsWith('/uploads')) {
+    return `http://localhost:4000${url}`;
+  }
+  // Frontend public (pdfs vs.) veya mutlak URL
+  return url;
+};
 
 export const StudentDashboard: React.FC = () => {
-  const { token, user } = useAuth();
-  const [summary, setSummary] = useState<StudentDashboardSummary | null>(null);
-  const [tab, setTab] = useState<TabKey>('overview');
-  const [error, setError] = useState<string | null>(null);
+  const { token, user, logout } = useAuth();
+  const [activeTab, setActiveTab] = useState<StudentTab>('overview');
+  const [assignments, setAssignments] = useState<StudentAssignment[]>([]);
+  const [meetings, setMeetings] = useState<StudentMeeting[]>([]);
+  const [contents, setContents] = useState<StudentContent[]>([]);
+  const todosState = useApiState<StudentTodo[]>([]);
+  const [todoMutation, setTodoMutation] = useState<{
+    creating: boolean;
+    updatingId: string | null;
+    deletingId: string | null;
+  }>({
+    creating: false,
+    updatingId: null,
+    deletingId: null,
+  });
 
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [contents, setContents] = useState<ContentItem[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [unreadNotificationCount, setUnreadNotificationCount] =
-    useState<number>(0);
+  const dashboardState = useApiState<StudentDashboardSummary>(null);
+  const assignmentsState = useApiState<StudentAssignment[]>([]);
+  const progressState = useApiState<ProgressOverview>(null);
+  const chartsState = useApiState<ProgressCharts>(null);
+  const calendarState = useApiState<CalendarEvent[]>([]);
 
-  const [todos, setTodos] = useState<TodoItem[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [progressOverview, setProgressOverview] =
-    useState<ProgressOverview | null>(null);
-  const [progressCharts, setProgressCharts] =
-    useState<ProgressCharts | null>(null);
+  useEffect(() => {
+    if (!token) return;
+    dashboardState.run(() => getStudentDashboard(token)).catch(() => {});
+    assignmentsState
+      .run(() => getStudentAssignments(token))
+      .then((data) => setAssignments(data))
+      .catch(() => {});
+    getStudentContents(token).then(setContents).catch(() => {});
+    getStudentMeetings(token).then(setMeetings).catch(() => {});
+    progressState.run(() => getStudentProgressTopics(token)).catch(() => {});
+    chartsState.run(() => getStudentProgressCharts(token)).catch(() => {});
+    const { start, end } = getWeekRange();
+    calendarState
+      .run(async () => {
+        const payload = await getStudentCalendar(token, start.toISOString(), end.toISOString());
+        return payload.events;
+      })
+      .catch(() => {});
+    todosState.run(() => getStudentTodos(token)).catch(() => {});
+  }, [token]);
 
-  const [selectedAssignment, setSelectedAssignment] =
-    useState<AssignmentDetail | null>(null);
-  const [selectedContent, setSelectedContent] = useState<ContentItem | null>(
+  const groupedAssignments = useMemo(() => {
+    const groups: Record<AssignmentStatus, StudentAssignment[]> = {
+      todo: [],
+      'in-progress': [],
+      done: [],
+      overdue: [],
+    };
+    assignments.forEach((assignment) => {
+      groups[deriveStatus(assignment)].push(assignment);
+    });
+    return groups;
+  }, [assignments]);
+
+  const metrics = useMemo(() => {
+    const summary = dashboardState.data;
+    return [
+      {
+        label: 'Genel Ortalama',
+        value: `${summary?.averageScorePercent ?? 0}%`,
+        helper: 'Son 7 gün',
+        trendLabel: `${summary?.testsSolvedThisWeek ?? 0} test`,
+        trendTone: 'positive' as const,
+      },
+      {
+        label: 'Çözülen Soru',
+        value: `${summary?.totalQuestionsThisWeek ?? 0}`,
+        helper: 'Bu hafta',
+        trendLabel: 'Hedef: 200',
+        trendTone: 'neutral' as const,
+      },
+      {
+        label: 'Bekleyen Ödev',
+        value: `${summary?.pendingAssignmentsCount ?? 0}`,
+        helper: 'Aktif görevler',
+        trendLabel: assignments.length ? `${assignments.length} toplam` : 'Güncel',
+        trendTone: 'neutral' as const,
+      },
+      {
+        label: 'İzlenen İçerik',
+        value: `${summary?.lastWatchedContents?.length ?? 0}`,
+        helper: 'Son içerikler',
+        trendLabel: 'Güncel',
+        trendTone: 'positive' as const,
+      },
+    ];
+  }, [dashboardState.data, assignments.length]);
+
+  const [joinMeetingHint, setJoinMeetingHint] = useState<string | null>(null);
+  const [liveClass, setLiveClass] = useState<{ url: string; token: string; title?: string } | null>(
     null,
   );
-  const [testQuestions, setTestQuestions] = useState<Question[]>([]);
-  const [testAnswers, setTestAnswers] = useState<
-    Record<string, { answer: string; isCorrect?: boolean }>
-  >({});
-  const [testStartTime, setTestStartTime] = useState<number | null>(null);
-  const [testResult, setTestResult] = useState<{
-    id: string;
+
+  const handleJoinMeeting = async () => {
+    if (!token) {
+      setJoinMeetingHint('Oturum süresi dolmuş olabilir, lütfen tekrar giriş yapın.');
+      return;
+    }
+
+    if (!meetings.length) {
+      setJoinMeetingHint('Şu anda katılabileceğiniz planlı canlı ders bulunmuyor.');
+      return;
+    }
+
+    const now = new Date();
+    const withDates = meetings.map((meeting) => ({
+      meeting,
+      start: new Date(meeting.scheduledAt),
+    }));
+
+    withDates.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    const target =
+      withDates.find((item) => item.start.getTime() >= now.getTime() - 10 * 60 * 1000) ??
+      withDates[0];
+
+    try {
+      const session = await joinStudentLiveMeeting(token, target.meeting.id);
+      if (session.mode === 'external' && session.meetingUrl) {
+        setJoinMeetingHint(null);
+        window.open(session.meetingUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      if (session.mode === 'internal' && session.url && session.token) {
+        setJoinMeetingHint(null);
+        setLiveClass({ url: session.url, token: session.token, title: target.meeting.title });
+        return;
+      }
+      setJoinMeetingHint(
+        'Canlı derse katılırken bir sorun oluştu. Lütfen kısa bir süre sonra tekrar deneyin.',
+      );
+    } catch (error) {
+      setJoinMeetingHint(
+        error instanceof Error
+          ? `Canlı derse katılamadın: ${error.message}`
+          : 'Canlı derse katılırken bir hata oluştu.',
+      );
+    }
+  };
+
+  const handleOpenContent = () => {
+    setShowNotesLibrary(true);
+  };
+
+  const [activeTest, setActiveTest] = useState<StudentAssignmentDetail | null>(null);
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [scratchpads, setScratchpads] = useState<Record<string, string>>({});
+  const [testSubmitting, setTestSubmitting] = useState(false);
+  const [lastTestResult, setLastTestResult] = useState<{
+    testTitle: string;
     correctCount: number;
     incorrectCount: number;
     blankCount: number;
     scorePercent: number;
-    durationSeconds: number;
-    answers: Array<{
-      questionId: string;
-      answer: string;
-      isCorrect: boolean;
-    }>;
   } | null>(null);
-  const [testResultQuestions, setTestResultQuestions] = useState<Question[]>(
-    [],
+  const [showNotesLibrary, setShowNotesLibrary] = useState(false);
+
+  const handleSubmitAssignment = async (assignment: StudentAssignment) => {
+    if (!token) return;
+    if (assignment.contentId && !assignment.testId) {
+      const content = contents.find((c) => c.id === assignment.contentId);
+      const seconds = (content?.durationMinutes ?? 30) * 60;
+      await watchStudentContent(token, assignment.contentId, seconds, true);
+      setAssignments((prev) => prev.filter((item) => item.id !== assignment.id));
+      return;
+    }
+    if (assignment.testId) {
+      const detail = await getStudentAssignmentDetail(token, assignment.id);
+      setActiveTest(detail);
+      setActiveQuestionIndex(0);
+      setAnswers({});
+      setScratchpads({});
+      return;
+    }
+    await submitStudentAssignment(token, assignment.id, [], 0);
+    setAssignments((prev) => prev.filter((item) => item.id !== assignment.id));
+  };
+
+  const plannerTodos = todosState.data ?? [];
+
+  const handleCreateTodo = async (payload: PlannerCreatePayload) => {
+    if (!token) return;
+    setTodoMutation((prev) => ({ ...prev, creating: true }));
+    try {
+      const created = await createStudentTodo(token, payload);
+      todosState.setData([...(todosState.data ?? []), created]);
+    } catch (error) {
+      throw error;
+    } finally {
+      setTodoMutation((prev) => ({ ...prev, creating: false }));
+    }
+  };
+
+  const handleUpdateTodo = async (todoId: string, updates: Partial<StudentTodo>) => {
+    if (!token) return;
+    setTodoMutation((prev) => ({ ...prev, updatingId: todoId }));
+    try {
+      const updated = await updateStudentTodo(token, todoId, updates);
+      const current = todosState.data ?? [];
+      todosState.setData(current.map((todo) => (todo.id === todoId ? updated : todo)));
+    } catch (error) {
+      throw error;
+    } finally {
+      setTodoMutation((prev) => ({ ...prev, updatingId: null }));
+    }
+  };
+
+  const handleDeleteTodo = async (todoId: string) => {
+    if (!token) return;
+    setTodoMutation((prev) => ({ ...prev, deletingId: todoId }));
+    try {
+      await deleteStudentTodo(token, todoId);
+      const current = todosState.data ?? [];
+      todosState.setData(current.filter((todo) => todo.id !== todoId));
+    } catch (error) {
+      throw error;
+    } finally {
+      setTodoMutation((prev) => ({ ...prev, deletingId: null }));
+    }
+  };
+
+  const sidebarItems = useMemo<SidebarItem[]>(
+    () => [
+      {
+        id: 'overview',
+        label: 'Genel Bakış',
+        icon: <BookOpen size={18} />,
+        description: 'Performans',
+        active: activeTab === 'overview',
+        onClick: () => setActiveTab('overview'),
+      },
+      {
+        id: 'assignments',
+        label: 'Ödevler',
+        icon: <ListChecks size={18} />,
+        description: 'Takip',
+        badge: assignments.length || undefined,
+        active: activeTab === 'assignments',
+        onClick: () => setActiveTab('assignments'),
+      },
+      {
+        id: 'planner',
+        label: 'Planlama',
+        icon: <Calendar size={18} />,
+        description: 'Görevler',
+        badge: plannerTodos.filter((todo) => todo.status !== 'completed').length || undefined,
+        active: activeTab === 'planner',
+        onClick: () => setActiveTab('planner'),
+      },
+      {
+        id: 'grades',
+        label: 'Notlar',
+        icon: <Award size={18} />,
+        description: 'Analiz',
+        active: activeTab === 'grades',
+        onClick: () => setActiveTab('grades'),
+      },
+    ],
+    [activeTab, assignments.length, plannerTodos.length],
   );
-  const [contentWatchSeconds, setContentWatchSeconds] = useState<number>(0);
-
-  const [newMessage, setNewMessage] = useState({
-    toUserId: '',
-    text: '',
-  });
-
-  const [teachers, setTeachers] = useState<Teacher[]>([]);
-
-  const [newTodo, setNewTodo] = useState({
-    title: '',
-    description: '',
-    priority: 'medium' as 'low' | 'medium' | 'high',
-    plannedDate: '',
-  });
-
-  const [editingTodo, setEditingTodo] = useState<TodoItem | null>(null);
-
-  const [newGoal, setNewGoal] = useState({
-    type: 'weekly_questions' as Goal['type'],
-    targetValue: '',
-    topic: '',
-    startDate: '',
-    endDate: '',
-  });
-
-  useEffect(() => {
-    if (!token) return;
-    setError(null);
-
-    apiRequest<StudentDashboardSummary>('/student/dashboard', {}, token)
-      .then(setSummary)
-      .catch((e) => setError(e.message));
-
-    Promise.all([
-      apiRequest<Assignment[]>('/student/assignments', {}, token),
-      apiRequest<ContentItem[]>('/student/contents', {}, token),
-      apiRequest<Message[]>('/student/messages', {}, token),
-      apiRequest<Meeting[]>('/student/meetings', {}, token),
-      apiRequest<NotificationItem[]>('/student/notifications', {}, token),
-      apiRequest<{ count: number }>(
-        '/student/notifications/unread-count',
-        {},
-        token,
-      ),
-      apiRequest<TodoItem[]>('/student/todos', {}, token),
-      apiRequest<Goal[]>('/student/goals', {}, token),
-      apiRequest<ProgressOverview>('/student/progress/topics', {}, token),
-      apiRequest<ProgressCharts>('/student/progress/charts', {}, token),
-      apiRequest<Teacher[]>('/student/teachers', {}, token),
-    ])
-      .then(([a, c, m, mt, n, unread, td, g, pov, pcharts, tchs]) => {
-        setAssignments(a);
-        setContents(c);
-        setMessages(m);
-        setMeetings(mt);
-        setNotifications(n);
-        setUnreadNotificationCount(unread.count);
-        setTodos(td);
-        setGoals(g);
-        setProgressOverview(pov);
-        setProgressCharts(pcharts);
-        setTeachers(tchs);
-      })
-      .catch((e) => setError(e.message));
-  }, [token]);
-
-  if (!token || !user) {
-    return <div>Önce giriş yapmalısınız.</div>;
-  }
-
-  async function handleSendMessage(e: React.FormEvent) {
-    e.preventDefault();
-    if (!token) return;
-    try {
-      const created = await apiRequest<Message>(
-        '/student/messages',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            toUserId: newMessage.toUserId,
-            text: newMessage.text,
-          }),
-        },
-        token,
-      );
-      setMessages((prev) => [...prev, created]);
-      setNewMessage({ toUserId: '', text: '' });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleMarkAllNotificationsRead() {
-    if (!token) return;
-    try {
-      await apiRequest(
-        '/student/notifications/read-all',
-        {
-          method: 'PUT',
-        },
-        token,
-      );
-      setNotifications((prev) =>
-        prev.map((n) => ({
-          ...n,
-          read: true,
-        })),
-      );
-      setUnreadNotificationCount(0);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleCreateTodo(e: React.FormEvent) {
-    e.preventDefault();
-    if (!token) return;
-    try {
-      const created = await apiRequest<TodoItem>(
-        '/student/todos',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            title: newTodo.title,
-            description: newTodo.description || undefined,
-            priority: newTodo.priority,
-            plannedDate: newTodo.plannedDate || undefined,
-          }),
-        },
-        token,
-      );
-      setTodos((prev) => [...prev, created]);
-      setNewTodo({
-        title: '',
-        description: '',
-        priority: 'medium',
-        plannedDate: '',
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleUpdateTodoStatus(
-    todoId: string,
-    status: TodoItem['status'],
-  ) {
-    if (!token) return;
-    try {
-      const updated = await apiRequest<TodoItem>(
-        `/student/todos/${todoId}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify({ status }),
-        },
-        token,
-      );
-      setTodos((prev) =>
-        prev.map((t) => (t.id === todoId ? updated : t)),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleDeleteTodo(todoId: string) {
-    if (!token) return;
-    try {
-      await apiRequest(`/student/todos/${todoId}`, { method: 'DELETE' }, token);
-      setTodos((prev) => prev.filter((t) => t.id !== todoId));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleCreateGoal(e: React.FormEvent) {
-    e.preventDefault();
-    if (!token) return;
-    try {
-      const created = await apiRequest<Goal>(
-        '/student/goals',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            type: newGoal.type,
-            targetValue: Number(newGoal.targetValue),
-            topic: newGoal.topic || undefined,
-            startDate: newGoal.startDate,
-            endDate: newGoal.endDate,
-          }),
-        },
-        token,
-      );
-      setGoals((prev) => [...prev, created]);
-      setNewGoal({
-        type: 'weekly_questions',
-        targetValue: '',
-        topic: '',
-        startDate: '',
-        endDate: '',
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleViewAssignment(assignmentId: string) {
-    if (!token) return;
-    try {
-      const detail = await apiRequest<AssignmentDetail>(
-        `/student/assignments/${assignmentId}`,
-        {},
-        token,
-      );
-      setSelectedAssignment(detail);
-      if (detail.test && detail.questions) {
-        setTestQuestions(detail.questions);
-        setTestStartTime(Date.now());
-        setTestAnswers({});
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleSubmitTest(assignmentId: string) {
-    if (!token || !selectedAssignment?.test) return;
-    try {
-      // Önce cevapları doğru/yanlış kontrolü ile hazırla
-      const answers = testQuestions.map((q) => {
-        const studentAnswer = testAnswers[q.id]?.answer || '';
-        let isCorrect = false;
-
-        if (q.type === 'multiple_choice' || q.type === 'true_false') {
-          isCorrect = studentAnswer === q.correctAnswer;
-        } else if (q.type === 'open_ended') {
-          // Açık uçlu sorular için şimdilik false (manuel kontrol gerekir)
-          isCorrect = false;
-        }
-
-        return {
-          questionId: q.id,
-          answer: studentAnswer,
-          isCorrect,
-        };
-      });
-
-      const durationSeconds = testStartTime
-        ? Math.floor((Date.now() - testStartTime) / 1000)
-        : 0;
-
-      const result = await apiRequest<{
-        id: string;
-        correctCount: number;
-        incorrectCount: number;
-        blankCount: number;
-        scorePercent: number;
-        durationSeconds: number;
-        answers: Array<{
-          questionId: string;
-          answer: string;
-          isCorrect: boolean;
-        }>;
-      }>(
-        `/student/assignments/${assignmentId}/submit`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            answers,
-            durationSeconds,
-          }),
-        },
-        token,
-      );
-
-      // Test sonucunu göster (soruları sakla)
-      setTestResult(result);
-      setTestResultQuestions([...testQuestions]);
-      setTestQuestions([]);
-      setTestAnswers({});
-      setTestStartTime(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleViewContent(contentId: string) {
-    const content = contents.find((c) => c.id === contentId);
-    if (content) {
-      setSelectedContent(content);
-      setContentWatchSeconds(0);
-    }
-  }
-
-  async function handleUpdateWatchProgress(
-    contentId: string,
-    watchedSeconds: number,
-    completed: boolean,
-  ) {
-    if (!token) return;
-    try {
-      await apiRequest(
-        `/student/contents/${contentId}/watch`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            watchedSeconds,
-            completed,
-          }),
-        },
-        token,
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
 
   return (
-    <div className="panel">
-      <h2>Öğrenci Paneli</h2>
-      {error && <div className="error">{error}</div>}
-
-      <div className="role-selector" style={{ marginBottom: '1rem' }}>
-        {[
-          { key: 'overview', label: 'Genel Bakış' },
-          { key: 'assignments', label: 'Görevlerim' },
-          { key: 'contents', label: 'Ders İçerikleri' },
-          { key: 'todos', label: 'To-Do Listem' },
-          { key: 'goals', label: 'Hedeflerim' },
-          { key: 'progress', label: 'İlerlemem' },
-          { key: 'messages', label: 'Mesajlaşma' },
-          { key: 'meetings', label: 'Toplantılar' },
-          {
-            key: 'notifications',
-            label:
-              unreadNotificationCount > 0
-                ? `Bildirimler (${unreadNotificationCount})`
-                : 'Bildirimler',
-          },
-        ].map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            className={tab === t.key ? 'role-btn active' : 'role-btn'}
-            onClick={() => setTab(t.key as TabKey)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'overview' && (
-        <>
-          {!summary && !error && <div>Yükleniyor...</div>}
-          {summary && (
-            <>
-              <div className="stats-grid">
-                <div
-                  className="stat-card stat-clickable"
-                  role="button"
-                  onClick={() => setTab('assignments')}
-                >
-                  <span className="stat-label">Bekleyen Görevler / To-Do</span>
-                  <span className="stat-value">
-                    {summary.pendingAssignmentsCount}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-label">Bu Hafta Çözülen Test</span>
-                  <span className="stat-value">
-                    {summary.testsSolvedThisWeek}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-label">Bu Hafta Çözülen Soru</span>
-                  <span className="stat-value">
-                    {summary.totalQuestionsThisWeek}
-                  </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-label">Ortalama Başarı</span>
-                  <span className="stat-value">
-                    %{summary.averageScorePercent}
-                  </span>
-                </div>
-              </div>
-
-              <div className="card">
-                <h3>Son İzlenen İçerikler</h3>
-                {summary.lastWatchedContents.length === 0 ? (
-                  <p>Henüz içerik izlenmemiş.</p>
-                ) : (
-                  <ul>
-                    {summary.lastWatchedContents.map((c) => (
-                      <li key={c.contentId}>
-                        <strong>{c.title}</strong> –{' '}
-                        {(c.lastPositionSeconds / 60).toFixed(1)} dk
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </>
-          )}
-        </>
+    <DashboardLayout
+      accent="indigo"
+      brand="SKYTECH"
+      tagline={user?.name ?? 'Öğrenci'}
+      title={
+        activeTab === 'overview'
+          ? 'Çalışma Paneli'
+          : activeTab === 'assignments'
+            ? 'Ödev Akışı'
+            : activeTab === 'planner'
+              ? 'Planlama'
+              : 'Sınav Analizi'
+      }
+      subtitle="Gerçek verilerle çalışma serini ve ödevlerini yönet."
+      status={{ label: `${dashboardState.data?.testsSolvedThisWeek ?? 0} test çözüldü`, tone: 'warning' }}
+      sidebarItems={sidebarItems}
+      user={{
+        initials: user?.name?.slice(0, 2).toUpperCase() ?? 'ÖG',
+        name: user?.name ?? 'Öğrenci',
+        subtitle: 'Öğrenci',
+      }}
+      headerActions={
+        <button type="button" className="ghost-btn" aria-label="Bildirimler">
+          <Bell size={16} />
+        </button>
+      }
+      onLogout={logout}
+    >
+      {activeTab === 'overview' && (
+        <StudentOverview
+          metrics={metrics}
+          meetings={meetings}
+          events={calendarState.data ?? []}
+          groupedAssignments={groupedAssignments}
+          contents={contents}
+          onJoinMeeting={handleJoinMeeting}
+          onOpenContentLibrary={handleOpenContent}
+          joinMeetingHint={joinMeetingHint}
+          loading={dashboardState.loading}
+        />
       )}
-
-      {tab === 'assignments' && (
-        <div className="cards-grid">
-          {testResult ? (
-            <div className="card" style={{ maxWidth: '800px', width: '100%' }}>
-              <h3>
-                Test Sonuçları
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTestResult(null);
-                      setTestResultQuestions([]);
-                      setSelectedAssignment(null);
-                    }}
-                    style={{ marginLeft: '1rem' }}
-                  >
-                    Kapat
-                  </button>
-              </h3>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-                  gap: '1rem',
-                  marginBottom: '1.5rem',
-                }}
-              >
-                <div
-                  style={{
-                    padding: '1rem',
-                    borderRadius: '0.75rem',
-                    background: 'linear-gradient(135deg, #10b981, #059669)',
-                    color: 'white',
-                  }}
-                >
-                  <div style={{ fontSize: '0.85rem', opacity: 0.9 }}>
-                    Doğru
-                  </div>
-                  <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>
-                    {testResult.correctCount}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    padding: '1rem',
-                    borderRadius: '0.75rem',
-                    background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-                    color: 'white',
-                  }}
-                >
-                  <div style={{ fontSize: '0.85rem', opacity: 0.9 }}>
-                    Yanlış
-                  </div>
-                  <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>
-                    {testResult.incorrectCount}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    padding: '1rem',
-                    borderRadius: '0.75rem',
-                    background: 'linear-gradient(135deg, #6b7280, #4b5563)',
-                    color: 'white',
-                  }}
-                >
-                  <div style={{ fontSize: '0.85rem', opacity: 0.9 }}>Boş</div>
-                  <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>
-                    {testResult.blankCount}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    padding: '1rem',
-                    borderRadius: '0.75rem',
-                    background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-                    color: 'white',
-                  }}
-                >
-                  <div style={{ fontSize: '0.85rem', opacity: 0.9 }}>
-                    Başarı %
-                  </div>
-                  <div style={{ fontSize: '2rem', fontWeight: 'bold' }}>
-                    %{testResult.scorePercent}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <strong>Süre:</strong>{' '}
-                {Math.floor(testResult.durationSeconds / 60)}:
-                {String(testResult.durationSeconds % 60).padStart(2, '0')}
-              </div>
-
-              <div>
-                <h4 style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>
-                  Soru Detayları
-                </h4>
-                {testResultQuestions.map((q, idx) => {
-                  const answerData = testResult.answers.find(
-                    (a) => a.questionId === q.id,
-                  );
-                  const isCorrect = answerData?.isCorrect ?? false;
-                  const studentAnswer = answerData?.answer || '(Boş)';
-
-                  return (
-                    <div
-                      key={q.id}
-                      style={{
-                        marginBottom: '1rem',
-                        padding: '1rem',
-                        borderRadius: '0.75rem',
-                        border: `2px solid ${
-                          isCorrect ? '#10b981' : '#ef4444'
-                        }`,
-                        background: isCorrect
-                          ? 'rgba(16, 185, 129, 0.1)'
-                          : 'rgba(239, 68, 68, 0.1)',
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          marginBottom: '0.5rem',
-                        }}
-                      >
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            width: '24px',
-                            height: '24px',
-                            borderRadius: '50%',
-                            background: isCorrect ? '#10b981' : '#ef4444',
-                            color: 'white',
-                            textAlign: 'center',
-                            lineHeight: '24px',
-                            fontSize: '0.85rem',
-                            fontWeight: 'bold',
-                          }}
-                        >
-                          {isCorrect ? '✓' : '✗'}
-                        </span>
-                        <strong>
-                          Soru {idx + 1}: {q.text}
-                        </strong>
-                      </div>
-                      <div style={{ marginLeft: '2rem', fontSize: '0.9rem' }}>
-                        <div>
-                          <strong>Senin Cevabın:</strong>{' '}
-                          <span
-                            style={{
-                              color: isCorrect ? '#10b981' : '#ef4444',
-                              fontWeight: '600',
-                            }}
-                          >
-                            {studentAnswer}
-                          </span>
-                        </div>
-                        {!isCorrect && q.correctAnswer && (
-                          <div style={{ marginTop: '0.25rem' }}>
-                            <strong>Doğru Cevap:</strong>{' '}
-                            <span style={{ color: '#10b981', fontWeight: '600' }}>
-                              {q.correctAnswer}
-                            </span>
-                          </div>
-                        )}
-                        {q.solutionExplanation && (
-                          <div
-                            style={{
-                              marginTop: '0.5rem',
-                              padding: '0.5rem',
-                              background: 'rgba(59, 130, 246, 0.1)',
-                              borderRadius: '0.5rem',
-                              fontSize: '0.85rem',
-                            }}
-                          >
-                            <strong>Çözüm:</strong> {q.solutionExplanation}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : selectedAssignment ? (
-            <>
-              <div className="card">
-                <h3>
-                  {selectedAssignment.assignment.title}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedAssignment(null);
-                      setTestQuestions([]);
-                      setTestAnswers({});
-                      setTestStartTime(null);
-                    }}
-                    style={{ marginLeft: '1rem' }}
-                  >
-                    Geri
-                  </button>
-                </h3>
-                <p>
-                  <strong>Açıklama:</strong>{' '}
-                  {selectedAssignment.assignment.description || 'Yok'}
-                </p>
-                <p>
-                  <strong>Bitiş Tarihi:</strong>{' '}
-                  {new Date(selectedAssignment.assignment.dueDate).toLocaleString()}
-                </p>
-                <p>
-                  <strong>Puan:</strong> {selectedAssignment.assignment.points}
-                </p>
-                {selectedAssignment.test && (
-                  <div>
-                    <h4>Test: {selectedAssignment.test.title}</h4>
-                    <p>
-                      Toplam {selectedAssignment.test.questionIds.length} soru
-                    </p>
-                    {testQuestions.length > 0 ? (
-                      <div>
-                        <h4>Test Soruları</h4>
-                        {testQuestions.map((q, idx) => (
-                          <div key={q.id} style={{ marginBottom: '1rem' }}>
-                            <p>
-                              <strong>
-                                Soru {idx + 1}: {q.text}
-                              </strong>
-                            </p>
-                            {q.type === 'multiple_choice' && q.choices && (
-                              <div>
-                                {q.choices.map((choice, ci) => (
-                                  <label key={ci} style={{ display: 'block' }}>
-                                    <input
-                                      type="radio"
-                                      name={`q-${q.id}`}
-                                      value={choice}
-                                      checked={testAnswers[q.id]?.answer === choice}
-                                      onChange={() => {
-                                        setTestAnswers((prev) => ({
-                                          ...prev,
-                                          [q.id]: { answer: choice },
-                                        }));
-                                      }}
-                                    />
-                                    {choice}
-                                  </label>
-                                ))}
-                              </div>
-                            )}
-                            {q.type === 'true_false' && (
-                              <div>
-                                <label style={{ display: 'block' }}>
-                                  <input
-                                    type="radio"
-                                    name={`q-${q.id}`}
-                                    value="true"
-                                    checked={testAnswers[q.id]?.answer === 'true'}
-                                    onChange={() => {
-                                      setTestAnswers((prev) => ({
-                                        ...prev,
-                                        [q.id]: { answer: 'true' },
-                                      }));
-                                    }}
-                                  />
-                                  Doğru
-                                </label>
-                                <label style={{ display: 'block' }}>
-                                  <input
-                                    type="radio"
-                                    name={`q-${q.id}`}
-                                    value="false"
-                                    checked={testAnswers[q.id]?.answer === 'false'}
-                                    onChange={() => {
-                                      setTestAnswers((prev) => ({
-                                        ...prev,
-                                        [q.id]: { answer: 'false' },
-                                      }));
-                                    }}
-                                  />
-                                  Yanlış
-                                </label>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSubmitTest(selectedAssignment.assignment.id)
-                          }
-                        >
-                          Testi Gönder
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleViewAssignment(selectedAssignment.assignment.id)
-                        }
-                      >
-                        Testi Başlat
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="card">
-              <h3>Görevlerim</h3>
-              <ul>
-                {assignments.map((a) => (
-                  <li key={a.id}>
-                    <strong>{a.title}</strong> – bitiş:{' '}
-                    {new Date(a.dueDate).toLocaleString()} – {a.points} puan
-                    <button
-                      type="button"
-                      onClick={() => handleViewAssignment(a.id)}
-                      style={{ marginLeft: '0.5rem' }}
-                    >
-                      Detay
-                    </button>
-                  </li>
-                ))}
-                {assignments.length === 0 && (
-                  <p>Henüz atanmış görev yok.</p>
-                )}
-              </ul>
-            </div>
-          )}
-        </div>
+      {activeTab === 'assignments' && (
+        <StudentAssignments
+          assignments={assignments}
+          onSubmit={handleSubmitAssignment}
+          loading={assignmentsState.loading}
+        />
       )}
-
-      {tab === 'contents' && (
-        <div className="cards-grid">
-          {selectedContent ? (
-            <div className="card">
-              <h3>
-                {selectedContent.title}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedContent(null);
-                    if (selectedContent.durationMinutes) {
-                      handleUpdateWatchProgress(
-                        selectedContent.id,
-                        contentWatchSeconds,
-                        contentWatchSeconds >=
-                          (selectedContent.durationMinutes || 0) * 60,
-                      );
-                    }
-                  }}
-                  style={{ marginLeft: '1rem' }}
-                >
-                  Geri
-                </button>
-              </h3>
-              <p>
-                <strong>Tür:</strong> {selectedContent.type}
-              </p>
-              <p>
-                <strong>Konu:</strong> {selectedContent.topic}
-              </p>
-              <p>
-                <strong>Açıklama:</strong>{' '}
-                {selectedContent.description || 'Yok'}
-              </p>
-              {selectedContent.type === 'video' && (
-                <div>
-                  <p>
-                    <strong>Video URL:</strong>{' '}
-                    <a
-                      href={selectedContent.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {selectedContent.url}
-                    </a>
-                  </p>
-                  <p>
-                    İzlenen süre:{' '}
-                    {Math.floor(contentWatchSeconds / 60)}:
-                    {String(contentWatchSeconds % 60).padStart(2, '0')} /{' '}
-                    {selectedContent.durationMinutes || 0} dakika
-                  </p>
-                  <div style={{ marginTop: '1rem' }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newSeconds = Math.min(
-                          contentWatchSeconds + 60,
-                          (selectedContent.durationMinutes || 0) * 60,
-                        );
-                        setContentWatchSeconds(newSeconds);
-                        handleUpdateWatchProgress(
-                          selectedContent.id,
-                          newSeconds,
-                          newSeconds >=
-                            (selectedContent.durationMinutes || 0) * 60,
-                        );
-                      }}
-                    >
-                      İzle
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const completed =
-                          contentWatchSeconds >=
-                          (selectedContent.durationMinutes || 0) * 60;
-                        handleUpdateWatchProgress(
-                          selectedContent.id,
-                          (selectedContent.durationMinutes || 0) * 60,
-                          true,
-                        );
-                        setContentWatchSeconds(
-                          (selectedContent.durationMinutes || 0) * 60,
-                        );
-                        if (completed) {
-                          alert('İçerik tamamlandı!');
-                        }
-                      }}
-                      style={{ marginLeft: '0.5rem' }}
-                    >
-                      Tamamlandı Olarak İşaretle
-                    </button>
-                  </div>
-                </div>
-              )}
-              {selectedContent.type === 'document' && (
-                <div>
-                  <p>
-                    <strong>Doküman:</strong>{' '}
-                    <a
-                      href={selectedContent.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      İndir/Görüntüle
-                    </a>
-                  </p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="card">
-              <h3>Ders İçeriklerim</h3>
-              <ul>
-                {contents.map((c) => (
-                  <li key={c.id}>
-                    <strong>{c.title}</strong> – {c.type} – {c.topic} (
-                    {c.gradeLevel}. sınıf)
-                    <button
-                      type="button"
-                      onClick={() => handleViewContent(c.id)}
-                      style={{ marginLeft: '0.5rem' }}
-                    >
-                      Aç
-                    </button>
-                  </li>
-                ))}
-                {contents.length === 0 && (
-                  <p>Henüz atanmış içerik yok.</p>
-                )}
-              </ul>
-            </div>
-          )}
-        </div>
+      {activeTab === 'planner' && (
+        <StudentPlanner
+          todos={plannerTodos}
+          assignments={assignments}
+          contents={contents}
+          loading={todosState.loading}
+          mutationState={todoMutation}
+          onCreate={handleCreateTodo}
+          onUpdate={handleUpdateTodo}
+          onDelete={handleDeleteTodo}
+        />
       )}
-
-      {tab === 'todos' && (
-        <div className="cards-grid">
-          <div className="card">
-            <h3>Yeni To-Do Ekle</h3>
-            <form onSubmit={handleCreateTodo} className="form">
-              <div className="field">
-                <span>Başlık</span>
-                <input
-                  value={newTodo.title}
-                  onChange={(e) =>
-                    setNewTodo((t) => ({ ...t, title: e.target.value }))
-                  }
-                  required
-                />
-              </div>
-              <div className="field">
-                <span>Açıklama</span>
-                <textarea
-                  value={newTodo.description}
-                  onChange={(e) =>
-                    setNewTodo((t) => ({ ...t, description: e.target.value }))
-                  }
-                  rows={2}
-                />
-              </div>
-              <div className="field">
-                <span>Öncelik</span>
-                <select
-                  value={newTodo.priority}
-                  onChange={(e) =>
-                    setNewTodo((t) => ({
-                      ...t,
-                      priority: e.target.value as 'low' | 'medium' | 'high',
-                    }))
-                  }
-                >
-                  <option value="low">Düşük</option>
-                  <option value="medium">Orta</option>
-                  <option value="high">Yüksek</option>
-                </select>
-              </div>
-              <div className="field">
-                <span>Planlanan Tarih</span>
-                <input
-                  type="date"
-                  value={newTodo.plannedDate}
-                  onChange={(e) =>
-                    setNewTodo((t) => ({ ...t, plannedDate: e.target.value }))
-                  }
-                />
-              </div>
-              <button type="submit">Ekle</button>
-            </form>
-          </div>
-
-          <div className="card">
-            <h3>To-Do Listem</h3>
-            <ul>
-              {todos
-                .filter((t) => t.status !== 'completed')
-                .map((t) => (
-                  <li key={t.id} style={{ marginBottom: '0.5rem' }}>
-                    <strong>[{t.status}]</strong> {t.title}{' '}
-                    {t.plannedDate && (
-                      <span style={{ fontSize: '0.8rem' }}>
-                        (Planlanan:{' '}
-                        {new Date(t.plannedDate).toLocaleDateString()})
-                      </span>
-                    )}
-                    <div style={{ marginTop: '0.25rem' }}>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleUpdateTodoStatus(
-                            t.id,
-                            t.status === 'pending'
-                              ? 'in_progress'
-                              : 'completed',
-                          )
-                        }
-                        style={{ marginRight: '0.25rem' }}
-                      >
-                        {t.status === 'pending'
-                          ? 'Başlat'
-                          : t.status === 'in_progress'
-                          ? 'Tamamla'
-                          : ''}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTodo(t.id)}
-                      >
-                        Sil
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              {todos.filter((t) => t.status !== 'completed').length === 0 && (
-                <p>Henüz aktif to-do yok.</p>
-              )}
-            </ul>
-            {todos.filter((t) => t.status === 'completed').length > 0 && (
-              <div style={{ marginTop: '1rem' }}>
-                <h4>Tamamlananlar</h4>
-                <ul>
-                  {todos
-                    .filter((t) => t.status === 'completed')
-                    .map((t) => (
-                      <li key={t.id} style={{ opacity: 0.7 }}>
-                        <s>{t.title}</s> –{' '}
-                        {t.completedAt &&
-                          new Date(t.completedAt).toLocaleDateString()}
-                      </li>
-                    ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        </div>
+      {activeTab === 'grades' && (
+        <StudentGrades progress={progressState.data} charts={chartsState.data} loading={progressState.loading} />
       )}
-
-      {tab === 'goals' && (
-        <div className="cards-grid">
-          <div className="card card-form">
-            <h3>Yeni Hedef Oluştur</h3>
-            <form onSubmit={handleCreateGoal} className="form">
-              <div className="field">
-                <span>Hedef Tipi</span>
-                <select
-                  value={newGoal.type}
-                  onChange={(e) =>
-                    setNewGoal((g) => ({
-                      ...g,
-                      type: e.target.value as Goal['type'],
-                    }))
-                  }
-                >
-                  <option value="weekly_questions">
-                    Haftalık Soru Sayısı
-                  </option>
-                  <option value="weekly_tests">Haftalık Test Sayısı</option>
-                  <option value="topic_completion">Konu Tamamlama</option>
-                  <option value="score_percent">Başarı Yüzdesi</option>
-                </select>
-              </div>
-              <div className="field">
-                <span>Hedef Değeri</span>
-                <input
-                  type="number"
-                  value={newGoal.targetValue}
-                  onChange={(e) =>
-                    setNewGoal((g) => ({ ...g, targetValue: e.target.value }))
-                  }
-                  required
-                />
-              </div>
-              {newGoal.type === 'topic_completion' && (
-                <div className="field">
-                  <span>Konu</span>
-                  <input
-                    value={newGoal.topic}
-                    onChange={(e) =>
-                      setNewGoal((g) => ({ ...g, topic: e.target.value }))
-                    }
-                    required
-                  />
-                </div>
-              )}
-              <div className="field">
-                <span>Başlangıç Tarihi</span>
-                <input
-                  type="date"
-                  value={newGoal.startDate}
-                  onChange={(e) =>
-                    setNewGoal((g) => ({ ...g, startDate: e.target.value }))
-                  }
-                  required
-                />
-              </div>
-              <div className="field">
-                <span>Bitiş Tarihi</span>
-                <input
-                  type="date"
-                  value={newGoal.endDate}
-                  onChange={(e) =>
-                    setNewGoal((g) => ({ ...g, endDate: e.target.value }))
-                  }
-                  required
-                />
-              </div>
-              <button type="submit">Hedef Oluştur</button>
-            </form>
-          </div>
-
-          <div className="card">
-            <h3>Hedeflerim</h3>
-            <ul>
-              {goals.map((g) => (
-                <li key={g.id} style={{ marginBottom: '0.5rem' }}>
-                  <strong>
-                    {g.type === 'weekly_questions'
-                      ? 'Haftalık Soru'
-                      : g.type === 'weekly_tests'
-                      ? 'Haftalık Test'
-                      : g.type === 'topic_completion'
-                      ? 'Konu Tamamlama'
-                      : 'Başarı Yüzdesi'}
-                  </strong>
-                  : {g.currentValue || 0} / {g.targetValue} (
-                  {g.progressPercent || 0}%)
-                  <div style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                    Durum: {g.status === 'active' ? 'Aktif' : g.status === 'completed' ? 'Tamamlandı' : g.status === 'failed' ? 'Başarısız' : 'İptal'}
-                    {g.topic && ` - Konu: ${g.topic}`}
-                  </div>
-                </li>
-              ))}
-              {goals.length === 0 && <p>Henüz hedef oluşturmadınız.</p>}
-            </ul>
-          </div>
-        </div>
+      {activeTest && (
+        <TestSolveOverlay
+          detail={activeTest}
+          currentIndex={activeQuestionIndex}
+          onChangeIndex={setActiveQuestionIndex}
+          answers={answers}
+          onChangeAnswer={(questionId, value) =>
+            setAnswers((prev) => ({
+              ...prev,
+              [questionId]: value,
+            }))
+          }
+          scratchpads={scratchpads}
+          onChangeScratchpad={(questionId, dataUrl) =>
+            setScratchpads((prev) => ({
+              ...prev,
+              [questionId]: dataUrl,
+            }))
+          }
+          onClose={() => setActiveTest(null)}
+          onSubmit={async () => {
+            if (!token || !activeTest?.assignment.testId) return;
+            if (testSubmitting) return;
+            setTestSubmitting(true);
+            try {
+              const payload = activeTest.questions.map((q) => ({
+                questionId: q.id,
+                answer: answers[q.id] ?? '',
+                scratchpadImageData: scratchpads[q.id],
+              }));
+              const result = (await submitStudentAssignment(
+                token,
+                activeTest.assignment.id,
+                payload,
+                0,
+              )) as {
+                correctCount?: number;
+                incorrectCount?: number;
+                blankCount?: number;
+                scorePercent?: number;
+              };
+              setLastTestResult({
+                testTitle: activeTest.test?.title ?? activeTest.assignment.title,
+                correctCount: result?.correctCount ?? 0,
+                incorrectCount: result?.incorrectCount ?? 0,
+                blankCount: result?.blankCount ?? 0,
+                scorePercent: result?.scorePercent ?? 0,
+              });
+              setAssignments((prev) =>
+                prev.filter((item) => item.id !== activeTest.assignment.id),
+              );
+              setActiveTest(null);
+            } finally {
+              setTestSubmitting(false);
+            }
+          }}
+          submitting={testSubmitting}
+        />
       )}
-
-      {tab === 'progress' && (
-        <div className="cards-grid">
-          <div className="card">
-            <h3>Genel İlerleme Özeti</h3>
-            {!progressOverview && <p>Yükleniyor...</p>}
-            {progressOverview && (
-              <>
-                <p>
-                  <strong>Genel Tamamlama:</strong>{' '}
-                  %{progressOverview.overallCompletionPercent}
-                </p>
-                <p>
-                  <strong>Toplam Çözülen Test:</strong>{' '}
-                  {progressOverview.totalTestsCompleted}
-                </p>
-                <p>
-                  <strong>Toplam Çözülen Soru:</strong>{' '}
-                  {progressOverview.totalQuestionsSolved}
-                </p>
-                <p>
-                  <strong>Ortalama Başarı:</strong>{' '}
-                  %{progressOverview.averageScorePercent}
-                </p>
-              </>
-            )}
-          </div>
-
-          <div className="card">
-            <h3>Konu Bazlı İlerleme</h3>
-            {progressOverview && progressOverview.topics.length === 0 && (
-              <p>Henüz ilerleme verisi yok.</p>
-            )}
-            {progressOverview && progressOverview.topics.length > 0 && (
-              <ul>
-                {progressOverview.topics.map((t) => (
-                  <li key={t.topic}>
-                    <strong>
-                      {t.subjectName} – {t.topic}
-                    </strong>{' '}
-                    (%{t.completionPercent} tamamlandı, ortalama
-                    %{t.averageScorePercent},{' '}
-                    {t.strengthLevel === 'weak'
-                      ? 'Zayıf'
-                      : t.strengthLevel === 'strong'
-                      ? 'Güçlü'
-                      : 'Orta'}
-                    )
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="card">
-            <h3>Son 7 Gün Aktivite</h3>
-            {!progressCharts && <p>Yükleniyor...</p>}
-            {progressCharts && (
-              <ul>
-                {progressCharts.dailyData.map((d) => (
-                  <li key={d.date}>
-                    {d.date}: {d.questionsSolved} soru, {d.testsCompleted}{' '}
-                    test, ort. skor %{d.averageScore}, çalışma süresi{' '}
-                    {d.studyMinutes} dk
-                  </li>
-                ))}
-                {progressCharts.dailyData.length === 0 && (
-                  <p>Henüz aktivite verisi yok.</p>
-                )}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
-
-      {tab === 'messages' && (
-        <div className="cards-grid">
-          <div className="card">
-            <h3>Mesaj Gönder</h3>
-            <form onSubmit={handleSendMessage} className="form">
-              <div className="field">
-                <span>Öğretmen</span>
-                <select
-                  value={newMessage.toUserId}
-                  onChange={(e) =>
-                    setNewMessage((m) => ({
-                      ...m,
-                      toUserId: e.target.value,
-                    }))
-                  }
-                  required
-                >
-                  <option value="">Öğretmen Seçin</option>
-                  {teachers.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <span>Mesaj</span>
-                <textarea
-                  value={newMessage.text}
-                  onChange={(e) =>
-                    setNewMessage((m) => ({ ...m, text: e.target.value }))
-                  }
-                  rows={3}
-                  style={{ resize: 'vertical' }}
-                  required
-                />
-              </div>
-              <button type="submit">Gönder</button>
-            </form>
-          </div>
-
-          <div className="card">
-            <h3>Mesaj Geçmişi</h3>
-            <ul>
-              {messages.map((m) => (
-                <li key={m.id}>
-                  <strong>{m.fromUserName ?? m.fromUserId}</strong> → {m.toUserName ?? m.toUserId} : {m.text}
-                </li>
-              ))}
-              {messages.length === 0 && <p>Henüz mesaj yok.</p>}
-            </ul>
-          </div>
-        </div>
-      )}
-
-      {tab === 'meetings' && (
-        <div className="card">
-          <h3>Toplantılarım</h3>
-          <ul>
-            {meetings.map((mt) => (
-              <li key={mt.id}>
-                <strong>{mt.title}</strong> –{' '}
-                {new Date(mt.scheduledAt).toLocaleString()} –{' '}
-                {mt.durationMinutes} dk –{' '}
-                <a href={mt.meetingUrl} target="_blank" rel="noreferrer">
-                  Katıl
-                </a>
-              </li>
-            ))}
-            {meetings.length === 0 && <p>Henüz toplantı yok.</p>}
-          </ul>
-        </div>
-      )}
-
-      {tab === 'notifications' && (
-        <div className="card">
+      {lastTestResult && (
+        <div
+          style={{
+            position: 'fixed',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            bottom: '3.5rem',
+            zIndex: 80,
+          }}
+        >
           <div
             style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '0.5rem',
+              minWidth: 260,
+              maxWidth: 340,
+              background: 'rgba(15,23,42,0.97)',
+              borderRadius: 16,
+              padding: '1rem 1.1rem',
+              boxShadow: '0 25px 60px rgba(0,0,0,0.8)',
+              border: '1px solid rgba(55,65,81,0.9)',
+              color: '#e5e7eb',
             }}
           >
-            <h3>Bildirimlerim</h3>
-            <button
-              type="button"
-              onClick={handleMarkAllNotificationsRead}
-              disabled={unreadNotificationCount === 0}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '0.5rem',
+              }}
             >
-              Tümünü okundu işaretle
-            </button>
-          </div>
-          <ul>
-            {notifications.map((n) => (
-              <li
-                key={n.id}
+              <div>
+                <div style={{ fontSize: '0.75rem', opacity: 0.75, textTransform: 'uppercase' }}>
+                  Test Sonucu
+                </div>
+                <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>
+                  {lastTestResult.testTitle}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setLastTestResult(null)}
                 style={{
-                  opacity: n.read ? 0.7 : 1,
-                  fontWeight: n.read ? 'normal' : 'bold',
+                  padding: '0.25rem 0.7rem',
+                  fontSize: '0.8rem',
+                  border: '1px solid rgba(148,163,184,0.9)',
+                  background: 'rgba(15,23,42,0.9)',
+                  color: '#e5e7eb',
                 }}
               >
-                <span>
-                  {n.title} – {n.body}
-                </span>
-                <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem' }}>
-                  {new Date(n.createdAt).toLocaleString()}
-                </span>
-              </li>
-            ))}
-            {notifications.length === 0 && <p>Henüz bildirim yok.</p>}
-          </ul>
+                Kapat
+              </button>
+            </div>
+            <div style={{ fontSize: '0.85rem', display: 'grid', gap: '0.25rem' }}>
+              <div>
+                <strong>Doğru:</strong> {lastTestResult.correctCount}
+              </div>
+              <div>
+                <strong>Yanlış:</strong> {lastTestResult.incorrectCount}
+              </div>
+              <div>
+                <strong>Boş:</strong> {lastTestResult.blankCount}
+              </div>
+              <div>
+                <strong>Puan:</strong> %{lastTestResult.scorePercent}
+              </div>
+            </div>
+          </div>
         </div>
       )}
+      {showNotesLibrary && (
+        <NotesLibraryOverlay
+          contents={contents}
+          onClose={() => setShowNotesLibrary(false)}
+        />
+      )}
+      {liveClass && (
+        <LiveClassOverlay
+          url={liveClass.url}
+          token={liveClass.token}
+          title={liveClass.title}
+          role="student"
+          onClose={() => setLiveClass(null)}
+        />
+      )}
+    </DashboardLayout>
+  );
+};
 
-      {tab === 'calendar' && <CalendarView role="student" />}
+const TestSolveOverlay: React.FC<{
+  detail: StudentAssignmentDetail;
+  currentIndex: number;
+  onChangeIndex: (index: number) => void;
+  answers: Record<string, string>;
+  onChangeAnswer: (questionId: string, value: string) => void;
+  scratchpads: Record<string, string>;
+  onChangeScratchpad: (questionId: string, dataUrl: string) => void;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+  submitting: boolean;
+}> = ({
+  detail,
+  currentIndex,
+  onChangeIndex,
+  answers,
+  onChangeAnswer,
+  scratchpads,
+  onChangeScratchpad,
+  onClose,
+  onSubmit,
+  submitting,
+}) => {
+  const questions = detail.questions;
+  const question = questions[currentIndex] as Question | undefined;
+  const [showDrawing, setShowDrawing] = useState(false);
+  const [drawingTool, setDrawingTool] = useState<'pen' | 'line' | 'rect' | 'triangle' | 'eraser'>('pen');
+  const [drawingColor, setDrawingColor] = useState<string>('#111827');
+  const [drawingLineWidth, setDrawingLineWidth] = useState<number>(3);
+  const [eraserWidth, setEraserWidth] = useState<number>(18);
+
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+  const canvasWidth = Math.min(1200, viewportWidth - 40);
+  // Çizim paneli, başlık ve araç çubuğu için ekstra alan bırakarak yüksekliği sınırlayalım
+  const canvasHeight = Math.min(800, Math.max(300, viewportHeight - 260));
+
+  if (!question) return null;
+
+  const handleNext = () => {
+    if (currentIndex < questions.length - 1) {
+      onChangeIndex(currentIndex + 1);
+    }
+  };
+
+  const handlePrev = () => {
+    if (currentIndex > 0) {
+      onChangeIndex(currentIndex - 1);
+    }
+  };
+
+  const answerValue = answers[question.id] ?? '';
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background:
+          'radial-gradient(circle at top left, rgba(15,23,42,0.98), rgba(15,23,42,0.96))',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 60,
+        padding: '2rem 1.25rem',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 1200,
+          maxHeight: '100%',
+          background: '#0b1220',
+          borderRadius: 24,
+          padding: '1.75rem',
+          boxShadow: '0 30px 80px rgba(0,0,0,0.65)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1.75rem',
+          color: '#e5e7eb',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', opacity: 0.7 }}>
+                {detail.test?.title ?? 'Test'}
+              </div>
+              <h3 style={{ margin: '0.25rem 0 0 0', fontSize: '1.25rem' }}>
+                Soru {currentIndex + 1} / {questions.length}
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="ghost-btn"
+              style={{
+                color: '#e5e7eb',
+                border: '1px solid rgba(148,163,184,0.9)',
+                background: 'rgba(15,23,42,0.9)',
+              }}
+            >
+              Kapat
+            </button>
+          </div>
+
+          <div
+            style={{
+              padding: '1rem 1.25rem',
+              borderRadius: 16,
+              background: 'linear-gradient(135deg, #111827, #020617)',
+              border: '1px solid rgba(55,65,81,0.9)',
+              boxShadow: '0 18px 40px rgba(0,0,0,0.75)',
+            }}
+          >
+            <p style={{ margin: 0, fontSize: '1.05rem', lineHeight: 1.6 }}>{question.text}</p>
+
+            {question.type === 'multiple_choice' && question.choices && (
+              <div style={{ marginTop: '1rem', display: 'grid', gap: '0.5rem' }}>
+                {question.choices.map((choice) => (
+                  <label
+                    key={choice}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: 999,
+                      background:
+                        answerValue === choice
+                          ? 'rgba(59,130,246,0.15)'
+                          : 'rgba(15,23,42,0.8)',
+                      border:
+                        answerValue === choice
+                          ? '1px solid rgba(129,140,248,0.9)'
+                          : '1px solid rgba(31,41,55,0.9)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name={`q-${question.id}`}
+                      checked={answerValue === choice}
+                      onChange={() => onChangeAnswer(question.id, choice)}
+                    />
+                    <span style={{ fontSize: '0.9rem' }}>{choice}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {question.type === 'true_false' && (
+              <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem' }}>
+                {['true', 'false'].map((val) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => onChangeAnswer(question.id, val)}
+                    className={answerValue === val ? 'primary-btn' : 'ghost-btn'}
+                    style={
+                      answerValue === val
+                        ? undefined
+                        : {
+                            border: '1px solid rgba(148,163,184,0.9)',
+                            background: 'rgba(15,23,42,0.9)',
+                            color: '#e5e7eb',
+                          }
+                    }
+                  >
+                    {val === 'true' ? 'Doğru' : 'Yanlış'}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {question.type === 'open_ended' && (
+              <textarea
+                value={answerValue}
+                onChange={(event) => onChangeAnswer(question.id, event.target.value)}
+                placeholder="Cevabını buraya yaz"
+                style={{
+                  width: '100%',
+                  marginTop: '1rem',
+                  minHeight: 120,
+                  borderRadius: 12,
+                  border: '1px solid rgba(55,65,81,0.9)',
+                  background: '#020617',
+                  color: '#e5e7eb',
+                  resize: 'vertical',
+                  padding: '0.75rem 1rem',
+                  fontSize: '0.9rem',
+                }}
+              />
+            )}
+
+            <div
+              style={{
+                marginTop: '1.25rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={handlePrev}
+                  disabled={currentIndex === 0}
+                  style={{
+                    border: '1px solid rgba(148,163,184,0.9)',
+                    background: 'rgba(15,23,42,0.9)',
+                    color: '#e5e7eb',
+                  }}
+                >
+                  Önceki
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={handleNext}
+                  disabled={currentIndex === questions.length - 1}
+                  style={{
+                    border: '1px solid rgba(148,163,184,0.9)',
+                    background: 'rgba(15,23,42,0.9)',
+                    color: '#e5e7eb',
+                  }}
+                >
+                  Sonraki
+                </button>
+              </div>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={onSubmit}
+                disabled={submitting}
+              >
+                {submitting ? 'Gönderiliyor...' : 'Testi Bitir ve Gönder'}
+              </button>
+            </div>
+            <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-start' }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setShowDrawing(true)}
+                style={{
+                  border: '1px solid rgba(148,163,184,0.9)',
+                  background: 'rgba(15,23,42,0.9)',
+                  color: '#e5e7eb',
+                }}
+              >
+                Çizim Alanını Aç
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {showDrawing && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.95)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 70,
+            padding: '1.5rem',
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 1200,
+              maxHeight: '100%',
+              background: '#020617',
+              borderRadius: 24,
+              padding: '1.25rem',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.75)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem',
+              color: '#e5e7eb',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '0.5rem',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '0.75rem', opacity: 0.7, textTransform: 'uppercase' }}>
+                  Çizim Alanı
+                </div>
+                <div style={{ fontSize: '1rem', marginTop: '0.15rem' }}>
+                  Soru {currentIndex + 1} için çalışma
+                </div>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setShowDrawing(false)}
+                style={{
+                  border: '1px solid rgba(148,163,184,0.9)',
+                  background: 'rgba(15,23,42,0.9)',
+                  color: '#e5e7eb',
+                }}
+              >
+                Kapat
+              </button>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+                marginBottom: '0.5rem',
+              }}
+            >
+              {[
+                { id: 'pen', label: 'Serbest' },
+                { id: 'line', label: 'Düz Çizgi' },
+                { id: 'rect', label: 'Dikdörtgen' },
+                { id: 'triangle', label: 'Dik Üçgen' },
+                { id: 'eraser', label: 'Silgi' },
+              ].map((tool) => (
+                <button
+                  key={tool.id}
+                  type="button"
+                  className={drawingTool === tool.id ? 'primary-btn' : 'ghost-btn'}
+                  onClick={() => setDrawingTool(tool.id as any)}
+                  style={
+                    drawingTool === tool.id
+                      ? undefined
+                      : {
+                          border: '1px solid rgba(55,65,81,0.9)',
+                          background: 'rgba(15,23,42,0.9)',
+                          color: '#e5e7eb',
+                        }
+                  }
+                >
+                  {tool.label}
+                </button>
+              ))}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '0.4rem',
+                marginBottom: '0.5rem',
+                alignItems: 'center',
+              }}
+            >
+              <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Renk:</span>
+              {['#111827', '#1d4ed8', '#be123c', '#047857', '#eab308'].map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setDrawingColor(c)}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: '999px',
+                    border:
+                      drawingColor === c
+                        ? '2px solid #e5e7eb'
+                        : '1px solid rgba(148,163,184,0.8)',
+                    background: c,
+                    padding: 0,
+                    cursor: 'pointer',
+                  }}
+                />
+              ))}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '0.75rem',
+                marginBottom: '0.5rem',
+                alignItems: 'center',
+              }}
+            >
+              <label style={{ fontSize: '0.8rem', opacity: 0.85 }}>
+                Çizgi:
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  value={drawingLineWidth}
+                  onChange={(event) => setDrawingLineWidth(Number(event.target.value))}
+                  style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                />
+              </label>
+              <label style={{ fontSize: '0.8rem', opacity: 0.85 }}>
+                Silgi:
+                <input
+                  type="range"
+                  min={8}
+                  max={40}
+                  value={eraserWidth}
+                  onChange={(event) => setEraserWidth(Number(event.target.value))}
+                  style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                />
+              </label>
+            </div>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                borderRadius: 16,
+                background: '#020617',
+                padding: '0.5rem',
+              }}
+            >
+              <DrawingCanvas
+                width={canvasWidth}
+                height={canvasHeight}
+                initialImageDataUrl={scratchpads[question.id]}
+                onChange={(dataUrl) => onChangeScratchpad(question.id, dataUrl)}
+                tool={drawingTool}
+                color={drawingColor}
+                lineWidth={drawingLineWidth}
+                eraserWidth={eraserWidth}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
+const NotesLibraryOverlay: React.FC<{
+  contents: StudentContent[];
+  onClose: () => void;
+}> = ({ contents, onClose }) => {
+  const gradeOptions = ['9', '10', '11', '12'] as const;
+  const [activeGrade, setActiveGrade] = useState<string>('9');
+
+  const SUBJECT_LABELS: Record<string, string> = {
+    sub1: 'Matematik',
+    sub2: 'Fizik',
+    sub3: 'Biyoloji',
+    sub4: 'Kimya',
+  };
+
+  const contentsForGrade = contents.filter((c) => {
+    const gl = c.gradeLevel ?? '9';
+    return gl === activeGrade;
+  });
+
+  const subjectIds = Array.from(
+    new Set(contentsForGrade.map((c) => c.subjectId).filter(Boolean)),
+  ) as string[];
+  const [activeSubject, setActiveSubject] = useState<string | null>(
+    subjectIds[0] ?? null,
+  );
+
+  const contentsForSubject = contentsForGrade.filter((c) =>
+    activeSubject ? c.subjectId === activeSubject : true,
+  );
+  const topics = Array.from(
+    new Set(
+      contentsForSubject.map((c) => (c.topic && c.topic.trim()) || 'Genel'),
+    ),
+  );
+  const [activeTopic, setActiveTopic] = useState<string | null>(
+    topics[0] ?? null,
+  );
+
+  const filteredContents = contentsForSubject.filter((c) => {
+    const topic = (c.topic && c.topic.trim()) || 'Genel';
+    return activeTopic ? topic === activeTopic : true;
+  });
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background:
+          'radial-gradient(circle at top left, rgba(15,23,42,0.96), rgba(15,23,42,0.98))',
+        zIndex: 65,
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start',
+        padding: '4.5rem 1.25rem 2rem',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 1400,
+          maxHeight: '100%',
+          background: '#020617',
+          borderRadius: 24,
+          padding: '1.5rem',
+          boxShadow: '0 30px 80px rgba(0,0,0,0.85)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1.25rem',
+          color: '#e5e7eb',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '1rem',
+          }}
+        >
+          <div>
+            <div
+              style={{ fontSize: '0.8rem', opacity: 0.75, textTransform: 'uppercase' }}
+            >
+              Ders Notları
+            </div>
+            <h3 style={{ margin: '0.15rem 0 0', fontSize: '1.25rem' }}>
+              Konu Anlatımları
+            </h3>
+          </div>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={onClose}
+            style={{
+              border: '1px solid rgba(148,163,184,0.9)',
+              background: 'rgba(15,23,42,0.9)',
+              color: '#e5e7eb',
+            }}
+          >
+            Kapat
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 260px) minmax(0, 1fr)',
+            gap: '1rem',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem',
+              padding: '0.9rem 1rem',
+              borderRadius: 18,
+              background: 'rgba(15,23,42,0.85)',
+              border: '1px solid rgba(51,65,85,0.9)',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>Sınıf</div>
+              <div
+                style={{
+                  marginTop: '0.4rem',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: '0.4rem',
+                }}
+              >
+                {gradeOptions.map((grade) => (
+                  <button
+                    key={grade}
+                    type="button"
+                    className={activeGrade === grade ? 'primary-btn' : 'ghost-btn'}
+                    onClick={() => setActiveGrade(grade)}
+                    style={
+                      activeGrade === grade
+                        ? undefined
+                        : {
+                            border: '1px solid rgba(55,65,81,0.9)',
+                            background: 'rgba(15,23,42,0.9)',
+                            color: '#e5e7eb',
+                          }
+                    }
+                  >
+                    {grade}. Sınıf
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: '0.8rem', opacity: 0.8, marginBottom: '0.3rem' }}>
+                Ders
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.4rem',
+                }}
+              >
+                {subjectIds.length === 0 && (
+                  <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>
+                    Bu sınıf için içerik yok.
+                  </span>
+                )}
+                {subjectIds.map((subjectId) => (
+                  <button
+                    key={subjectId}
+                    type="button"
+                    className={activeSubject === subjectId ? 'primary-btn' : 'ghost-btn'}
+                    onClick={() => setActiveSubject(subjectId)}
+                    style={
+                      activeSubject === subjectId
+                        ? undefined
+                        : {
+                            border: '1px solid rgba(55,65,81,0.9)',
+                            background: 'rgba(15,23,42,0.9)',
+                            color: '#e5e7eb',
+                          }
+                    }
+                  >
+                    {SUBJECT_LABELS[subjectId] ?? subjectId}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: '0.8rem', opacity: 0.8, marginBottom: '0.3rem' }}>
+                Konu
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.4rem',
+                }}
+              >
+                {topics.length === 0 && (
+                  <span style={{ fontSize: '0.8rem', opacity: 0.75 }}>
+                    Henüz konu için içerik yok.
+                  </span>
+                )}
+                {topics.map((topic) => (
+                  <button
+                    key={topic}
+                    type="button"
+                    className={activeTopic === topic ? 'primary-btn' : 'ghost-btn'}
+                    onClick={() => setActiveTopic(topic)}
+                    style={
+                      activeTopic === topic
+                        ? undefined
+                        : {
+                            border: '1px solid rgba(55,65,81,0.9)',
+                            background: 'rgba(15,23,42,0.9)',
+                            color: '#e5e7eb',
+                          }
+                    }
+                  >
+                    {topic}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              borderRadius: 18,
+              background: 'rgba(15,23,42,0.92)',
+              border: '1px solid rgba(51,65,85,0.9)',
+              padding: '1rem 1.1rem',
+              overflowY: 'auto',
+            }}
+          >
+            {filteredContents.length === 0 ? (
+              <div className="empty-state">Bu filtrelerde içerik bulunamadı.</div>
+            ) : (
+              <div className="list-stack">
+                {filteredContents.map((content) => {
+                  const isVideo = (content.url ?? '').toLowerCase().endsWith('.mp4');
+                  return (
+                    <div
+                      className="list-row"
+                      key={content.id}
+                      style={{
+                        cursor: content.url ? 'pointer' : 'default',
+                        background: 'rgba(248,250,252,0.96)',
+                        borderRadius: 16,
+                        border: '1px solid rgba(148,163,184,0.4)',
+                        color: '#0f172a',
+                      }}
+                      onClick={() => {
+                        if (!content.url) return;
+                        window.open(
+                          resolveContentUrl(content.url!),
+                          '_blank',
+                          'noopener,noreferrer',
+                        );
+                      }}
+                    >
+                      <div>
+                        <strong style={{ color: '#0f172a' }}>{content.title}</strong>
+                        <small style={{ color: '#4b5563' }}>
+                          {isVideo ? 'Video' : 'PDF / Doküman'}
+                        </small>
+                      </div>
+                      {content.url && (
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            window.open(
+                              resolveContentUrl(content.url!),
+                              '_blank',
+                              'noopener,noreferrer',
+                            );
+                          }}
+                        >
+                          Aç
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const StudentOverview: React.FC<{
+  metrics: Array<{
+    label: string;
+    value: string;
+    helper?: string;
+    trendLabel?: string;
+    trendTone?: 'positive' | 'neutral' | 'negative';
+  }>;
+  meetings: StudentMeeting[];
+  events: CalendarEvent[];
+  groupedAssignments: Record<AssignmentStatus, StudentAssignment[]>;
+  contents: StudentContent[];
+  onJoinMeeting: () => void;
+  onOpenContentLibrary: () => void;
+  loading: boolean;
+  joinMeetingHint?: string | null;
+}> = ({ metrics, meetings, events, groupedAssignments, contents, onJoinMeeting, onOpenContentLibrary, loading, joinMeetingHint }) => (
+  <>
+    <div className="metric-grid">
+      {metrics.map((metric) => (
+        <MetricCard key={metric.label} {...metric}>
+          <div className="sparkline-bar" />
+        </MetricCard>
+      ))}
+    </div>
+
+    <div className="dual-grid">
+      <GlassCard title="Bugünkü Plan" subtitle="Toplantı ve ders bağlantıları">
+        <div className="list-stack">
+          <div className="list-row">
+            <div>
+              <strong>{meetings[0]?.title ?? 'Canlı Ders'}</strong>
+              <small>
+                {meetings[0]
+                  ? `${formatShortDate(meetings[0].scheduledAt)}`
+                  : 'Planlı ders bulunamadı'}
+              </small>
+            </div>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={onJoinMeeting}
+              disabled={!meetings.length}
+            >
+              Derse Katıl <ArrowRight size={16} />
+            </button>
+          </div>
+          <div className="list-row">
+            <div>
+              <strong>İçerik Notları</strong>
+              <small>{events[0]?.title ?? 'Takvimden içerik seçin'}</small>
+            </div>
+            <button type="button" className="ghost-btn" onClick={onOpenContentLibrary}>
+              Ders Notlarını Aç
+            </button>
+          </div>
+          {joinMeetingHint && (
+            <div className="card-subtitle" style={{ marginTop: '0.35rem' }}>
+              {joinMeetingHint}
+            </div>
+          )}
+        </div>
+      </GlassCard>
+
+      <GlassCard title="Haftalık Takvim" subtitle="Planlı etkinlikler">
+        {loading && <div className="empty-state">Takvim yükleniyor...</div>}
+        {!loading && events.length === 0 && <div className="empty-state">Takvimde kayıt yok.</div>}
+        {!loading && events.length > 0 && (
+          <div className="calendar-events-list">
+            {events.slice(0, 5).map((event) => {
+              const t = (event.type || '').toLowerCase();
+              const title = (event.title || '').toLowerCase();
+              let Icon = CalendarCheck;
+              if (t.includes('test') || title.includes('test')) Icon = ClipboardList;
+              else if (t.includes('meeting') || t.includes('live') || title.includes('canlı')) Icon = Video;
+              else if (t.includes('lesson') || t.includes('ders')) Icon = BookOpen;
+              return (
+                <div key={event.id} className="calendar-event calendar-event-inline">
+                  <span className="calendar-event-icon"><Icon size={14} /></span>
+                  <div>
+                    <span className="calendar-event-title">{event.title}</span>
+                    <span className="calendar-event-meta">{formatShortDate(event.startDate)} · {event.status ?? 'Plan'}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </GlassCard>
+    </div>
+
+    <GlassCard title="Konu Anlatımları" subtitle="Öğretmeninizin paylaştığı PDF ve videolar">
+      <div className="list-stack">
+        {(contents ?? []).slice(0, 6).map((content) => (
+          <div className="list-row" key={content.id}>
+            <div>
+              <strong>{content.title}</strong>
+              <small>{(content.url ?? '').toLowerCase().endsWith('.mp4') ? 'Video' : 'PDF / Doküman'}</small>
+            </div>
+            {content.url && (
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() =>
+                  window.open(resolveContentUrl(content.url!), '_blank', 'noopener,noreferrer')
+                }
+              >
+                Aç
+              </button>
+            )}
+          </div>
+        ))}
+        {(!contents || contents.length === 0) && (
+          <div className="empty-state">Henüz içerik yüklenmedi.</div>
+        )}
+      </div>
+    </GlassCard>
+
+    <GlassCard title="Ödev Akışı" subtitle="Görev durumu">
+      <div className="kanban">
+        <KanbanColumn title="Bekleyen" count={groupedAssignments.todo.length}>
+          {groupedAssignments.todo.map((assignment) => (
+            <KanbanCard key={assignment.id} assignment={assignment} />
+          ))}
+        </KanbanColumn>
+        <KanbanColumn title="Geciken" count={groupedAssignments.overdue.length}>
+          {groupedAssignments.overdue.map((assignment) => (
+            <KanbanCard key={assignment.id} assignment={assignment} completed />
+          ))}
+        </KanbanColumn>
+      </div>
+    </GlassCard>
+  </>
+);
+
+const KanbanColumn: React.FC<{ title: string; count: number; children: React.ReactNode }> = ({
+  title,
+  count,
+  children,
+}) => (
+  <div className="kanban-column">
+    <h4>
+      {title} ({count})
+    </h4>
+    {count === 0 ? <p className="card-subtitle">Henüz öğe yok</p> : children}
+  </div>
+);
+
+const KanbanCard: React.FC<{ assignment: StudentAssignment; completed?: boolean }> = ({ assignment, completed }) => (
+  <div className="kanban-card">
+    <strong>{assignment.title}</strong>
+    <p className="card-subtitle">{formatShortDate(assignment.dueDate)}</p>
+    <TagChip label={completed ? 'Geciken' : 'Bekliyor'} tone={completed ? 'warning' : 'info'} />
+    {completed && (
+      <span className="progress-pill" style={{ marginTop: '0.5rem' }}>
+        <CheckCircle size={14} /> Teslim bekleniyor
+      </span>
+    )}
+  </div>
+);
+
+const StudentAssignments: React.FC<{
+  assignments: StudentAssignment[];
+  onSubmit: (assignment: StudentAssignment) => Promise<void>;
+  loading: boolean;
+}> = ({ assignments, onSubmit, loading }) => (
+  <GlassCard
+    title="Ödev Takibi"
+    subtitle="Görevleri gerçek zamanlı güncelle"
+    actions={<TagChip label="Canlı API" tone="success" />}
+  >
+    {loading && <div className="empty-state">Ödevler yükleniyor...</div>}
+    {!loading && assignments.length === 0 && <div className="empty-state">Aktif ödev yok.</div>}
+    <div className="list-stack">
+      {assignments.map((assignment) => (
+        <div className="list-row" key={assignment.id}>
+          <div>
+            <strong>{assignment.title}</strong>
+            <small>Son teslim: {formatShortDate(assignment.dueDate)}</small>
+          </div>
+          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+            <button type="button" className="ghost-btn" onClick={() => onSubmit(assignment)}>
+              Devam
+            </button>
+            <button type="button" className="primary-btn" onClick={() => onSubmit(assignment)}>
+              Teslim Et
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  </GlassCard>
+);
+
+const StudentGrades: React.FC<{
+  progress: ProgressOverview | null;
+  charts: ProgressCharts | null;
+  loading: boolean;
+}> = ({ progress, charts, loading }) => (
+  <div className="dual-grid">
+    <GlassCard
+      title="Sınav Performansı"
+      subtitle="Son 7 gün ortalama"
+    >
+      {loading && <div className="empty-state">Analiz yükleniyor...</div>}
+      <div className="list-stack">
+        <div className="list-row">
+          <div>
+            <strong>Ortalama Skor</strong>
+            <small>Güncel başarı</small>
+          </div>
+          <TagChip label={`${progress?.averageScorePercent ?? 0}%`} tone="success" />
+        </div>
+        <div className="list-row">
+          <div>
+            <strong>Toplam Soru</strong>
+            <small>Bu hafta çözülen</small>
+          </div>
+          <TagChip label={`${progress?.totalQuestionsSolved ?? 0}`} tone="warning" />
+        </div>
+      </div>
+    </GlassCard>
+
+    <GlassCard title="Ders Bazlı Gelişim" subtitle="Konu tamamlanma">
+      <div className="list-stack">
+        {(progress?.topics ?? []).slice(0, 4).map((topic) => (
+          <div className="list-row" key={topic.topic}>
+            <div>
+              <strong>{topic.topic}</strong>
+              <small>Tamamlama: {topic.completionPercent}%</small>
+            </div>
+            <span className="progress-pill">
+              {topic.averageScorePercent}% <Calendar size={14} />
+            </span>
+          </div>
+        ))}
+        {charts?.daily?.length === 0 && <div className="empty-state">Veri bulunamadı.</div>}
+      </div>
+    </GlassCard>
+  </div>
+);

@@ -98,6 +98,7 @@ export interface TestAnswer {
   questionId: string;
   answer: string;
   isCorrect: boolean;
+  scratchpadImageData?: string;
 }
 
 export interface TestResult {
@@ -271,6 +272,18 @@ export interface TeacherDashboardSummary {
   testsAssignedThisWeek: number;
   averageScoreLast7Days: number;
   recentActivity: string[];
+}
+
+export type TeacherAnnouncementStatus = 'draft' | 'planned' | 'sent';
+
+export interface TeacherAnnouncement {
+  id: string;
+  teacherId: string;
+  title: string;
+  message: string;
+  status: TeacherAnnouncementStatus;
+  createdAt: string;
+  scheduledDate?: string;
 }
 
 export interface StudentDashboardSummary {
@@ -577,7 +590,7 @@ export type ParentNotificationType =
   | 'low_activity'
   | 'low_performance';
 
-export interface ParentNotification extends Notification {
+export interface ParentNotification extends Omit<Notification, 'type'> {
   studentId?: string;
   type: ParentNotificationType;
 }

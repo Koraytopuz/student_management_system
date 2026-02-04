@@ -1,43 +1,188 @@
 import express from 'express';
+import { GoogleGenAI } from '@google/genai';
+import PDFDocument from 'pdfkit';
+import ExcelJS from 'exceljs';
+import path from 'path';
+import fs from 'fs';
+import multer from 'multer';
 import { authenticate, AuthenticatedRequest } from './auth';
-import {
-  allUsers,
-  assignments,
-  classGroups,
-  contents,
-  meetings,
-  messages,
-  notifications,
-  parents,
-  questions,
-  students,
-  tests,
-  testResults,
-  watchRecords,
-} from './data';
+import { prisma } from './db';
 import {
   CalendarEvent,
   CalendarEventType,
   TeacherDashboardSummary,
+  TeacherAnnouncement,
   TestResult,
+  Notification as AppNotification,
 } from './types';
+import { buildRoomName, createLiveKitToken, getLiveKitUrl } from './livekit';
 
 const router = express.Router();
+
+const USER_CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim();
+const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const TEACHER_SYSTEM_PROMPT =
+  "Rolün: 20 yıllık deneyime sahip, soru bankası yazarlığı yapmış bir başöğretmen asistanı. Görevin: Kullanıcı (Öğretmen) sana 'Sınıf Seviyesi', 'Konu', 'Soru Sayısı' ve 'Zorluk Derecesi' (Kolay/Orta/Zor) verecek. Sen bu verilere göre hatasız bir test hazırlayacaksın.\n\n" +
+  'Kurallar:\n\n' +
+  '• Sorular Bloom Taksonomisi\'ne göre belirtilen zorluk seviyesine uygun tasarlanmalıdır (örneğin zor seviye analiz/sentez içermeli).\n' +
+  '• Soru köklerini **kalın** yaz.\n' +
+  '• Şıkları A), B), C), D) biçiminde alt alta yaz; lise seviyesi belirtildiyse E) şıkkını ekle.\n' +
+  '• Tüm sorular tamamlandıktan sonra `---` çizgisi çek ve "Cevap Anahtarı ve Öğretmen Notları" başlığı altında hem doğru şıkları hem de soruların ölçtüğü kazanımları yaz.\n' +
+  '• Daima Türkçe konuş.';
+
+type AiChatMessage = {
+  role: 'user' | 'assistant';
+  content?: string;
+};
+
+type AiAttachment = {
+  filename: string;
+  mimeType: string;
+  buffer: Buffer;
+};
+
+function resolveTeacherModelCandidates() {
+  if (USER_CONFIGURED_GEMINI_MODEL) {
+    return [USER_CONFIGURED_GEMINI_MODEL];
+  }
+  return [DEFAULT_MODEL];
+}
+
+function extractResponseText(response: unknown): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const maybeText = (response as { text?: string | (() => string) }).text;
+  if (typeof maybeText === 'function') {
+    try {
+      const value = maybeText();
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    } catch {
+      // ignore
+    }
+  } else if (typeof maybeText === 'string' && maybeText.trim()) {
+    return maybeText.trim();
+  }
+
+  const candidates = (response as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    const parts = candidates[0]?.content?.parts;
+    if (Array.isArray(parts)) {
+      const joined = parts
+        .map((part) => (part?.text ?? '').trim())
+        .filter(Boolean)
+        .join('\n');
+      if (joined.trim()) {
+        return joined.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as any).message === 'string') {
+    return (error as any).message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Bilinmeyen hata';
+  }
+}
+
+function isModelNotFoundError(error: unknown) {
+  const message = extractErrorMessage(error).toLowerCase();
+  return message.includes('not found') || message.includes('unknown model');
+}
+
+function toGeminiContents(history: AiChatMessage[], latest: AiChatMessage) {
+  const sanitized = [...history, latest]
+    .filter((item) => item.content && item.content.trim().length > 0)
+    .slice(-8)
+    .map((item) => ({
+      role: item.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: item.content!.trim() }],
+    }));
+
+  return sanitized;
+}
+
+async function generatePdfFromText(text: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(12).text(text, { align: 'left' });
+    doc.end();
+  });
+}
+
+async function generateExcelFromText(text: string): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Sorular');
+  sheet.columns = [{ header: 'Soru / İçerik', key: 'content', width: 120 }];
+
+  text.split(/\n\s*\n/).forEach((block) => {
+    const trimmed = block.trim();
+    if (trimmed) {
+      sheet.addRow({ content: trimmed });
+    }
+  });
+
+  const data = await workbook.xlsx.writeBuffer();
+  return Buffer.isBuffer(data) ? data : Buffer.from(data);
+}
+
+// Yüklenen dosyalar için klasörler
+const projectRoot = path.join(__dirname, '..', '..');
+const frontendPublicDir = path.join(projectRoot, 'frontend', 'public');
+const publicVideosDir = path.join(frontendPublicDir, 'videos');
+const publicPdfsDir = path.join(frontendPublicDir, 'pdfs');
+const uploadsTempDir = path.join(__dirname, '..', 'uploads', 'tmp');
+
+[publicVideosDir, publicPdfsDir, uploadsTempDir].forEach((dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+const videoUpload = multer({
+  dest: uploadsTempDir,
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100MB
+  },
+});
 
 // Öğretmen dashboard özeti
 router.get(
   '/dashboard',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const teacherId = req.user!.id;
-    const teacherClasses = classGroups.filter((c) => c.teacherId === teacherId);
-    const teacherStudents = students.filter((s) => teacherClasses.some((c) => c.id === s.classId));
-
-    const now = Date.now();
-    const last7Days = now - 7 * 24 * 60 * 60 * 1000;
-    const recentResults: TestResult[] = testResults.filter(
-      (r) => new Date(r.completedAt).getTime() >= last7Days,
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { include: { student: true } } },
+    });
+    const teacherStudentIds = teacherClasses.flatMap((c) =>
+      c.students.map((s) => s.studentId),
     );
+
+    const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentResults = await prisma.testResult.findMany({
+      where: {
+        studentId: { in: teacherStudentIds },
+        completedAt: { gte: last7Days },
+      },
+      orderBy: { completedAt: 'asc' },
+    });
 
     const averageScoreLast7Days =
       recentResults.length === 0
@@ -46,21 +191,41 @@ router.get(
             recentResults.reduce((sum, r) => sum + r.scorePercent, 0) / recentResults.length,
           );
 
-    const testsAssignedThisWeek = assignments.filter((a) => {
-      if (!a.testId) return false;
-      const createdTime = new Date(a.dueDate).getTime() - 3 * 24 * 60 * 60 * 1000;
-      return createdTime >= last7Days;
-    }).length;
+    const testsAssignedThisWeek = await prisma.assignment.count({
+      where: {
+        createdAt: { gte: last7Days },
+        testId: { not: null },
+      },
+    });
+
+    // Son aktivitelerde öğrenci id ve test id yerine insan okunur isimler göster
+    const studentIdsForNames = [...new Set(recentResults.map((r) => r.studentId))];
+    const testIdsForTitles = [...new Set(recentResults.map((r) => r.testId))];
+
+    const [studentsForNames, testsForTitles] = await Promise.all([
+      prisma.user.findMany({
+        where: { id: { in: studentIdsForNames } },
+        select: { id: true, name: true },
+      }),
+      prisma.test.findMany({
+        where: { id: { in: testIdsForTitles } },
+        select: { id: true, title: true },
+      }),
+    ]);
+
+    const studentNameMap = new Map(studentsForNames.map((s) => [s.id, s.name]));
+    const testTitleMap = new Map(testsForTitles.map((t) => [t.id, t.title]));
 
     const recentActivity: string[] = recentResults
       .slice(-5)
-      .map(
-        (r) =>
-          `Öğrenci ${r.studentId} ${r.scorePercent}% skorla ${r.testId} testini tamamladı`,
-      );
+      .map((r) => {
+        const studentName = studentNameMap.get(r.studentId) ?? 'Bilinmeyen Öğrenci';
+        const testTitle = testTitleMap.get(r.testId) ?? 'Bilinmeyen Test';
+        return `Öğrenci ${studentName} ${r.scorePercent}% skorla "${testTitle}" testini tamamladı`;
+      });
 
     const summary: TeacherDashboardSummary = {
-      totalStudents: teacherStudents.length,
+      totalStudents: teacherStudentIds.length,
       testsAssignedThisWeek,
       averageScoreLast7Days,
       recentActivity,
@@ -70,19 +235,197 @@ router.get(
   },
 );
 
+router.post(
+  '/ai/chat',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const { message, history, format } = req.body as {
+      message?: string;
+      history?: AiChatMessage[];
+      format?: string;
+    };
+
+    const trimmed = message?.trim();
+    if (!trimmed) {
+      return res.status(400).json({ error: 'message alanı zorunludur' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY ayarlı değil' });
+    }
+
+    const contents = toGeminiContents(history ?? [], { role: 'user', content: trimmed });
+    const systemInstruction = [
+      {
+        role: 'user' as const,
+        parts: [{ text: TEACHER_SYSTEM_PROMPT }],
+      },
+    ];
+
+    const requestedFormat = typeof format === 'string' ? format.toLowerCase() : undefined;
+    const genAi = new GoogleGenAI({ apiKey });
+    const modelCandidates = resolveTeacherModelCandidates();
+
+    try {
+      let lastError: { model: string; error: unknown } | null = null;
+
+      for (const model of modelCandidates) {
+        try {
+          const response = await genAi.models.generateContent({
+            model,
+            contents: [...systemInstruction, ...contents],
+            generationConfig: {
+              temperature: 0.4,
+              maxOutputTokens: 768,
+            },
+          } as Parameters<typeof genAi.models.generateContent>[0]);
+
+          const reply = extractResponseText(response);
+          if (!reply) {
+            return res.status(502).json({ error: 'Yanıt alınamadı' });
+          }
+
+          let attachment: AiAttachment | null = null;
+          if (requestedFormat === 'pdf') {
+            const buffer = await generatePdfFromText(reply);
+            attachment = {
+              filename: `soru-paketi-${Date.now()}.pdf`,
+              mimeType: 'application/pdf',
+              buffer,
+            };
+          } else if (requestedFormat === 'xlsx' || requestedFormat === 'xls' || requestedFormat === 'excel') {
+            const buffer = await generateExcelFromText(reply);
+            attachment = {
+              filename: `soru-paketi-${Date.now()}.xlsx`,
+              mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              buffer,
+            };
+          }
+
+          return res.json({
+            reply,
+            model,
+            attachment: attachment
+              ? {
+                  filename: attachment.filename,
+                  mimeType: attachment.mimeType,
+                  data: attachment.buffer.toString('base64'),
+                }
+              : undefined,
+          });
+        } catch (error) {
+          lastError = { model, error };
+          if (isModelNotFoundError(error)) {
+            continue;
+          }
+          // eslint-disable-next-line no-console
+          console.error('[TEACHER_AI] Gemini API error', { model, error });
+          return res.status(502).json({ error: extractErrorMessage(error) });
+        }
+      }
+
+      if (lastError) {
+        // eslint-disable-next-line no-console
+        console.error('[TEACHER_AI] Gemini API error', lastError);
+        return res.status(502).json({ error: extractErrorMessage(lastError.error) });
+      }
+
+      return res.status(502).json({ error: 'Yapay zeka yanıt veremedi' });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[TEACHER_AI] Gemini API request failed', error);
+      return res.status(500).json({ error: 'Yapay zeka servisine bağlanılamadı' });
+    }
+  },
+);
+
+router.get(
+  '/announcements',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const items = await prisma.teacherAnnouncement.findMany({
+      where: { teacherId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return res.json(
+      items.map((a) => ({
+        id: a.id,
+        teacherId: a.teacherId,
+        title: a.title,
+        message: a.message,
+        status: a.status,
+        createdAt: a.createdAt.toISOString(),
+        scheduledDate: a.scheduledDate?.toISOString(),
+      })),
+    );
+  },
+);
+
+router.post(
+  '/announcements',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const { title, message, scheduledDate } = req.body as {
+      title?: string;
+      message?: string;
+      scheduledDate?: string;
+    };
+
+    if (!title || !message) {
+      return res.status(400).json({ error: 'title ve message alanları zorunludur' });
+    }
+
+    const announcement = await prisma.teacherAnnouncement.create({
+      data: {
+        teacherId,
+        title: title.trim(),
+        message: message.trim(),
+        status: scheduledDate ? 'planned' : 'draft',
+        scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
+      },
+    });
+    return res.status(201).json({
+      id: announcement.id,
+      teacherId: announcement.teacherId,
+      title: announcement.title,
+      message: announcement.message,
+      status: announcement.status,
+      createdAt: announcement.createdAt.toISOString(),
+      scheduledDate: announcement.scheduledDate?.toISOString(),
+    });
+  },
+);
+
 // Öğrenci listesi
 router.get(
   '/students',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const teacherId = req.user!.id;
-    const teacherClasses = classGroups.filter((c) => c.teacherId === teacherId);
-    const teacherStudents = students.map((s) => {
-      const classInfo = teacherClasses.find((c) => c.id === s.classId);
-      return classInfo ? s : null;
-    }).filter((s): s is typeof students[number] => s !== null);
-
-    return res.json(teacherStudents);
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { include: { student: true } } },
+    });
+    const studentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
+    );
+    const teacherStudents = await prisma.user.findMany({
+      where: { id: { in: [...studentIds] }, role: 'student' },
+      select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+    });
+    return res.json(
+      teacherStudents.map((s) => ({
+        id: s.id,
+        name: s.name,
+        email: s.email,
+        role: 'student' as const,
+        gradeLevel: s.gradeLevel ?? '',
+        classId: s.classId ?? '',
+      })),
+    );
   },
 );
 
@@ -90,19 +433,33 @@ router.get(
 router.get(
   '/parents',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const teacherId = req.user!.id;
-    const teacherClasses = classGroups.filter((c) => c.teacherId === teacherId);
-    const teacherStudentIds = students
-      .filter((s) => teacherClasses.some((c) => c.id === s.classId))
-      .map((s) => s.id);
-
-    // Bu öğrencilerin velilerini bul
-    const teacherParents = parents.filter((p) =>
-      p.studentIds.some((sid) => teacherStudentIds.includes(sid)),
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const teacherStudentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
     );
-
-    return res.json(teacherParents);
+    const parentStudents = await prisma.parentStudent.findMany({
+      where: { studentId: { in: [...teacherStudentIds] } },
+      include: { parent: { select: { id: true, name: true, email: true } } },
+    });
+    const parentIds = [...new Set(parentStudents.map((ps) => ps.parentId))];
+    const parentsData = await prisma.user.findMany({
+      where: { id: { in: parentIds }, role: 'parent' },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
+    return res.json(
+      parentsData.map((p) => ({
+        id: p.id,
+        name: p.name,
+        email: p.email,
+        role: 'parent' as const,
+        studentIds: p.parentStudents.map((ps) => ps.studentId),
+      })),
+    );
   },
 );
 
@@ -110,24 +467,70 @@ router.get(
 router.get(
   '/students/:id',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const id = String(req.params.id);
-    const student = students.find((s) => s.id === id);
+    const student = await prisma.user.findFirst({
+      where: { id, role: 'student' },
+      select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+    });
     if (!student) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    const studentAssignments = assignments.filter((a) =>
-      a.assignedStudentIds.includes(id),
-    );
-    const studentResults = testResults.filter((r) => r.studentId === id);
-    const studentWatch = watchRecords.filter((w) => w.studentId === id);
+    const [assignmentsData, studentResults, studentWatch] = await Promise.all([
+      prisma.assignment.findMany({
+        where: { students: { some: { studentId: id } } },
+        include: { students: { select: { studentId: true } } },
+      }),
+      prisma.testResult.findMany({ where: { studentId: id } }),
+      prisma.watchRecord.findMany({ where: { studentId: id } }),
+    ]);
+
+    const assignmentsForApi = assignmentsData.map((a) => ({
+      id: a.id,
+      title: a.title,
+      description: a.description ?? undefined,
+      testId: a.testId ?? undefined,
+      contentId: a.contentId ?? undefined,
+      classId: a.classId ?? undefined,
+      assignedStudentIds: a.students.map((s) => s.studentId),
+      dueDate: a.dueDate.toISOString(),
+      points: a.points,
+    }));
+
+    const resultsForApi = studentResults.map((r) => ({
+      id: r.id,
+      assignmentId: r.assignmentId,
+      studentId: r.studentId,
+      testId: r.testId,
+      correctCount: r.correctCount,
+      incorrectCount: r.incorrectCount,
+      blankCount: r.blankCount,
+      scorePercent: r.scorePercent,
+      durationSeconds: r.durationSeconds,
+      completedAt: r.completedAt.toISOString(),
+      answers: [] as { questionId: string; answer: string; isCorrect: boolean }[],
+    }));
 
     return res.json({
-      student,
-      assignments: studentAssignments,
-      results: studentResults,
-      watchRecords: studentWatch,
+      student: {
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        role: 'student' as const,
+        gradeLevel: student.gradeLevel ?? '',
+        classId: student.classId ?? '',
+      },
+      assignments: assignmentsForApi,
+      results: resultsForApi,
+      watchRecords: studentWatch.map((w) => ({
+        id: w.id,
+        contentId: w.contentId,
+        studentId: w.studentId,
+        watchedSeconds: w.watchedSeconds,
+        completed: w.completed,
+        lastWatchedAt: w.lastWatchedAt.toISOString(),
+      })),
     });
   },
 );
@@ -136,8 +539,29 @@ router.get(
 router.get(
   '/contents',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
-    return res.json(contents);
+  async (_req: AuthenticatedRequest, res) => {
+    const list = await prisma.contentItem.findMany({
+      include: {
+        classGroups: { select: { classGroupId: true } },
+        students: { select: { studentId: true } },
+      },
+    });
+    return res.json(
+      list.map((c) => ({
+        id: c.id,
+        title: c.title,
+        description: c.description ?? undefined,
+        type: c.type,
+        subjectId: c.subjectId,
+        topic: c.topic,
+        gradeLevel: c.gradeLevel,
+        durationMinutes: c.durationMinutes ?? undefined,
+        tags: c.tags,
+        url: c.url,
+        assignedToClassIds: c.classGroups.map((g) => g.classGroupId),
+        assignedToStudentIds: c.students.map((s) => s.studentId),
+      })),
+    );
   },
 );
 
@@ -145,8 +569,20 @@ router.get(
 router.get(
   '/tests',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
-    return res.json(tests);
+  async (_req: AuthenticatedRequest, res) => {
+    const list = await prisma.test.findMany({
+      include: { questions: { select: { id: true }, orderBy: { orderIndex: 'asc' } } },
+    });
+    return res.json(
+      list.map((t) => ({
+        id: t.id,
+        title: t.title,
+        subjectId: t.subjectId,
+        topic: t.topic,
+        questionIds: t.questions.map((q) => q.id),
+        createdByTeacherId: t.createdByTeacherId,
+      })),
+    );
   },
 );
 
@@ -154,8 +590,21 @@ router.get(
 router.get(
   '/questions',
   authenticate('teacher'),
-  (_req: AuthenticatedRequest, res) => {
-    return res.json(questions);
+  async (_req: AuthenticatedRequest, res) => {
+    const list = await prisma.question.findMany({ orderBy: { orderIndex: 'asc' } });
+    return res.json(
+      list.map((q) => ({
+        id: q.id,
+        testId: q.testId,
+        text: q.text,
+        type: q.type,
+        choices: (q.choices as string[]) ?? undefined,
+        correctAnswer: q.correctAnswer ?? undefined,
+        solutionExplanation: q.solutionExplanation ?? undefined,
+        topic: q.topic,
+        difficulty: q.difficulty,
+      })),
+    );
   },
 );
 
@@ -163,8 +612,7 @@ router.get(
 router.post(
   '/contents',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
-    const teacherId = req.user!.id;
+  async (req: AuthenticatedRequest, res) => {
     const {
       title,
       description,
@@ -202,26 +650,54 @@ router.post(
             .filter(Boolean)
         : tags ?? [];
 
-    const content = {
-      id: `cnt-${Date.now()}`,
-      title,
-      description,
-      type,
-      subjectId,
-      topic,
-      gradeLevel,
-      durationMinutes,
-      tags: tagArray,
-      url,
-      // Varsayılan olarak öğretmenin tüm sınıflarına atanabilir; şimdilik boş bırakıyoruz
+    const content = await prisma.contentItem.create({
+      data: {
+        title,
+        description,
+        type: type as 'video' | 'audio' | 'document',
+        subjectId,
+        topic,
+        gradeLevel,
+        durationMinutes,
+        tags: tagArray,
+        url,
+      },
+    });
+    return res.status(201).json({
+      id: content.id,
+      title: content.title,
+      description: content.description ?? undefined,
+      type: content.type,
+      subjectId: content.subjectId,
+      topic: content.topic,
+      gradeLevel: content.gradeLevel,
+      durationMinutes: content.durationMinutes ?? undefined,
+      tags: content.tags,
+      url: content.url,
       assignedToClassIds: [],
       assignedToStudentIds: [],
-      createdByTeacherId: teacherId,
-    } as any;
+    });
+  },
+);
 
-    // contents tipi ContentItem olduğu için type assert kullanıyoruz
-    (contents as any).push(content);
-    return res.status(201).json(content);
+// Video yükleme (öğretmen içerikleri için)
+router.post(
+  '/contents/upload-video',
+  authenticate('teacher'),
+  videoUpload.single('file'),
+  (req: AuthenticatedRequest, res) => {
+    const uploadedFile = (req as AuthenticatedRequest & { file?: Express.Multer.File }).file;
+    if (!uploadedFile) {
+      return res.status(400).json({ error: 'Video dosyası gereklidir' });
+    }
+    // Dosyayı anlamlı bir isimle yeniden adlandır ve frontend/public/videos altına taşı
+    const original = uploadedFile.originalname || 'video.mp4';
+    const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const targetPath = path.join(publicVideosDir, `${Date.now()}-${safeName}`);
+    fs.renameSync(uploadedFile.path, targetPath);
+
+    const relativeUrl = `/videos/${path.basename(targetPath)}`;
+    return res.status(201).json({ url: relativeUrl });
   },
 );
 
@@ -229,7 +705,7 @@ router.post(
 router.post(
   '/tests',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const teacherId = req.user!.id;
     const { title, subjectId, topic } = req.body as {
       title?: string;
@@ -243,17 +719,22 @@ router.post(
         .json({ error: 'title, subjectId ve topic zorunludur' });
     }
 
-    const testId = `test-${Date.now()}`;
-    const test = {
-      id: testId,
-      title,
-      subjectId,
-      topic,
+    const test = await prisma.test.create({
+      data: {
+        title,
+        subjectId,
+        topic,
+        createdByTeacherId: teacherId,
+      },
+    });
+    return res.status(201).json({
+      id: test.id,
+      title: test.title,
+      subjectId: test.subjectId,
+      topic: test.topic,
       questionIds: [],
-      createdByTeacherId: teacherId,
-    };
-    tests.push(test);
-    return res.status(201).json(test);
+      createdByTeacherId: test.createdByTeacherId,
+    });
   },
 );
 
@@ -261,7 +742,7 @@ router.post(
 router.post(
   '/assignments',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const { title, description, testId, contentId, classId, dueDate, points } =
       req.body as {
         title?: string;
@@ -280,30 +761,47 @@ router.post(
       });
     }
 
-    let assignedStudentIds: string[] = [];
+    let studentIds: string[] = [];
     if (classId) {
-      assignedStudentIds = students
-        .filter((s) => s.classId === classId)
-        .map((s) => s.id);
+      const classStudents = await prisma.classGroupStudent.findMany({
+        where: { classGroupId: classId },
+        select: { studentId: true },
+      });
+      studentIds = classStudents.map((s) => s.studentId);
     } else {
-      // sınıf belirtilmediyse tüm öğrenciler
-      assignedStudentIds = students.map((s) => s.id);
+      const allStudents = await prisma.user.findMany({
+        where: { role: 'student' },
+        select: { id: true },
+      });
+      studentIds = allStudents.map((s) => s.id);
     }
 
-    const assignment: (typeof assignments)[number] = {
-      id: `a-${Date.now()}`,
-      title,
-      description: description ?? '',
-      testId: testId ?? '',
-      contentId: contentId ?? '',
-      classId: classId ?? '',
-      assignedStudentIds,
-      dueDate,
-      points,
-    };
-
-    assignments.push(assignment);
-    return res.status(201).json(assignment);
+    const assignment = await prisma.assignment.create({
+      data: {
+        title,
+        description,
+        testId: testId ?? undefined,
+        contentId: contentId ?? undefined,
+        classId: classId ?? undefined,
+        dueDate: new Date(dueDate),
+        points: points ?? 100,
+        students: {
+          create: studentIds.map((studentId) => ({ studentId })),
+        },
+      },
+      include: { students: { select: { studentId: true } } },
+    });
+    return res.status(201).json({
+      id: assignment.id,
+      title: assignment.title,
+      description: assignment.description ?? undefined,
+      testId: assignment.testId ?? undefined,
+      contentId: assignment.contentId ?? undefined,
+      classId: assignment.classId ?? undefined,
+      assignedStudentIds: assignment.students.map((s) => s.studentId),
+      dueDate: assignment.dueDate.toISOString(),
+      points: assignment.points,
+    });
   },
 );
 
@@ -311,8 +809,23 @@ router.post(
 router.get(
   '/assignments',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
-    return res.json(assignments);
+  async (_req: AuthenticatedRequest, res) => {
+    const list = await prisma.assignment.findMany({
+      include: { students: { select: { studentId: true } } },
+    });
+    return res.json(
+      list.map((a) => ({
+        id: a.id,
+        title: a.title,
+        description: a.description ?? undefined,
+        testId: a.testId ?? undefined,
+        contentId: a.contentId ?? undefined,
+        classId: a.classId ?? undefined,
+        assignedStudentIds: a.students.map((s) => s.studentId),
+        dueDate: a.dueDate.toISOString(),
+        points: a.points,
+      })),
+    );
   },
 );
 
@@ -320,21 +833,37 @@ router.get(
 router.get(
   '/messages',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const users = allUsers();
-    const userMessages = messages
-      .filter((m) => m.fromUserId === userId || m.toUserId === userId)
-      .map((m) => {
-        const fromUser = users.find((u) => u.id === m.fromUserId);
-        const toUser = users.find((u) => u.id === m.toUserId);
-        return {
-          ...m,
-          fromUserName: fromUser?.name ?? m.fromUserId,
-          toUserName: toUser?.name ?? m.toUserId,
-        };
-      });
-    return res.json(userMessages);
+    const messagesData = await prisma.message.findMany({
+      where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
+    });
+    const userIds = [
+      ...new Set(
+        messagesData.flatMap((m) => [m.fromUserId, m.toUserId]),
+      ),
+    ];
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u.name]));
+    return res.json(
+      messagesData.map((m) => ({
+        id: m.id,
+        fromUserId: m.fromUserId,
+        toUserId: m.toUserId,
+        studentId: m.studentId ?? undefined,
+        subject: m.subject ?? undefined,
+        text: m.text,
+        attachments: (m.attachments as Array<{ id: string; fileName: string; fileType: string; fileSize: number; url: string }>) ?? undefined,
+        read: m.read,
+        readAt: m.readAt?.toISOString(),
+        createdAt: m.createdAt.toISOString(),
+        fromUserName: userMap.get(m.fromUserId) ?? m.fromUserId,
+        toUserName: userMap.get(m.toUserId) ?? m.toUserId,
+      })),
+    );
   },
 );
 
@@ -342,7 +871,7 @@ router.get(
 router.post(
   '/messages',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const fromUserId = req.user!.id;
     const { toUserId, text } = req.body as {
       toUserId?: string;
@@ -355,32 +884,30 @@ router.post(
         .json({ error: 'toUserId ve text alanları zorunludur' });
     }
 
-    const message = {
-      id: `msg-${Date.now()}`,
-      fromUserId,
-      toUserId,
-      text,
-      createdAt: new Date().toISOString(),
-      read: false,
-    };
+    const message = await prisma.message.create({
+      data: { fromUserId, toUserId, text, read: false },
+    });
 
-    messages.push(message);
+    await prisma.notification.create({
+      data: {
+        userId: toUserId,
+        type: 'message_received',
+        title: 'Yeni mesajınız var',
+        body: 'Öğretmenden yeni bir mesaj aldınız.',
+        read: false,
+        relatedEntityType: 'message',
+        relatedEntityId: message.id,
+      },
+    });
 
-    const notification: Notification = {
-      id: `notif-${Date.now()}`,
-      userId: toUserId,
-      type: 'message_received',
-      title: 'Yeni mesajınız var',
-      body: 'Öğretmenden yeni bir mesaj aldınız.',
-      createdAt: new Date().toISOString(),
-      read: false,
-      relatedEntityType: 'message',
-      relatedEntityId: message.id,
-    };
-
-    notifications.push(notification);
-
-    return res.status(201).json(message);
+    return res.status(201).json({
+      id: message.id,
+      fromUserId: message.fromUserId,
+      toUserId: message.toUserId,
+      text: message.text,
+      createdAt: message.createdAt.toISOString(),
+      read: message.read,
+    });
   },
 );
 
@@ -388,10 +915,117 @@ router.post(
 router.get(
   '/meetings',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const userMeetings = meetings.filter((m) => m.teacherId === userId);
-    return res.json(userMeetings);
+    const meetingsData = await prisma.meeting.findMany({
+      where: { teacherId: userId },
+      include: {
+        students: { select: { studentId: true } },
+        parents: { select: { parentId: true } },
+      },
+    });
+    return res.json(
+      meetingsData.map((m) => ({
+        id: m.id,
+        type: m.type,
+        title: m.title,
+        teacherId: m.teacherId,
+        studentIds: m.students.map((s) => s.studentId),
+        parentIds: m.parents.map((p) => p.parentId),
+        scheduledAt: m.scheduledAt.toISOString(),
+        durationMinutes: m.durationMinutes,
+        meetingUrl: m.meetingUrl,
+      })),
+    );
+  },
+);
+
+// Toplantı güncelleme
+router.put(
+  '/meetings/:id',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const existing = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+
+    if (existing.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu toplantıyı düzenleme yetkiniz yok' });
+    }
+
+    const {
+      title,
+      scheduledAt,
+      durationMinutes,
+    } = req.body as {
+      title?: string;
+      scheduledAt?: string;
+      durationMinutes?: number;
+    };
+
+    if (!title && !scheduledAt && durationMinutes == null) {
+      return res.status(400).json({ error: 'Güncellenecek en az bir alan gönderilmelidir' });
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (title !== undefined) updateData.title = title;
+    if (scheduledAt !== undefined) updateData.scheduledAt = new Date(scheduledAt);
+    if (durationMinutes != null) updateData.durationMinutes = durationMinutes;
+
+    const meeting = await prisma.meeting.update({
+      where: { id: meetingId },
+      data: updateData,
+      include: {
+        students: { select: { studentId: true } },
+        parents: { select: { parentId: true } },
+      },
+    });
+
+    return res.json({
+      id: meeting.id,
+      type: meeting.type,
+      title: meeting.title,
+      teacherId: meeting.teacherId,
+      studentIds: meeting.students.map((s) => s.studentId),
+      parentIds: meeting.parents.map((p) => p.parentId),
+      scheduledAt: meeting.scheduledAt.toISOString(),
+      durationMinutes: meeting.durationMinutes,
+      meetingUrl: meeting.meetingUrl,
+    });
+  },
+);
+
+// Toplantı silme
+router.delete(
+  '/meetings/:id',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const existing = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+
+    if (existing.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu toplantıyı silme yetkiniz yok' });
+    }
+
+    await prisma.meeting.delete({ where: { id: meetingId } });
+
+    // Frontend tarafında JSON bekleniyor, bu yüzden 200 + body döndürüyoruz
+    return res.json({ success: true });
   },
 );
 
@@ -399,7 +1033,7 @@ router.get(
 router.post(
   '/meetings',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const teacherId = req.user!.id;
     const {
       type,
@@ -419,27 +1053,98 @@ router.post(
       meetingUrl?: string;
     };
 
-    if (!type || !title || !scheduledAt || !durationMinutes || !meetingUrl) {
+    if (!type || !title || !scheduledAt || !durationMinutes) {
       return res.status(400).json({
-        error:
-          'type, title, scheduledAt, durationMinutes ve meetingUrl alanları zorunludur',
+        error: 'type, title, scheduledAt ve durationMinutes alanları zorunludur',
       });
     }
 
-    const meeting = {
-      id: `m-${Date.now()}`,
-      type,
-      title,
-      teacherId,
-      studentIds: studentIds ?? [],
-      parentIds: parentIds ?? [],
-      scheduledAt,
-      durationMinutes,
-      meetingUrl,
-    };
+    const meeting = await prisma.meeting.create({
+      data: {
+        type: type as 'teacher_student' | 'teacher_student_parent' | 'class',
+        title,
+        teacherId,
+        scheduledAt: new Date(scheduledAt),
+        durationMinutes,
+        // Harici link desteği ileride tekrar eklenecekse meetingUrl kullanılabilir.
+        meetingUrl: meetingUrl ?? '',
+        students: {
+          create: (studentIds ?? []).map((studentId) => ({ studentId })),
+        },
+        parents: {
+          create: (parentIds ?? []).map((parentId) => ({ parentId })),
+        },
+      },
+      include: {
+        students: { select: { studentId: true } },
+        parents: { select: { parentId: true } },
+      },
+    });
+    return res.status(201).json({
+      id: meeting.id,
+      type: meeting.type,
+      title: meeting.title,
+      teacherId: meeting.teacherId,
+      studentIds: meeting.students.map((s) => s.studentId),
+      parentIds: meeting.parents.map((p) => p.parentId),
+      scheduledAt: meeting.scheduledAt.toISOString(),
+      durationMinutes: meeting.durationMinutes,
+      meetingUrl: meeting.meetingUrl,
+    });
+  },
+);
 
-    meetings.push(meeting);
-    return res.status(201).json(meeting);
+// Canlı dersi başlat (öğretmen)
+router.post(
+  '/meetings/:id/start-live',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+
+    if (meeting.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu toplantıyı başlatma yetkiniz yok' });
+    }
+
+    const roomId = buildRoomName(meeting.id);
+
+    // Öğretmenin başlattığı canlı ders için oda bilgisini kaydet
+    // Not: Prisma Client tipleri henüz roomId alanını içermiyor olabilir,
+    // bu nedenle tip hatasını önlemek için any ile daraltıyoruz.
+    const existingRoomId = (meeting as any).roomId as string | null | undefined;
+    if (!existingRoomId) {
+      await prisma.meeting.update({
+        where: { id: meetingId },
+        data: { roomId } as any,
+      });
+    }
+
+    const token = await createLiveKitToken({
+      roomName: roomId,
+      identity: teacherId,
+      name: req.user!.name,
+      isTeacher: true,
+    });
+
+    // GEÇİCİ: LiveKit token inceleme
+    // eslint-disable-next-line no-console
+    console.log('[LIVEKIT_TOKEN]', token);
+
+    return res.json({
+      mode: 'internal',
+      provider: 'internal_webrtc',
+      url: getLiveKitUrl(),
+      roomId,
+      token,
+    });
   },
 );
 
@@ -447,30 +1152,35 @@ router.post(
 router.get(
   '/notifications',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    let userNotifications = notifications.filter((n) => n.userId === userId);
-
-    // Query parametreleri ile filtreleme
-    const read = req.query.read;
-    if (read === 'true') {
-      userNotifications = userNotifications.filter((n) => n.read);
-    } else if (read === 'false') {
-      userNotifications = userNotifications.filter((n) => !n.read);
-    }
-
-    // Limit parametresi
+    const readFilter = req.query.read;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
-    if (limit && limit > 0) {
-      userNotifications = userNotifications.slice(0, limit);
-    }
 
-    // Tarihe göre sıralama (en yeni üstte)
-    userNotifications.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    const where: { userId: string; read?: boolean } = { userId };
+    if (readFilter === 'true') where.read = true;
+    else if (readFilter === 'false') where.read = false;
+
+    const userNotifications = await prisma.notification.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit && limit > 0 ? limit : undefined,
+    });
+
+    return res.json(
+      userNotifications.map((n) => ({
+        id: n.id,
+        userId: n.userId,
+        type: n.type,
+        title: n.title,
+        body: n.body,
+        read: n.read,
+        relatedEntityType: n.relatedEntityType ?? undefined,
+        relatedEntityId: n.relatedEntityId ?? undefined,
+        readAt: n.readAt?.toISOString(),
+        createdAt: n.createdAt.toISOString(),
+      })),
     );
-
-    return res.json(userNotifications);
   },
 );
 
@@ -478,11 +1188,11 @@ router.get(
 router.get(
   '/notifications/unread-count',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const count = notifications.filter(
-      (n) => n.userId === userId && !n.read,
-    ).length;
+    const count = await prisma.notification.count({
+      where: { userId, read: false },
+    });
     return res.json({ count });
   },
 );
@@ -491,20 +1201,33 @@ router.get(
 router.put(
   '/notifications/:id/read',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
-    const notification = notifications.find(
-      (n) => n.id === notificationId && n.userId === userId,
-    );
+    const notification = await prisma.notification.findFirst({
+      where: { id: notificationId, userId },
+    });
 
     if (!notification) {
       return res.status(404).json({ error: 'Bildirim bulunamadı' });
     }
 
-    notification.read = true;
-    notification.readAt = new Date().toISOString();
-    return res.json(notification);
+    const updated = await prisma.notification.update({
+      where: { id: notificationId },
+      data: { read: true, readAt: new Date() },
+    });
+    return res.json({
+      id: updated.id,
+      userId: updated.userId,
+      type: updated.type,
+      title: updated.title,
+      body: updated.body,
+      read: updated.read,
+      relatedEntityType: updated.relatedEntityType ?? undefined,
+      relatedEntityId: updated.relatedEntityId ?? undefined,
+      readAt: updated.readAt?.toISOString(),
+      createdAt: updated.createdAt.toISOString(),
+    });
   },
 );
 
@@ -512,18 +1235,13 @@ router.put(
 router.put(
   '/notifications/read-all',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const now = new Date().toISOString();
-    let updated = 0;
-    notifications.forEach((n) => {
-      if (n.userId === userId && !n.read) {
-        n.read = true;
-        n.readAt = now;
-        updated += 1;
-      }
+    const result = await prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true, readAt: new Date() },
     });
-    return res.json({ updated, success: true });
+    return res.json({ updated: result.count, success: true });
   },
 );
 
@@ -531,18 +1249,18 @@ router.put(
 router.delete(
   '/notifications/:id',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
-    const index = notifications.findIndex(
-      (n) => n.id === notificationId && n.userId === userId,
-    );
+    const notification = await prisma.notification.findFirst({
+      where: { id: notificationId, userId },
+    });
 
-    if (index === -1) {
+    if (!notification) {
       return res.status(404).json({ error: 'Bildirim bulunamadı' });
     }
 
-    notifications.splice(index, 1);
+    await prisma.notification.delete({ where: { id: notificationId } });
     return res.json({ success: true });
   },
 );
@@ -551,65 +1269,62 @@ router.delete(
 router.get(
   '/calendar',
   authenticate('teacher'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const teacherId = req.user!.id;
     const startDate = req.query.startDate
       ? new Date(String(req.query.startDate))
       : new Date();
     const endDate = req.query.endDate
       ? new Date(String(req.query.endDate))
-      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // Varsayılan: 30 gün sonrası
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     const events: CalendarEvent[] = [];
 
-    // Öğretmenin oluşturduğu görevler
-    const teacherAssignments = assignments.filter((a) => {
-      // Öğretmenin sınıflarına atanan görevler veya öğretmenin oluşturduğu görevler
-      // Not: Assignment'da teacherId yok, bu yüzden tüm görevleri gösteriyoruz
-      // İleride teacherId eklenebilir
-      return true; // Şimdilik tüm görevleri göster
+    const [assignmentsData, meetingsData] = await Promise.all([
+      prisma.assignment.findMany({
+        where: { dueDate: { gte: startDate, lte: endDate } },
+      }),
+      prisma.meeting.findMany({
+        where: {
+          teacherId,
+          scheduledAt: { gte: startDate, lte: endDate },
+        },
+      }),
+    ]);
+
+    const now = new Date();
+    assignmentsData.forEach((assignment) => {
+      const dueDate = assignment.dueDate;
+      events.push({
+        id: `assignment-${assignment.id}`,
+        type: 'assignment',
+        title: assignment.title,
+        startDate: dueDate.toISOString(),
+        description: assignment.description ?? '',
+        status: dueDate < now ? 'overdue' : 'pending',
+        color: dueDate < now ? '#e74c3c' : '#3498db',
+        relatedId: assignment.id,
+      });
     });
 
-    teacherAssignments.forEach((assignment) => {
-      const dueDate = new Date(assignment.dueDate);
-      if (dueDate >= startDate && dueDate <= endDate) {
-        events.push({
-          id: `assignment-${assignment.id}`,
-          type: 'assignment',
-          title: assignment.title,
-          startDate: assignment.dueDate,
-          description: assignment.description,
-          status: dueDate < new Date() ? 'overdue' : 'pending',
-          color: dueDate < new Date() ? '#e74c3c' : '#3498db',
-          relatedId: assignment.id,
-        });
-      }
+    meetingsData.forEach((meeting) => {
+      const meetingStart = meeting.scheduledAt;
+      const meetingEnd = new Date(
+        meetingStart.getTime() + meeting.durationMinutes * 60 * 1000,
+      );
+      events.push({
+        id: `meeting-${meeting.id}`,
+        type: 'meeting',
+        title: meeting.title,
+        startDate: meetingStart.toISOString(),
+        endDate: meetingEnd.toISOString(),
+        description: `${meeting.durationMinutes} dakika - ${meeting.type}`,
+        status: meetingStart < now ? 'completed' : 'pending',
+        color: '#9b59b6',
+        relatedId: meeting.id,
+      });
     });
 
-    // Öğretmenin planladığı toplantılar
-    const teacherMeetings = meetings.filter((m) => m.teacherId === teacherId);
-    teacherMeetings.forEach((meeting) => {
-      const meetingStart = new Date(meeting.scheduledAt);
-      if (meetingStart >= startDate && meetingStart <= endDate) {
-        const meetingEnd = new Date(
-          meetingStart.getTime() + meeting.durationMinutes * 60 * 1000,
-        );
-
-        events.push({
-          id: `meeting-${meeting.id}`,
-          type: 'meeting',
-          title: meeting.title,
-          startDate: meeting.scheduledAt,
-          endDate: meetingEnd.toISOString(),
-          description: `${meeting.durationMinutes} dakika - ${meeting.type}`,
-          status: meetingStart < new Date() ? 'completed' : 'pending',
-          color: '#9b59b6',
-          relatedId: meeting.id,
-        });
-      }
-    });
-
-    // Tip ve durum filtreleme
     const typeFilter = req.query.type as CalendarEventType | undefined;
     const statusFilter = req.query.status as string | undefined;
 
@@ -621,7 +1336,6 @@ router.get(
       filteredEvents = filteredEvents.filter((e) => e.status === statusFilter);
     }
 
-    // Tarihe göre sıralama
     filteredEvents.sort(
       (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
     );

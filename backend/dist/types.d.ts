@@ -83,6 +83,7 @@ export interface TestAnswer {
     questionId: string;
     answer: string;
     isCorrect: boolean;
+    scratchpadImageData?: string;
 }
 export interface TestResult {
     id: string;
@@ -121,11 +122,21 @@ export interface Message {
     id: string;
     fromUserId: string;
     toUserId: string;
+    studentId?: string;
+    subject?: string;
     text: string;
+    attachments?: {
+        id: string;
+        fileName: string;
+        fileType: string;
+        fileSize: number;
+        url: string;
+    }[];
     createdAt: string;
     read: boolean;
+    readAt?: string;
 }
-export type NotificationType = 'assignment_created' | 'assignment_due_soon' | 'assignment_overdue' | 'test_result_ready' | 'meeting_scheduled' | 'weekly_summary';
+export type NotificationType = 'assignment_created' | 'assignment_due_soon' | 'assignment_overdue' | 'test_result_ready' | 'meeting_scheduled' | 'weekly_summary' | 'message_received' | 'goal_achieved' | 'content_assigned';
 export interface Notification {
     id: string;
     userId: string;
@@ -134,12 +145,93 @@ export interface Notification {
     body: string;
     createdAt: string;
     read: boolean;
+    relatedEntityType?: 'assignment' | 'test' | 'meeting' | 'message' | 'content';
+    relatedEntityId?: string;
+    readAt?: string;
+}
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+export type TodoPriority = 'low' | 'medium' | 'high';
+export interface TodoItem {
+    id: string;
+    studentId: string;
+    title: string;
+    description?: string;
+    status: TodoStatus;
+    priority: TodoPriority;
+    createdAt: string;
+    plannedDate?: string;
+    completedAt?: string;
+    relatedAssignmentId?: string;
+    relatedContentId?: string;
+}
+export type GoalType = 'weekly_questions' | 'weekly_tests' | 'topic_completion' | 'score_percent';
+export type GoalStatus = 'active' | 'completed' | 'failed' | 'cancelled';
+export interface Goal {
+    id: string;
+    studentId: string;
+    type: GoalType;
+    targetValue: number;
+    topic?: string;
+    startDate: string;
+    endDate: string;
+    status: GoalStatus;
+    createdAt: string;
+}
+export interface TopicProgress {
+    topic: string;
+    subjectName: string;
+    completionPercent: number;
+    testsCompleted: number;
+    testsTotal: number;
+    averageScorePercent: number;
+    lastActivityDate?: string;
+    strengthLevel: 'weak' | 'average' | 'strong';
+}
+export interface ProgressOverview {
+    topics: TopicProgress[];
+    overallCompletionPercent: number;
+    totalTestsCompleted: number;
+    totalQuestionsSolved: number;
+    averageScorePercent: number;
+}
+export interface TimeSeriesPoint {
+    date: string;
+    questionsSolved: number;
+    testsCompleted: number;
+    averageScore: number;
+    studyMinutes: number;
+}
+export interface ProgressCharts {
+    dailyData: TimeSeriesPoint[];
+}
+export interface GoalWithComputed extends Goal {
+    currentValue: number;
+    progressPercent: number;
+}
+export interface GoalProgress {
+    goal: GoalWithComputed;
+    dailyProgress: {
+        date: string;
+        value: number;
+    }[];
+    estimatedCompletionDate?: string;
+    onTrack: boolean;
 }
 export interface TeacherDashboardSummary {
     totalStudents: number;
     testsAssignedThisWeek: number;
     averageScoreLast7Days: number;
     recentActivity: string[];
+}
+export type TeacherAnnouncementStatus = 'draft' | 'planned' | 'sent';
+export interface TeacherAnnouncement {
+    id: string;
+    teacherId: string;
+    title: string;
+    message: string;
+    status: TeacherAnnouncementStatus;
+    createdAt: string;
+    scheduledDate?: string;
 }
 export interface StudentDashboardSummary {
     pendingAssignmentsCount: number;
@@ -155,11 +247,315 @@ export interface StudentDashboardSummary {
 export interface ParentDashboardSummaryStudentCard {
     studentId: string;
     studentName: string;
+    gradeLevel: string;
+    classId: string;
+    className?: string;
     testsSolvedLast7Days: number;
     averageScorePercent: number;
     totalStudyMinutes: number;
+    lastActivityDate?: string;
+    status: 'active' | 'inactive';
+    pendingAssignmentsCount: number;
+    overdueAssignmentsCount: number;
+}
+export type CalendarEventType = 'assignment' | 'meeting' | 'exam';
+export interface CalendarEvent {
+    id: string;
+    type: CalendarEventType;
+    title: string;
+    startDate: string;
+    endDate?: string;
+    description?: string;
+    status?: 'pending' | 'completed' | 'overdue' | 'cancelled';
+    color?: string;
+    relatedId: string;
 }
 export interface ParentDashboardSummary {
     children: ParentDashboardSummaryStudentCard[];
+    overallStats?: {
+        totalChildren: number;
+        totalTestsSolved: number;
+        averageScoreAcrossAll: number;
+    };
+}
+export interface ActivityTimeTracking {
+    date: string;
+    totalMinutes: number;
+    testMinutes: number;
+    contentWatchingMinutes: number;
+    activeSessionMinutes: number;
+    breakCount: number;
+}
+export interface ActivityTimeSummary {
+    period: 'today' | 'last7days' | 'last30days' | 'custom';
+    startDate?: string;
+    endDate?: string;
+    dailyData: ActivityTimeTracking[];
+    totalMinutes: number;
+    averageMinutesPerDay: number;
+    mostActiveDay: string;
+    activityByHour: {
+        hour: number;
+        minutes: number;
+    }[];
+}
+export interface AssignmentActivityItem {
+    assignmentId: string;
+    title: string;
+    description?: string;
+    type: 'test' | 'content' | 'mixed';
+    subjectName: string;
+    topic: string;
+    dueDate: string;
+    status: 'pending' | 'in_progress' | 'completed' | 'overdue';
+    completedAt?: string;
+    testResult?: {
+        testId: string;
+        correctCount: number;
+        incorrectCount: number;
+        blankCount: number;
+        scorePercent: number;
+        durationSeconds: number;
+    };
+    contentProgress?: {
+        contentId: string;
+        watchedPercent: number;
+        completed: boolean;
+    };
+}
+export interface AssignmentActivitySummary {
+    assignments: AssignmentActivityItem[];
+    statistics: {
+        totalCount: number;
+        completedCount: number;
+        pendingCount: number;
+        overdueCount: number;
+        averageScorePercent: number;
+    };
+}
+export interface ContentUsageItem {
+    contentId: string;
+    title: string;
+    description?: string;
+    type: 'video' | 'audio' | 'document';
+    subjectName: string;
+    topic: string;
+    totalDurationMinutes: number;
+    watchedDurationMinutes: number;
+    watchedPercent: number;
+    watchCount: number;
+    lastWatchedAt?: string;
+    completed: boolean;
+    assignedDate: string;
+}
+export interface ContentUsageSummary {
+    contents: ContentUsageItem[];
+    statistics: {
+        totalContents: number;
+        completedCount: number;
+        inProgressCount: number;
+        notStartedCount: number;
+        totalWatchTimeMinutes: number;
+        averageCompletionPercent: number;
+    };
+}
+export interface ActivitySummary {
+    period: 'daily' | 'weekly' | 'monthly';
+    startDate: string;
+    endDate: string;
+    testsSolved: number;
+    questionsSolved: number;
+    averageScorePercent: number;
+    totalStudyMinutes: number;
+    contentsWatched: number;
+    contentsWatchTimeMinutes: number;
+    assignmentsCompleted: number;
+    assignmentsOverdue: number;
+    topSubjects: {
+        subjectName: string;
+        studyMinutes: number;
+    }[];
+    topTopics: {
+        topic: string;
+        studyMinutes: number;
+    }[];
+    dailyBreakdown: {
+        date: string;
+        testsSolved: number;
+        questionsSolved: number;
+        studyMinutes: number;
+    }[];
+}
+export interface WeeklyReport {
+    id: string;
+    studentId: string;
+    weekStartDate: string;
+    weekEndDate: string;
+    generatedAt: string;
+    summary: ActivitySummary;
+    comparisonWithPreviousWeek?: {
+        testsSolvedChange: number;
+        averageScoreChange: number;
+        studyTimeChange: number;
+    };
+    topicPerformance: {
+        topic: string;
+        averageScore: number;
+        testsCompleted: number;
+        strengthLevel: 'weak' | 'average' | 'strong';
+    }[];
+    teacherFeedback?: string;
+    recommendations: string[];
+}
+export interface MonthlyReport {
+    id: string;
+    studentId: string;
+    month: number;
+    year: number;
+    generatedAt: string;
+    summary: {
+        testsSolved: number;
+        questionsSolved: number;
+        averageScorePercent: number;
+        totalStudyMinutes: number;
+        assignmentsCompleted: number;
+    };
+    weeklyBreakdown: {
+        week: number;
+        testsSolved: number;
+        averageScore: number;
+        studyMinutes: number;
+    }[];
+    topicAnalysis: {
+        topic: string;
+        testsCompleted: number;
+        averageScore: number;
+        improvementTrend: 'improving' | 'stable' | 'declining';
+    }[];
+    teacherEvaluation?: {
+        overallComment: string;
+        strengths: string[];
+        areasForImprovement: string[];
+    };
+}
+export interface CustomReportRequest {
+    studentId: string;
+    startDate: string;
+    endDate: string;
+    reportType: 'general' | 'detailed' | 'tests_only' | 'content_only';
+}
+export interface CustomReport {
+    id: string;
+    studentId: string;
+    startDate: string;
+    endDate: string;
+    reportType: string;
+    generatedAt: string;
+    status: 'pending' | 'completed' | 'failed';
+    data?: ActivitySummary;
+    error?: string;
+}
+export interface PerformanceTrend {
+    period: '1month' | '3months' | '6months' | '1year';
+    startDate: string;
+    endDate: string;
+    weeklyData: {
+        weekStart: string;
+        averageScore: number;
+        testsSolved: number;
+        studyMinutes: number;
+    }[];
+    trendAnalysis: {
+        scoreTrend: 'improving' | 'stable' | 'declining';
+        scoreChangeRate: number;
+        bestPeriod: {
+            start: string;
+            end: string;
+            averageScore: number;
+        };
+        attentionNeededPeriods: {
+            start: string;
+            end: string;
+            reason: string;
+        }[];
+    };
+    topicPerformanceHeatmap: {
+        topic: string;
+        weeklyScores: {
+            week: string;
+            score: number;
+        }[];
+    }[];
+}
+export interface TeacherFeedback {
+    id: string;
+    studentId: string;
+    teacherId: string;
+    teacherName: string;
+    type: 'test_feedback' | 'general_feedback' | 'performance_note';
+    relatedTestId?: string;
+    relatedAssignmentId?: string;
+    title: string;
+    content: string;
+    createdAt: string;
+    read: boolean;
+    readAt?: string;
+}
+export interface ParentGoal extends Goal {
+    createdByParentId: string;
+    reward?: string;
+    completedAt?: string;
+}
+export interface ParentGoalProgress {
+    goal: ParentGoal & {
+        currentValue: number;
+        progressPercent: number;
+    };
+    dailyProgress: {
+        date: string;
+        value: number;
+    }[];
+    estimatedCompletionDate?: string;
+    onTrack: boolean;
+}
+export interface Alert {
+    id: string;
+    studentId: string;
+    type: 'low_activity' | 'performance_decline' | 'assignment_neglect';
+    severity: 'low' | 'medium' | 'high';
+    title: string;
+    description: string;
+    detectedAt: string;
+    status: 'active' | 'resolved' | 'dismissed';
+    resolvedAt?: string;
+    relatedData?: {
+        testsSolved?: number;
+        averageScore?: number;
+        overdueAssignments?: number;
+    };
+}
+export type ParentNotificationType = NotificationType | 'feedback_received' | 'low_activity' | 'low_performance';
+export interface ParentNotification extends Omit<Notification, 'type'> {
+    studentId?: string;
+    type: ParentNotificationType;
+}
+export interface StudentDetailSummary {
+    studentId: string;
+    studentName: string;
+    gradeLevel: string;
+    className?: string;
+    quickStats: {
+        testsSolvedLast7Days: number;
+        averageScorePercent: number;
+        totalStudyMinutes: number;
+        pendingAssignmentsCount: number;
+        overdueAssignmentsCount: number;
+    };
+    recentActivities: {
+        type: 'test' | 'content' | 'assignment';
+        title: string;
+        date: string;
+    }[];
+    upcomingAssignments: AssignmentActivityItem[];
 }
 //# sourceMappingURL=types.d.ts.map

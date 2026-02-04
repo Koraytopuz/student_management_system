@@ -1,27 +1,6 @@
 import express from 'express';
 import { authenticate, AuthenticatedRequest } from './auth';
-import {
-  allUsers,
-  alerts,
-  assignments,
-  classGroups,
-  contents,
-  customReports,
-  meetings,
-  messages,
-  monthlyReports,
-  notifications,
-  parentGoals,
-  parents,
-  students,
-  subjects,
-  teacherFeedbacks,
-  teachers,
-  testResults,
-  tests,
-  watchRecords,
-  weeklyReports,
-} from './data';
+import { prisma } from './db';
 import {
   ActivitySummary,
   ActivityTimeSummary,
@@ -44,61 +23,57 @@ import {
 
 const router = express.Router();
 
-// Helper function: Check if parent has access to student
-function checkParentAccess(
+async function checkParentAccess(
   parentId: string,
   studentId: string,
-): { allowed: boolean; error?: string } {
-  const parent = parents.find((p) => p.id === parentId);
-  if (!parent) {
-    return { allowed: false, error: 'Veli bulunamadı' };
-  }
-  if (!parent.studentIds.includes(studentId)) {
-    return {
-      allowed: false,
-      error: 'Bu öğrencinin verilerine erişim izniniz yok',
-    };
+): Promise<{ allowed: boolean; error?: string }> {
+  const parent = await prisma.user.findFirst({
+    where: { id: parentId, role: 'parent' },
+    include: { parentStudents: { select: { studentId: true } } },
+  });
+  if (!parent) return { allowed: false, error: 'Veli bulunamadı' };
+  const studentIds = parent.parentStudents.map((ps) => ps.studentId);
+  if (!studentIds.includes(studentId)) {
+    return { allowed: false, error: 'Bu öğrencinin verilerine erişim izniniz yok' };
   }
   return { allowed: true };
 }
 
-// Helper function: Get student's class name
-function getStudentClassName(studentId: string): string | undefined {
-  const student = students.find((s) => s.id === studentId);
-  if (!student) return undefined;
-  const classGroup = classGroups.find((c) => c.id === student.classId);
+async function getStudentClassName(studentId: string): Promise<string | undefined> {
+  const student = await prisma.user.findFirst({
+    where: { id: studentId, role: 'student' },
+    select: { classId: true },
+  });
+  if (!student?.classId) return undefined;
+  const classGroup = await prisma.classGroup.findUnique({
+    where: { id: student.classId },
+  });
   return classGroup?.name;
 }
 
-// Helper function: Calculate assignment status
-function getAssignmentStatus(
-  assignment: typeof assignments[0],
+async function getAssignmentStatus(
+  assignment: { id: string; testId: string | null; contentId: string | null; dueDate: Date },
   studentId: string,
-): 'pending' | 'in_progress' | 'completed' | 'overdue' {
+): Promise<'pending' | 'in_progress' | 'completed' | 'overdue'> {
   const now = new Date();
-  const dueDate = new Date(assignment.dueDate);
-  const result = testResults.find(
-    (r) => r.assignmentId === assignment.id && r.studentId === studentId,
-  );
-  const watchRecord = watchRecords.find(
-    (w) => w.contentId === assignment.contentId && w.studentId === studentId,
-  );
+  const dueDate = assignment.dueDate;
+  const [result, watchRecord] = await Promise.all([
+    assignment.testId
+      ? prisma.testResult.findFirst({
+          where: { assignmentId: assignment.id, studentId },
+        })
+      : Promise.resolve(null),
+    assignment.contentId
+      ? prisma.watchRecord.findUnique({
+          where: { contentId_studentId: { contentId: assignment.contentId, studentId } },
+        })
+      : Promise.resolve(null),
+  ]);
 
-  if (assignment.testId && result) {
-    return 'completed';
-  }
-  if (assignment.contentId && watchRecord?.completed) {
-    return 'completed';
-  }
-  if (assignment.testId && result) {
-    return 'in_progress';
-  }
-  if (assignment.contentId && watchRecord && !watchRecord.completed) {
-    return 'in_progress';
-  }
-  if (dueDate < now) {
-    return 'overdue';
-  }
+  if (assignment.testId && result) return 'completed';
+  if (assignment.contentId && watchRecord?.completed) return 'completed';
+  if (assignment.contentId && watchRecord && !watchRecord.completed) return 'in_progress';
+  if (dueDate < now) return 'overdue';
   return 'pending';
 }
 
@@ -106,102 +81,91 @@ function getAssignmentStatus(
 router.get(
   '/dashboard',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
-    const parent = parents.find((p) => p.id === parentId);
+    const parent = await prisma.user.findFirst({
+      where: { id: parentId, role: 'parent' },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
     if (!parent) {
       return res.status(404).json({ error: 'Veli bulunamadı' });
     }
 
+    const studentIds = parent.parentStudents.map((ps) => ps.studentId);
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
 
-    const cards: ParentDashboardSummaryStudentCard[] = parent.studentIds.map(
-      (sid) => {
-        const student = students.find((s) => s.id === sid);
-        const studentResults = testResults.filter(
-          (r) => r.studentId === sid && new Date(r.completedAt) >= sevenDaysAgo,
-        );
-        const allResults = testResults.filter((r) => r.studentId === sid);
-        const testsSolvedLast7Days = studentResults.length;
-        const averageScorePercent =
+    const cards: ParentDashboardSummaryStudentCard[] = [];
+
+    for (const sid of studentIds) {
+      const [student, studentResults, allResults, watchRecs, studentAssignments] =
+        await Promise.all([
+          prisma.user.findFirst({ where: { id: sid, role: 'student' } }),
+          prisma.testResult.findMany({
+            where: { studentId: sid, completedAt: { gte: sevenDaysAgo } },
+          }),
+          prisma.testResult.findMany({ where: { studentId: sid } }),
+          prisma.watchRecord.findMany({ where: { studentId: sid } }),
+          prisma.assignment.findMany({
+            where: { students: { some: { studentId: sid } } },
+          }),
+        ]);
+
+      let pendingCount = 0;
+      let overdueCount = 0;
+      for (const a of studentAssignments) {
+        const status = await getAssignmentStatus(a, sid);
+        if (status === 'pending') pendingCount++;
+        else if (status === 'overdue') overdueCount++;
+      }
+
+      const studyMinutes = watchRecs.reduce((s, w) => s + w.watchedSeconds, 0) / 60;
+      const lastResult = allResults[allResults.length - 1];
+      const lastWatch = watchRecs.sort((a, b) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())[0];
+      const lastActivity =
+        lastResult?.completedAt.toISOString() ?? lastWatch?.lastWatchedAt.toISOString();
+
+      const status: 'active' | 'inactive' =
+        lastActivity && new Date(lastActivity) >= threeDaysAgo ? 'active' : 'inactive';
+
+      cards.push({
+        studentId: sid,
+        studentName: student?.name ?? 'Bilinmeyen öğrenci',
+        gradeLevel: student?.gradeLevel ?? '',
+        classId: student?.classId ?? '',
+        className: (await getStudentClassName(sid)) ?? undefined,
+        testsSolvedLast7Days: studentResults.length,
+        averageScorePercent:
           allResults.length === 0
             ? 0
             : Math.round(
-                allResults.reduce((sum, r) => sum + r.scorePercent, 0) /
-                  allResults.length,
-              );
-        const studyMinutes =
-          watchRecords
-            .filter((w) => w.studentId === sid)
-            .reduce((sum, w) => sum + w.watchedSeconds, 0) / 60;
+                allResults.reduce((sum, r) => sum + r.scorePercent, 0) / allResults.length,
+              ),
+        totalStudyMinutes: Math.round(studyMinutes),
+        lastActivityDate: lastActivity,
+        status,
+        pendingAssignmentsCount: pendingCount,
+        overdueAssignmentsCount: overdueCount,
+      });
+    }
 
-        const studentAssignments = assignments.filter((a) =>
-          a.assignedStudentIds.includes(sid),
-        );
-        const pendingCount = studentAssignments.filter(
-          (a) => getAssignmentStatus(a, sid) === 'pending',
-        ).length;
-        const overdueCount = studentAssignments.filter(
-          (a) => getAssignmentStatus(a, sid) === 'overdue',
-        ).length;
-
-        const lastActivity =
-          allResults.length > 0
-            ? allResults[allResults.length - 1].completedAt
-            : watchRecords
-                .filter((w) => w.studentId === sid)
-                .sort(
-                  (a, b) =>
-                    new Date(b.lastWatchedAt).getTime() -
-                    new Date(a.lastWatchedAt).getTime(),
-                )[0]?.lastWatchedAt;
-
-        const status: 'active' | 'inactive' =
-          lastActivity && new Date(lastActivity) >= threeDaysAgo
-            ? 'active'
-            : 'inactive';
-
-        return {
-          studentId: sid,
-          studentName: student?.name ?? 'Bilinmeyen öğrenci',
-          gradeLevel: student?.gradeLevel ?? '',
-          classId: student?.classId ?? '',
-          className: getStudentClassName(sid),
-          testsSolvedLast7Days,
-          averageScorePercent,
-          totalStudyMinutes: Math.round(studyMinutes),
-          lastActivityDate: lastActivity,
-          status,
-          pendingAssignmentsCount: pendingCount,
-          overdueAssignmentsCount: overdueCount,
-        };
-      },
-    );
-
-    const totalTestsSolved = cards.reduce(
-      (sum, c) => sum + c.testsSolvedLast7Days,
-      0,
-    );
+    const totalTestsSolved = cards.reduce((sum, c) => sum + c.testsSolvedLast7Days, 0);
     const avgScore =
       cards.length === 0
         ? 0
         : Math.round(
-            cards.reduce((sum, c) => sum + c.averageScorePercent, 0) /
-              cards.length,
+            cards.reduce((sum, c) => sum + c.averageScorePercent, 0) / cards.length,
           );
 
-    const summary: ParentDashboardSummary = {
+    return res.json({
       children: cards,
       overallStats: {
         totalChildren: cards.length,
         totalTestsSolved,
         averageScoreAcrossAll: avgScore,
       },
-    };
-
-    return res.json(summary);
+    });
   },
 );
 
@@ -209,140 +173,118 @@ router.get(
 router.get(
   '/children/:id/summary',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
       });
     }
 
-    const student = students.find((s) => s.id === studentId);
+    const [student, studentResults, allResults, watchRecs, studentAssignments, contentsData, testsData, subjectsData] =
+      await Promise.all([
+        prisma.user.findFirst({ where: { id: studentId, role: 'student' } }),
+        prisma.testResult.findMany({
+          where: {
+            studentId,
+            completedAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+          },
+        }),
+        prisma.testResult.findMany({ where: { studentId } }),
+        prisma.watchRecord.findMany({ where: { studentId } }),
+        prisma.assignment.findMany({
+          where: { students: { some: { studentId } } },
+        }),
+        prisma.contentItem.findMany(),
+        prisma.test.findMany(),
+        prisma.subject.findMany(),
+      ]);
+
     if (!student) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const studentResults = testResults.filter(
-      (r) => r.studentId === studentId && new Date(r.completedAt) >= sevenDaysAgo,
-    );
-    const allResults = testResults.filter((r) => r.studentId === studentId);
-    const studentAssignments = assignments.filter((a) =>
-      a.assignedStudentIds.includes(studentId),
-    );
+    const contentMap = new Map(contentsData.map((c) => [c.id, c]));
+    const testMap = new Map(testsData.map((t) => [t.id, t]));
+    const subjectMap = new Map(subjectsData.map((s) => [s.id, s]));
 
-    const summary: StudentDetailSummary = {
+    let pendingCount = 0;
+    let overdueCount = 0;
+    const upcoming: Array<{
+      assignmentId: string;
+      title: string;
+      description?: string;
+      type: 'test' | 'content' | 'mixed';
+      subjectName: string;
+      topic: string;
+      dueDate: string;
+      status: 'pending' | 'in_progress' | 'completed' | 'overdue';
+      testResult?: { testId: string; correctCount: number; incorrectCount: number; blankCount: number; scorePercent: number; durationSeconds: number };
+      contentProgress?: { contentId: string; watchedPercent: number; completed: boolean };
+    }> = [];
+
+    for (const a of studentAssignments) {
+      const status = await getAssignmentStatus(a, studentId);
+      if (status === 'pending') pendingCount++;
+      else if (status === 'overdue') overdueCount++;
+      if (status === 'pending' || status === 'in_progress') {
+        const test = a.testId ? testMap.get(a.testId) : null;
+        const content = a.contentId ? contentMap.get(a.contentId) : null;
+        const subjectId = test?.subjectId ?? content?.subjectId ?? '';
+        const subjectName = subjectMap.get(subjectId)?.name ?? 'Bilinmeyen';
+        const [result, watchRecord] = await Promise.all([
+          a.testId ? prisma.testResult.findFirst({ where: { assignmentId: a.id, studentId } }) : null,
+          a.contentId ? prisma.watchRecord.findUnique({ where: { contentId_studentId: { contentId: a.contentId, studentId } } }) : null,
+        ]);
+        const durMin = content?.durationMinutes ?? 1;
+        upcoming.push({
+          assignmentId: a.id,
+          title: a.title,
+          description: a.description ?? undefined,
+          type: a.testId && a.contentId ? 'mixed' : a.testId ? 'test' : 'content',
+          subjectName,
+          topic: test?.topic ?? content?.topic ?? '',
+          dueDate: a.dueDate.toISOString(),
+          status,
+          testResult: result
+            ? { testId: result.testId, correctCount: result.correctCount, incorrectCount: result.incorrectCount, blankCount: result.blankCount, scorePercent: result.scorePercent, durationSeconds: result.durationSeconds }
+            : undefined,
+          contentProgress: watchRecord
+            ? { contentId: watchRecord.contentId, watchedPercent: watchRecord.completed ? 100 : Math.round((watchRecord.watchedSeconds / (durMin * 60)) * 100), completed: watchRecord.completed }
+            : undefined,
+        });
+      }
+    }
+
+    const recentActivities = [
+      ...allResults.slice(-5).map((r) => ({ type: 'test' as const, title: `Test tamamlandı - ${r.scorePercent}%`, date: r.completedAt.toISOString() })),
+      ...watchRecs
+        .sort((a, b) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())
+        .slice(0, 3)
+        .map((w) => ({ type: 'content' as const, title: contentMap.get(w.contentId)?.title ?? 'İçerik izlendi', date: w.lastWatchedAt.toISOString() })),
+    ]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 10);
+
+    const studyMinutes = watchRecs.reduce((s, w) => s + w.watchedSeconds, 0) / 60;
+
+    return res.json({
       studentId,
       studentName: student.name,
-      gradeLevel: student.gradeLevel,
-      className: getStudentClassName(studentId),
+      gradeLevel: student.gradeLevel ?? '',
+      className: await getStudentClassName(studentId),
       quickStats: {
         testsSolvedLast7Days: studentResults.length,
-        averageScorePercent:
-          allResults.length === 0
-            ? 0
-            : Math.round(
-                allResults.reduce((sum, r) => sum + r.scorePercent, 0) /
-                  allResults.length,
-              ),
-        totalStudyMinutes: Math.round(
-          watchRecords
-            .filter((w) => w.studentId === studentId)
-            .reduce((sum, w) => sum + w.watchedSeconds, 0) / 60,
-        ),
-        pendingAssignmentsCount: studentAssignments.filter(
-          (a) => getAssignmentStatus(a, studentId) === 'pending',
-        ).length,
-        overdueAssignmentsCount: studentAssignments.filter(
-          (a) => getAssignmentStatus(a, studentId) === 'overdue',
-        ).length,
+        averageScorePercent: allResults.length === 0 ? 0 : Math.round(allResults.reduce((sum, r) => sum + r.scorePercent, 0) / allResults.length),
+        totalStudyMinutes: Math.round(studyMinutes),
+        pendingAssignmentsCount: pendingCount,
+        overdueAssignmentsCount: overdueCount,
       },
-      recentActivities: [
-        ...allResults
-          .slice(-5)
-          .map((r) => ({
-            type: 'test' as const,
-            title: `Test tamamlandı - ${r.scorePercent}%`,
-            date: r.completedAt,
-          })),
-        ...watchRecords
-          .filter((w) => w.studentId === studentId)
-          .sort(
-            (a, b) =>
-              new Date(b.lastWatchedAt).getTime() -
-              new Date(a.lastWatchedAt).getTime(),
-          )
-          .slice(0, 3)
-          .map((w) => {
-            const content = contents.find((c) => c.id === w.contentId);
-            return {
-              type: 'content' as const,
-              title: content?.title ?? 'İçerik izlendi',
-              date: w.lastWatchedAt,
-            };
-          }),
-      ]
-        .sort(
-          (a, b) =>
-            new Date(b.date).getTime() - new Date(a.date).getTime(),
-        )
-        .slice(0, 10),
-      upcomingAssignments: studentAssignments
-        .filter((a) => {
-          const status = getAssignmentStatus(a, studentId);
-          return status === 'pending' || status === 'in_progress';
-        })
-        .map((a) => {
-          const subject = subjects.find((s) => s.id === a.testId ? tests.find((t) => t.id === a.testId)?.subjectId : contents.find((c) => c.id === a.contentId)?.subjectId);
-          const result = testResults.find(
-            (r) => r.assignmentId === a.id && r.studentId === studentId,
-          );
-          const watchRecord = watchRecords.find(
-            (w) => w.contentId === a.contentId && w.studentId === studentId,
-          );
-          return {
-            assignmentId: a.id,
-            title: a.title,
-            description: a.description,
-            type: a.testId && a.contentId ? 'mixed' : a.testId ? 'test' : 'content',
-            subjectName: subject?.name ?? 'Bilinmeyen',
-            topic: a.testId ? tests.find((t) => t.id === a.testId)?.topic ?? '' : contents.find((c) => c.id === a.contentId)?.topic ?? '',
-            dueDate: a.dueDate,
-            status: getAssignmentStatus(a, studentId),
-            testResult: result
-              ? {
-                  testId: result.testId,
-                  correctCount: result.correctCount,
-                  incorrectCount: result.incorrectCount,
-                  blankCount: result.blankCount,
-                  scorePercent: result.scorePercent,
-                  durationSeconds: result.durationSeconds,
-                }
-              : undefined,
-            contentProgress: watchRecord
-              ? {
-                  contentId: watchRecord.contentId,
-                  watchedPercent: watchRecord.completed
-                    ? 100
-                    : Math.round(
-                        (watchRecord.watchedSeconds /
-                          ((contents.find((c) => c.id === watchRecord.contentId)
-                            ?.durationMinutes ?? 1) *
-                            60)) *
-                          100,
-                      ),
-                  completed: watchRecord.completed,
-                }
-              : undefined,
-          };
-        })
-        .slice(0, 5),
-    };
-
-    return res.json(summary);
+      recentActivities,
+      upcomingAssignments: upcoming.slice(0, 5),
+    });
   },
 );
 
@@ -350,10 +292,10 @@ router.get(
 router.get(
   '/children/:id/activity-time',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
@@ -366,10 +308,11 @@ router.get(
 
     const now = new Date();
     let periodStart: Date;
-    let periodEnd: Date = now;
+    let periodEnd: Date = new Date(now);
 
     if (period === 'today') {
-      periodStart = new Date(now.setHours(0, 0, 0, 0));
+      periodStart = new Date(now);
+      periodStart.setHours(0, 0, 0, 0);
     } else if (period === 'last7days') {
       periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     } else if (period === 'last30days') {
@@ -381,18 +324,20 @@ router.get(
       periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
 
-    const studentResults = testResults.filter(
-      (r) =>
-        r.studentId === studentId &&
-        new Date(r.completedAt) >= periodStart &&
-        new Date(r.completedAt) <= periodEnd,
-    );
-    const studentWatchRecords = watchRecords.filter(
-      (w) =>
-        w.studentId === studentId &&
-        new Date(w.lastWatchedAt) >= periodStart &&
-        new Date(w.lastWatchedAt) <= periodEnd,
-    );
+    const [studentResults, studentWatchRecords] = await Promise.all([
+      prisma.testResult.findMany({
+        where: {
+          studentId,
+          completedAt: { gte: periodStart, lte: periodEnd },
+        },
+      }),
+      prisma.watchRecord.findMany({
+        where: {
+          studentId,
+          lastWatchedAt: { gte: periodStart, lte: periodEnd },
+        },
+      }),
+    ]);
 
     // Günlük verileri oluştur
     const dailyData: ActivityTimeSummary['dailyData'] = [];
@@ -403,7 +348,7 @@ router.get(
       d <= periodEnd;
       d.setDate(d.getDate() + 1)
     ) {
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = d.toISOString().slice(0, 10);
       dateMap.set(dateStr, {
         date: dateStr,
         totalMinutes: 0,
@@ -416,7 +361,7 @@ router.get(
 
     // Test sürelerini ekle
     studentResults.forEach((result) => {
-      const dateStr = new Date(result.completedAt).toISOString().split('T')[0];
+      const dateStr = result.completedAt.toISOString().slice(0, 10);
       const dayData = dateMap.get(dateStr);
       if (dayData) {
         dayData.testMinutes += Math.round(result.durationSeconds / 60);
@@ -426,7 +371,7 @@ router.get(
 
     // İçerik izleme sürelerini ekle
     studentWatchRecords.forEach((watch) => {
-      const dateStr = new Date(watch.lastWatchedAt).toISOString().split('T')[0];
+      const dateStr = watch.lastWatchedAt.toISOString().slice(0, 10);
       const dayData = dateMap.get(dateStr);
       if (dayData) {
         const minutes = Math.round(watch.watchedSeconds / 60);
@@ -472,10 +417,10 @@ router.get(
 router.get(
   '/children/:id/assignments',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
@@ -483,108 +428,89 @@ router.get(
     }
 
     const status = req.query.status as string;
-    const dateRange = req.query.dateRange as string;
-    const subjectId = req.query.subjectId as string;
 
-    let studentAssignments = assignments.filter((a) =>
-      a.assignedStudentIds.includes(studentId),
-    );
-
-    // Filtreleme
-    if (status) {
-      studentAssignments = studentAssignments.filter(
-        (a) => getAssignmentStatus(a, studentId) === status,
-      );
-    }
-
-    const assignmentItems = studentAssignments.map((a) => {
-      const test = a.testId ? tests.find((t) => t.id === a.testId) : null;
-      const content = a.contentId
-        ? contents.find((c) => c.id === a.contentId)
-        : null;
-      const subject = test
-        ? subjects.find((s) => s.id === test.subjectId)
-        : content
-          ? subjects.find((s) => s.id === content.subjectId)
-          : null;
-      const result = testResults.find(
-        (r) => r.assignmentId === a.id && r.studentId === studentId,
-      );
-      const watchRecord = watchRecords.find(
-        (w) => w.contentId === a.contentId && w.studentId === studentId,
-      );
-
-      return {
-        assignmentId: a.id,
-        title: a.title,
-        description: a.description,
-        type: a.testId && a.contentId ? 'mixed' : a.testId ? 'test' : 'content',
-        subjectName: subject?.name ?? 'Bilinmeyen',
-        topic: test?.topic ?? content?.topic ?? '',
-        dueDate: a.dueDate,
-        status: getAssignmentStatus(a, studentId),
-        completedAt: result?.completedAt ?? watchRecord?.lastWatchedAt,
-        testResult: result
-          ? {
-              testId: result.testId,
-              correctCount: result.correctCount,
-              incorrectCount: result.incorrectCount,
-              blankCount: result.blankCount,
-              scorePercent: result.scorePercent,
-              durationSeconds: result.durationSeconds,
-            }
-          : undefined,
-        contentProgress: watchRecord
-          ? {
-              contentId: watchRecord.contentId,
-              watchedPercent: watchRecord.completed
-                ? 100
-                : Math.round(
-                    (watchRecord.watchedSeconds /
-                      ((content?.durationMinutes ?? 1) * 60)) *
-                      100,
-                  ),
-              completed: watchRecord.completed,
-            }
-          : undefined,
-      };
+    let studentAssignments = await prisma.assignment.findMany({
+      where: { students: { some: { studentId } } },
+      include: { test: true, content: true },
     });
 
-    const completedCount = assignmentItems.filter(
-      (a) => a.status === 'completed',
-    ).length;
-    const pendingCount = assignmentItems.filter(
-      (a) => a.status === 'pending',
-    ).length;
-    const overdueCount = assignmentItems.filter(
-      (a) => a.status === 'overdue',
-    ).length;
+    if (status) {
+      const filtered: typeof studentAssignments = [];
+      for (const a of studentAssignments) {
+        const s = await getAssignmentStatus(a, studentId);
+        if (s === status) filtered.push(a);
+      }
+      studentAssignments = filtered;
+    }
 
-    const completedResults = testResults.filter(
-      (r) =>
-        r.studentId === studentId &&
-        assignmentItems.some((a) => a.assignmentId === r.assignmentId),
+    const [testsData, subjectsData, allResults] = await Promise.all([
+      prisma.test.findMany(),
+      prisma.subject.findMany(),
+      prisma.testResult.findMany({ where: { studentId } }),
+    ]);
+    const testMap = new Map(testsData.map((t) => [t.id, t]));
+    const subjectMap = new Map(subjectsData.map((s) => [s.id, s]));
+
+    const assignmentItems: Array<{
+      assignmentId: string;
+      title: string;
+      description?: string;
+      type: 'test' | 'content' | 'mixed';
+      subjectName: string;
+      topic: string;
+      dueDate: string;
+      status: 'pending' | 'in_progress' | 'completed' | 'overdue';
+      completedAt?: string;
+      testResult?: { testId: string; correctCount: number; incorrectCount: number; blankCount: number; scorePercent: number; durationSeconds: number };
+      contentProgress?: { contentId: string; watchedPercent: number; completed: boolean };
+    }> = [];
+
+    for (const a of studentAssignments) {
+      const stat = await getAssignmentStatus(a, studentId);
+      const test = a.testId ? testMap.get(a.testId) : null;
+      const content = a.content ?? null;
+      const subjectName = (test ? subjectMap.get(test.subjectId) : content ? subjectMap.get(content.subjectId) : null)?.name ?? 'Bilinmeyen';
+      const result = allResults.find((r) => r.assignmentId === a.id);
+      const watchRecord = a.contentId
+        ? await prisma.watchRecord.findUnique({
+            where: { contentId_studentId: { contentId: a.contentId, studentId } },
+          })
+        : null;
+
+      assignmentItems.push({
+        assignmentId: a.id,
+        title: a.title,
+        description: a.description ?? undefined,
+        type: a.testId && a.contentId ? 'mixed' : a.testId ? 'test' : 'content',
+        subjectName,
+        topic: test?.topic ?? content?.topic ?? '',
+        dueDate: a.dueDate.toISOString(),
+        status: stat,
+        completedAt: result?.completedAt.toISOString() ?? watchRecord?.lastWatchedAt.toISOString(),
+        testResult: result
+          ? { testId: result.testId, correctCount: result.correctCount, incorrectCount: result.incorrectCount, blankCount: result.blankCount, scorePercent: result.scorePercent, durationSeconds: result.durationSeconds }
+          : undefined,
+        contentProgress: watchRecord
+          ? { contentId: watchRecord.contentId, watchedPercent: watchRecord.completed ? 100 : Math.round((watchRecord.watchedSeconds / ((content?.durationMinutes ?? 1) * 60)) * 100), completed: watchRecord.completed }
+          : undefined,
+      });
+    }
+
+    const completedCount = assignmentItems.filter((x) => x.status === 'completed').length;
+    const pendingCount = assignmentItems.filter((x) => x.status === 'pending').length;
+    const overdueCount = assignmentItems.filter((x) => x.status === 'overdue').length;
+    const completedResults = allResults.filter((r) =>
+      assignmentItems.some((a) => a.assignmentId === r.assignmentId && a.status === 'completed'),
     );
     const averageScorePercent =
       completedResults.length === 0
         ? 0
-        : Math.round(
-            completedResults.reduce((sum, r) => sum + r.scorePercent, 0) /
-              completedResults.length,
-          );
+        : Math.round(completedResults.reduce((sum, r) => sum + r.scorePercent, 0) / completedResults.length);
 
-    const summary: AssignmentActivitySummary = {
+    return res.json({
       assignments: assignmentItems,
-      statistics: {
-        totalCount: assignmentItems.length,
-        completedCount,
-        pendingCount,
-        overdueCount,
-        averageScorePercent,
-      },
-    };
-
-    return res.json(summary);
+      statistics: { totalCount: assignmentItems.length, completedCount, pendingCount, overdueCount, averageScorePercent },
+    });
   },
 );
 
@@ -592,10 +518,10 @@ router.get(
 router.get(
   '/children/:id/content-usage',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
@@ -605,88 +531,81 @@ router.get(
     const status = req.query.status as string;
     const subjectId = req.query.subjectId as string;
 
-    const student = students.find((s) => s.id === studentId);
+    const student = await prisma.user.findFirst({
+      where: { id: studentId, role: 'student' },
+    });
     if (!student) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    // Öğrenciye atanmış içerikleri bul
-    let studentContents = contents.filter(
-      (c) =>
-        c.assignedToStudentIds.includes(studentId) ||
-        (student.classId &&
-          c.assignedToClassIds.includes(student.classId)),
-    );
+    const orConditions: object[] = [{ students: { some: { studentId } } }];
+    if (student.classId) {
+      orConditions.push({ classGroups: { some: { classGroupId: student.classId } } });
+    }
+    let studentContents = await prisma.contentItem.findMany({
+      where: { OR: orConditions },
+      include: { subject: true },
+    });
 
     if (subjectId) {
       studentContents = studentContents.filter((c) => c.subjectId === subjectId);
     }
 
-    const contentItems = studentContents.map((content) => {
-      const subject = subjects.find((s) => s.id === content.subjectId);
-      const watchRecordsForContent = watchRecords.filter(
-        (w) => w.contentId === content.id && w.studentId === studentId,
-      );
-      const totalWatchedSeconds = watchRecordsForContent.reduce(
-        (sum, w) => sum + w.watchedSeconds,
-        0,
-      );
+    const contentItems: Array<{
+      contentId: string;
+      title: string;
+      description?: string;
+      type: string;
+      subjectName: string;
+      topic: string;
+      totalDurationMinutes: number;
+      watchedDurationMinutes: number;
+      watchedPercent: number;
+      watchCount: number;
+      lastWatchedAt?: string;
+      completed: boolean;
+      assignedDate: string;
+    }> = [];
+
+    for (const content of studentContents) {
+      const watchRecs = await prisma.watchRecord.findMany({
+        where: { contentId: content.id, studentId },
+      });
+      const totalWatchedSeconds = watchRecs.reduce((s, w) => s + w.watchedSeconds, 0);
       const totalDurationSeconds = (content.durationMinutes ?? 0) * 60;
-      const watchedPercent =
-        totalDurationSeconds > 0
-          ? Math.round((totalWatchedSeconds / totalDurationSeconds) * 100)
-          : 0;
-      const completed = watchRecordsForContent.some((w) => w.completed);
-      const lastWatched = watchRecordsForContent.sort(
-        (a, b) =>
-          new Date(b.lastWatchedAt).getTime() -
-          new Date(a.lastWatchedAt).getTime(),
-      )[0];
+      const watchedPercent = totalDurationSeconds > 0 ? Math.round((totalWatchedSeconds / totalDurationSeconds) * 100) : 0;
+      const completed = watchRecs.some((w) => w.completed);
+      const lastWatched = watchRecs.sort((a, b) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())[0];
 
-      if (status === 'completed' && !completed) return null;
-      if (status === 'in_progress' && (completed || watchedPercent === 0))
-        return null;
-      if (status === 'not_started' && watchedPercent > 0) return null;
+      if (status === 'completed' && !completed) continue;
+      if (status === 'in_progress' && (completed || watchedPercent === 0)) continue;
+      if (status === 'not_started' && watchedPercent > 0) continue;
 
-      return {
+      contentItems.push({
         contentId: content.id,
         title: content.title,
-        description: content.description,
+        description: content.description ?? undefined,
         type: content.type,
-        subjectName: subject?.name ?? 'Bilinmeyen',
+        subjectName: content.subject?.name ?? 'Bilinmeyen',
         topic: content.topic,
         totalDurationMinutes: content.durationMinutes ?? 0,
         watchedDurationMinutes: Math.round(totalWatchedSeconds / 60),
         watchedPercent,
-        watchCount: watchRecordsForContent.length,
-        lastWatchedAt: lastWatched?.lastWatchedAt,
+        watchCount: watchRecs.length,
+        lastWatchedAt: lastWatched?.lastWatchedAt.toISOString(),
         completed,
-        assignedDate: content.assignedToStudentIds.includes(studentId)
-          ? new Date().toISOString() // Demo için
-          : new Date().toISOString(),
-      };
-    }).filter((item): item is NonNullable<typeof item> => item !== null);
+        assignedDate: new Date().toISOString(),
+      });
+    }
 
     const completedCount = contentItems.filter((c) => c.completed).length;
-    const inProgressCount = contentItems.filter(
-      (c) => !c.completed && c.watchedPercent > 0,
-    ).length;
-    const notStartedCount = contentItems.filter(
-      (c) => c.watchedPercent === 0,
-    ).length;
-    const totalWatchTimeMinutes = contentItems.reduce(
-      (sum, c) => sum + c.watchedDurationMinutes,
-      0,
-    );
+    const inProgressCount = contentItems.filter((c) => !c.completed && c.watchedPercent > 0).length;
+    const notStartedCount = contentItems.filter((c) => c.watchedPercent === 0).length;
+    const totalWatchTimeMinutes = contentItems.reduce((s, c) => s + c.watchedDurationMinutes, 0);
     const averageCompletionPercent =
-      contentItems.length === 0
-        ? 0
-        : Math.round(
-            contentItems.reduce((sum, c) => sum + c.watchedPercent, 0) /
-              contentItems.length,
-          );
+      contentItems.length === 0 ? 0 : Math.round(contentItems.reduce((s, c) => s + c.watchedPercent, 0) / contentItems.length);
 
-    const summary: ContentUsageSummary = {
+    return res.json({
       contents: contentItems,
       statistics: {
         totalContents: contentItems.length,
@@ -696,9 +615,7 @@ router.get(
         totalWatchTimeMinutes,
         averageCompletionPercent,
       },
-    };
-
-    return res.json(summary);
+    });
   },
 );
 
@@ -706,21 +623,33 @@ router.get(
 router.get(
   '/messages',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const users = allUsers();
-    const userMessages = messages
-      .filter((m) => m.fromUserId === userId || m.toUserId === userId)
-      .map((m) => {
-        const fromUser = users.find((u) => u.id === m.fromUserId);
-        const toUser = users.find((u) => u.id === m.toUserId);
-        return {
-          ...m,
-          fromUserName: fromUser?.name ?? m.fromUserId,
-          toUserName: toUser?.name ?? m.toUserId,
-        };
-      });
-    return res.json(userMessages);
+    const messagesData = await prisma.message.findMany({
+      where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
+    });
+    const userIds = [...new Set(messagesData.flatMap((m) => [m.fromUserId, m.toUserId]))];
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u.name]));
+    return res.json(
+      messagesData.map((m) => ({
+        id: m.id,
+        fromUserId: m.fromUserId,
+        toUserId: m.toUserId,
+        studentId: m.studentId ?? undefined,
+        subject: m.subject ?? undefined,
+        text: m.text,
+        attachments: m.attachments ?? undefined,
+        read: m.read,
+        readAt: m.readAt?.toISOString(),
+        createdAt: m.createdAt.toISOString(),
+        fromUserName: userMap.get(m.fromUserId) ?? m.fromUserId,
+        toUserName: userMap.get(m.toUserId) ?? m.toUserId,
+      })),
+    );
   },
 );
 
@@ -728,58 +657,54 @@ router.get(
 router.get(
   '/messages/conversations',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const userMessages = messages.filter(
-      (m) => m.fromUserId === userId || m.toUserId === userId,
-    );
+    const userMessages = await prisma.message.findMany({
+      where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
+    });
+    const otherUserIds = [...new Set(userMessages.map((m) => (m.fromUserId === userId ? m.toUserId : m.fromUserId)))];
+    const users = await prisma.user.findMany({
+      where: { id: { in: otherUserIds } },
+      select: { id: true, name: true, role: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const studentsData = await prisma.user.findMany({
+      where: { id: { in: userMessages.map((m) => m.studentId).filter(Boolean) as string[] }, role: 'student' },
+      select: { id: true, name: true },
+    });
+    const studentMap = new Map(studentsData.map((s) => [s.id, s.name]));
 
-    const conversationMap = new Map<
-      string,
-      {
-        userId: string;
-        userName: string;
-        userRole: string;
-        studentId?: string;
-        studentName?: string;
-        lastMessage?: Message;
-        unreadCount: number;
-      }
-    >();
+    const conversationMap = new Map<string, {
+      userId: string;
+      userName: string;
+      userRole: string;
+      studentId?: string;
+      studentName?: string;
+      lastMessage?: { id: string; fromUserId: string; toUserId: string; text: string; createdAt: string; read: boolean };
+      unreadCount: number;
+    }>();
 
-    userMessages.forEach((msg) => {
-      const otherUserId =
-        msg.fromUserId === userId ? msg.toUserId : msg.fromUserId;
-      const otherUser = teachers.find((t) => t.id === otherUserId) ||
-        students.find((s) => s.id === otherUserId) ||
-        parents.find((p) => p.id === otherUserId);
-
-      if (!otherUser) return;
+    for (const msg of userMessages) {
+      const otherUserId = msg.fromUserId === userId ? msg.toUserId : msg.fromUserId;
+      const otherUser = userMap.get(otherUserId);
+      if (!otherUser) continue;
 
       if (!conversationMap.has(otherUserId)) {
         conversationMap.set(otherUserId, {
           userId: otherUserId,
           userName: otherUser.name,
           userRole: otherUser.role,
-          studentId: msg.studentId,
-          studentName: msg.studentId
-            ? students.find((s) => s.id === msg.studentId)?.name
-            : undefined,
+          studentId: msg.studentId ?? undefined,
+          studentName: msg.studentId ? studentMap.get(msg.studentId) : undefined,
           unreadCount: 0,
         });
       }
-
       const conv = conversationMap.get(otherUserId)!;
-      if (
-        !conv.lastMessage ||
-        new Date(msg.createdAt) > new Date(conv.lastMessage.createdAt)
-      ) {
-        conv.lastMessage = msg;
+      if (!conv.lastMessage || msg.createdAt > new Date(conv.lastMessage.createdAt)) {
+        conv.lastMessage = { id: msg.id, fromUserId: msg.fromUserId, toUserId: msg.toUserId, text: msg.text, createdAt: msg.createdAt.toISOString(), read: msg.read };
       }
-      if (!msg.read && msg.toUserId === userId) {
-        conv.unreadCount++;
-      }
-    });
+      if (!msg.read && msg.toUserId === userId) conv.unreadCount++;
+    }
 
     return res.json(Array.from(conversationMap.values()));
   },
@@ -789,29 +714,41 @@ router.get(
 router.get(
   '/messages/conversation/:userId',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const otherUserId = String(req.params.userId);
     const studentId = req.query.studentId as string | undefined;
 
-    const conversationMessages = messages
-      .filter(
-        (m) =>
-          ((m.fromUserId === parentId && m.toUserId === otherUserId) ||
-            (m.fromUserId === otherUserId && m.toUserId === parentId)) &&
-          (!studentId || m.studentId === studentId),
-      )
-      .sort(
-        (a, b) =>
-          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      );
+    const conversationMessages = await prisma.message.findMany({
+      where: {
+        OR: [
+          { fromUserId: parentId, toUserId: otherUserId },
+          { fromUserId: otherUserId, toUserId: parentId },
+        ],
+        ...(studentId && { studentId }),
+      },
+      orderBy: { createdAt: 'asc' },
+    });
 
-    return res.json(conversationMessages);
+    return res.json(
+      conversationMessages.map((m) => ({
+        id: m.id,
+        fromUserId: m.fromUserId,
+        toUserId: m.toUserId,
+        studentId: m.studentId ?? undefined,
+        subject: m.subject ?? undefined,
+        text: m.text,
+        attachments: m.attachments ?? undefined,
+        read: m.read,
+        readAt: m.readAt?.toISOString(),
+        createdAt: m.createdAt.toISOString(),
+      })),
+    );
   },
 );
 
 // Mesaj gönder
-router.post('/messages', authenticate('parent'), (req, res) => {
+router.post('/messages', authenticate('parent'), async (req, res) => {
   const parentId = (req as AuthenticatedRequest).user!.id;
   const { toUserId, text, studentId, subject } = req.body;
 
@@ -819,43 +756,41 @@ router.post('/messages', authenticate('parent'), (req, res) => {
     return res.status(400).json({ error: 'toUserId ve text gereklidir' });
   }
 
-  const newMessage: Message = {
-    id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    fromUserId: parentId,
-    toUserId,
-    studentId,
-    subject,
-    text,
-    createdAt: new Date().toISOString(),
-    read: false,
-  };
+  const newMessage = await prisma.message.create({
+    data: { fromUserId: parentId, toUserId, studentId, subject, text, read: false },
+  });
 
-  messages.push(newMessage);
+  await prisma.notification.create({
+    data: {
+      userId: toUserId,
+      type: 'message_received',
+      title: 'Yeni mesaj',
+      body: `${(req as AuthenticatedRequest).user!.name} size mesaj gönderdi`,
+      read: false,
+      relatedEntityType: 'message',
+      relatedEntityId: newMessage.id,
+    },
+  });
 
-  // Alıcıya bildirim gönder
-  const notification: Notification = {
-    id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    userId: toUserId,
-    type: 'message_received',
-    title: 'Yeni mesaj',
-    body: `${(req as AuthenticatedRequest).user!.name} size mesaj gönderdi`,
-    createdAt: new Date().toISOString(),
-    read: false,
-    relatedEntityType: 'message',
-    relatedEntityId: newMessage.id,
-  };
-  notifications.push(notification);
-
-  return res.json(newMessage);
+  return res.status(201).json({
+    id: newMessage.id,
+    fromUserId: newMessage.fromUserId,
+    toUserId: newMessage.toUserId,
+    studentId: newMessage.studentId ?? undefined,
+    subject: newMessage.subject ?? undefined,
+    text: newMessage.text,
+    createdAt: newMessage.createdAt.toISOString(),
+    read: newMessage.read,
+  });
 });
 
 // Mesajı okundu olarak işaretle
 router.put(
   '/messages/:id/read',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const messageId = String(req.params.id);
-    const message = messages.find((m) => m.id === messageId);
+    const message = await prisma.message.findUnique({ where: { id: messageId } });
 
     if (!message) {
       return res.status(404).json({ error: 'Mesaj bulunamadı' });
@@ -865,10 +800,22 @@ router.put(
       return res.status(403).json({ error: 'Bu mesajı okuma yetkiniz yok' });
     }
 
-    message.read = true;
-    message.readAt = new Date().toISOString();
+    const updated = await prisma.message.update({
+      where: { id: messageId },
+      data: { read: true, readAt: new Date() },
+    });
 
-    return res.json(message);
+    return res.json({
+      id: updated.id,
+      fromUserId: updated.fromUserId,
+      toUserId: updated.toUserId,
+      studentId: updated.studentId ?? undefined,
+      subject: updated.subject ?? undefined,
+      text: updated.text,
+      read: updated.read,
+      readAt: updated.readAt?.toISOString(),
+      createdAt: updated.createdAt.toISOString(),
+    });
   },
 );
 
@@ -876,26 +823,42 @@ router.put(
 router.get(
   '/meetings',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const userMeetings = meetings
-      .filter((m) => m.parentIds.includes(userId))
-      .map((m) => {
-        const teacher = teachers.find((t) => t.id === m.teacherId);
-        const studentNames = m.studentIds.map(
-          (sid) => students.find((s) => s.id === sid)?.name ?? 'Bilinmeyen',
-        );
-        return {
-          ...m,
-          teacherName: teacher?.name ?? 'Bilinmeyen',
-          studentNames,
-          relatedStudentId: m.studentIds.find((sid) => {
-            const student = students.find((s) => s.id === sid);
-            return student && parents.find((p) => p.id === userId)?.studentIds.includes(sid);
-          }),
-        };
-      });
-    return res.json(userMeetings);
+    const userMeetings = await prisma.meeting.findMany({
+      where: { parents: { some: { parentId: userId } } },
+      include: {
+        students: { select: { studentId: true } },
+        parents: { select: { parentId: true } },
+      },
+    });
+    const teacherIds = [...new Set(userMeetings.map((m) => m.teacherId))];
+    const studentIds = [...new Set(userMeetings.flatMap((m) => m.students.map((s) => s.studentId)))];
+    const [teachersData, studentsData, parentData] = await Promise.all([
+      prisma.user.findMany({ where: { id: { in: teacherIds } }, select: { id: true, name: true } }),
+      prisma.user.findMany({ where: { id: { in: studentIds } }, select: { id: true, name: true } }),
+      prisma.user.findFirst({ where: { id: userId, role: 'parent' }, include: { parentStudents: { select: { studentId: true } } } }),
+    ]);
+    const teacherMap = new Map(teachersData.map((t) => [t.id, t.name]));
+    const studentMap = new Map(studentsData.map((s) => [s.id, s.name]));
+    const parentStudentIds = new Set(parentData?.parentStudents.map((ps) => ps.studentId) ?? []);
+
+    return res.json(
+      userMeetings.map((m) => ({
+        id: m.id,
+        type: m.type,
+        title: m.title,
+        teacherId: m.teacherId,
+        teacherName: teacherMap.get(m.teacherId) ?? 'Bilinmeyen',
+        studentIds: m.students.map((s) => s.studentId),
+        studentNames: m.students.map((s) => studentMap.get(s.studentId) ?? 'Bilinmeyen'),
+        parentIds: m.parents.map((p) => p.parentId),
+        scheduledAt: m.scheduledAt.toISOString(),
+        durationMinutes: m.durationMinutes,
+        meetingUrl: m.meetingUrl,
+        relatedStudentId: m.students.find((s) => parentStudentIds.has(s.studentId))?.studentId,
+      })),
+    );
   },
 );
 
@@ -903,34 +866,47 @@ router.get(
 router.get(
   '/meetings/:id',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const meetingId = String(req.params.id);
-    const meeting = meetings.find((m) => m.id === meetingId);
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+      include: {
+        students: { select: { studentId: true } },
+        parents: { select: { parentId: true } },
+      },
+    });
 
     if (!meeting) {
       return res.status(404).json({ error: 'Toplantı bulunamadı' });
     }
 
-    if (!meeting.parentIds.includes(userId)) {
-      return res
-        .status(403)
-        .json({ error: 'Bu toplantıya erişim izniniz yok' });
+    const isParent = meeting.parents.some((p) => p.parentId === userId);
+    if (!isParent) {
+      return res.status(403).json({ error: 'Bu toplantıya erişim izniniz yok' });
     }
 
-    const teacher = teachers.find((t) => t.id === meeting.teacherId);
-    const studentNames = meeting.studentIds.map(
-      (sid) => students.find((s) => s.id === sid)?.name ?? 'Bilinmeyen',
-    );
+    const [teacher, studentsData, parentData] = await Promise.all([
+      prisma.user.findUnique({ where: { id: meeting.teacherId }, select: { name: true } }),
+      prisma.user.findMany({ where: { id: { in: meeting.students.map((s) => s.studentId) } }, select: { id: true, name: true } }),
+      prisma.user.findFirst({ where: { id: userId }, include: { parentStudents: { select: { studentId: true } } } }),
+    ]);
+    const studentMap = new Map(studentsData.map((s) => [s.id, s.name]));
+    const parentStudentIds = new Set(parentData?.parentStudents.map((ps) => ps.studentId) ?? []);
 
     return res.json({
-      ...meeting,
+      id: meeting.id,
+      type: meeting.type,
+      title: meeting.title,
+      teacherId: meeting.teacherId,
       teacherName: teacher?.name ?? 'Bilinmeyen',
-      studentNames,
-      relatedStudentId: meeting.studentIds.find((sid) => {
-        const student = students.find((s) => s.id === sid);
-        return student && parents.find((p) => p.id === userId)?.studentIds.includes(sid);
-      }),
+      studentIds: meeting.students.map((s) => s.studentId),
+      studentNames: meeting.students.map((s) => studentMap.get(s.studentId) ?? 'Bilinmeyen'),
+      parentIds: meeting.parents.map((p) => p.parentId),
+      scheduledAt: meeting.scheduledAt.toISOString(),
+      durationMinutes: meeting.durationMinutes,
+      meetingUrl: meeting.meetingUrl,
+      relatedStudentId: meeting.students.find((s) => parentStudentIds.has(s.studentId))?.studentId,
     });
   },
 );
@@ -939,22 +915,22 @@ router.get(
 router.post(
   '/meetings/:id/join',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const meetingId = String(req.params.id);
-    const meeting = meetings.find((m) => m.id === meetingId);
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+      include: { parents: { select: { parentId: true } } },
+    });
 
     if (!meeting) {
       return res.status(404).json({ error: 'Toplantı bulunamadı' });
     }
 
-    if (!meeting.parentIds.includes(userId)) {
-      return res
-        .status(403)
-        .json({ error: 'Bu toplantıya erişim izniniz yok' });
+    if (!meeting.parents.some((p) => p.parentId === userId)) {
+      return res.status(403).json({ error: 'Bu toplantıya erişim izniniz yok' });
     }
 
-    // Log kaydı burada yapılabilir
     return res.json({ success: true, meetingUrl: meeting.meetingUrl });
   },
 );
@@ -963,106 +939,106 @@ router.post(
 router.get(
   '/notifications',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    let userNotifications = notifications.filter((n) => n.userId === userId);
-
-    // Query parametreleri ile filtreleme
-    const read = req.query.read;
-    if (read === 'true') {
-      userNotifications = userNotifications.filter((n) => n.read);
-    } else if (read === 'false') {
-      userNotifications = userNotifications.filter((n) => !n.read);
-    }
-
-    // Limit parametresi
+    const readFilter = req.query.read;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
-    if (limit && limit > 0) {
-      userNotifications = userNotifications.slice(0, limit);
-    }
+    const where: { userId: string; read?: boolean } = { userId };
+    if (readFilter === 'true') where.read = true;
+    else if (readFilter === 'false') where.read = false;
 
-    // Tarihe göre sıralama (en yeni üstte)
-    userNotifications.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    const userNotifications = await prisma.notification.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit && limit > 0 ? limit : undefined,
+    });
+    return res.json(
+      userNotifications.map((n) => ({
+        id: n.id,
+        userId: n.userId,
+        type: n.type,
+        title: n.title,
+        body: n.body,
+        read: n.read,
+        relatedEntityType: n.relatedEntityType ?? undefined,
+        relatedEntityId: n.relatedEntityId ?? undefined,
+        readAt: n.readAt?.toISOString(),
+        createdAt: n.createdAt.toISOString(),
+      })),
     );
-
-    return res.json(userNotifications);
   },
 );
 
-// Okunmamış bildirim sayısı
 router.get(
   '/notifications/unread-count',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const unreadCount = notifications.filter(
-      (n) => n.userId === userId && !n.read,
-    ).length;
-    return res.json({ count: unreadCount });
+    const count = await prisma.notification.count({
+      where: { userId, read: false },
+    });
+    return res.json({ count });
   },
 );
 
-// Bildirimi okundu olarak işaretle
 router.put(
   '/notifications/:id/read',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
-    const notification = notifications.find((n) => n.id === notificationId);
-
+    const notification = await prisma.notification.findFirst({
+      where: { id: notificationId, userId },
+    });
     if (!notification) {
       return res.status(404).json({ error: 'Bildirim bulunamadı' });
     }
-
     if (notification.userId !== userId) {
-      return res
-        .status(403)
-        .json({ error: 'Bu bildirimi okuma yetkiniz yok' });
+      return res.status(403).json({ error: 'Bu bildirimi okuma yetkiniz yok' });
     }
-
-    notification.read = true;
-    notification.readAt = new Date().toISOString();
-
-    return res.json(notification);
+    const updated = await prisma.notification.update({
+      where: { id: notificationId },
+      data: { read: true, readAt: new Date() },
+    });
+    return res.json({
+      id: updated.id,
+      userId: updated.userId,
+      type: updated.type,
+      title: updated.title,
+      body: updated.body,
+      read: updated.read,
+      readAt: updated.readAt?.toISOString(),
+      createdAt: updated.createdAt.toISOString(),
+    });
   },
 );
 
-// Tüm bildirimleri okundu olarak işaretle
 router.put(
   '/notifications/read-all',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
-    const now = new Date().toISOString();
-    notifications
-      .filter((n) => n.userId === userId && !n.read)
-      .forEach((n) => {
-        n.read = true;
-        n.readAt = now;
-      });
-
+    await prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true, readAt: new Date() },
+    });
     return res.json({ success: true });
   },
 );
 
-// Bildirimi sil
 router.delete(
   '/notifications/:id',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
-    const index = notifications.findIndex(
-      (n) => n.id === notificationId && n.userId === userId,
-    );
-
-    if (index === -1) {
+    const notification = await prisma.notification.findFirst({
+      where: { id: notificationId, userId },
+    });
+    if (!notification) {
       return res.status(404).json({ error: 'Bildirim bulunamadı' });
     }
-
-    notifications.splice(index, 1);
+    await prisma.notification.delete({ where: { id: notificationId } });
     return res.json({ success: true });
   },
 );
@@ -1071,46 +1047,72 @@ router.delete(
 router.get(
   '/children/:id/feedback',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
       });
     }
 
-    const feedbacks = teacherFeedbacks
-      .filter((f) => f.studentId === studentId)
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
-
-    return res.json(feedbacks);
+    const feedbacks = await prisma.teacherFeedback.findMany({
+      where: { studentId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return res.json(
+      feedbacks.map((f) => ({
+        id: f.id,
+        studentId: f.studentId,
+        teacherId: f.teacherId,
+        teacherName: f.teacherName,
+        type: f.type,
+        relatedTestId: f.relatedTestId ?? undefined,
+        relatedAssignmentId: f.relatedAssignmentId ?? undefined,
+        title: f.title,
+        content: f.content,
+        read: f.read,
+        readAt: f.readAt?.toISOString(),
+        createdAt: f.createdAt.toISOString(),
+      })),
+    );
   },
 );
 
-// Tüm çocuklar için geri bildirimler
 router.get(
   '/feedback',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
-    const parent = parents.find((p) => p.id === parentId);
+    const parent = await prisma.user.findFirst({
+      where: { id: parentId, role: 'parent' },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
     if (!parent) {
       return res.status(404).json({ error: 'Veli bulunamadı' });
     }
-
-    const feedbacks = teacherFeedbacks
-      .filter((f) => parent.studentIds.includes(f.studentId))
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
-
-    return res.json(feedbacks);
+    const studentIds = parent.parentStudents.map((ps) => ps.studentId);
+    const feedbacks = await prisma.teacherFeedback.findMany({
+      where: { studentId: { in: studentIds } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return res.json(
+      feedbacks.map((f) => ({
+        id: f.id,
+        studentId: f.studentId,
+        teacherId: f.teacherId,
+        teacherName: f.teacherName,
+        type: f.type,
+        relatedTestId: f.relatedTestId ?? undefined,
+        relatedAssignmentId: f.relatedAssignmentId ?? undefined,
+        title: f.title,
+        content: f.content,
+        read: f.read,
+        readAt: f.readAt?.toISOString(),
+        createdAt: f.createdAt.toISOString(),
+      })),
+    );
   },
 );
 
@@ -1118,26 +1120,38 @@ router.get(
 router.put(
   '/feedback/:id/read',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const feedbackId = String(req.params.id);
-    const feedback = teacherFeedbacks.find((f) => f.id === feedbackId);
+    const feedback = await prisma.teacherFeedback.findUnique({
+      where: { id: feedbackId },
+    });
 
     if (!feedback) {
       return res.status(404).json({ error: 'Geri bildirim bulunamadı' });
     }
 
-    const parent = parents.find((p) => p.id === parentId);
-    if (!parent || !parent.studentIds.includes(feedback.studentId)) {
-      return res
-        .status(403)
-        .json({ error: 'Bu geri bildirime erişim izniniz yok' });
+    const access = await checkParentAccess(parentId, feedback.studentId);
+    if (!access.allowed) {
+      return res.status(403).json({ error: 'Bu geri bildirime erişim izniniz yok' });
     }
 
-    feedback.read = true;
-    feedback.readAt = new Date().toISOString();
-
-    return res.json(feedback);
+    const updated = await prisma.teacherFeedback.update({
+      where: { id: feedbackId },
+      data: { read: true, readAt: new Date() },
+    });
+    return res.json({
+      id: updated.id,
+      studentId: updated.studentId,
+      teacherId: updated.teacherId,
+      teacherName: updated.teacherName,
+      type: updated.type,
+      title: updated.title,
+      content: updated.content,
+      read: updated.read,
+      readAt: updated.readAt?.toISOString(),
+      createdAt: updated.createdAt.toISOString(),
+    });
   },
 );
 
@@ -1145,73 +1159,103 @@ router.put(
 router.get(
   '/children/:id/alerts',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
       });
     }
 
-    const studentAlerts = alerts
-      .filter((a) => a.studentId === studentId)
-      .sort(
-        (a, b) =>
-          new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime(),
-      );
-
-    return res.json(studentAlerts);
+    const studentAlerts = await prisma.alert.findMany({
+      where: { studentId },
+      orderBy: { detectedAt: 'desc' },
+    });
+    return res.json(
+      studentAlerts.map((a) => ({
+        id: a.id,
+        studentId: a.studentId,
+        type: a.type,
+        severity: a.severity,
+        title: a.title,
+        description: a.description,
+        status: a.status,
+        relatedData: a.relatedData ?? undefined,
+        resolvedAt: a.resolvedAt?.toISOString(),
+        detectedAt: a.detectedAt.toISOString(),
+      })),
+    );
   },
 );
 
-// Uyarıyı çözüldü olarak işaretle
 router.put(
   '/alerts/:id/resolve',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const alertId = String(req.params.id);
-    const alert = alerts.find((a) => a.id === alertId);
+    const alert = await prisma.alert.findUnique({ where: { id: alertId } });
 
     if (!alert) {
       return res.status(404).json({ error: 'Uyarı bulunamadı' });
     }
 
-    const parent = parents.find((p) => p.id === parentId);
-    if (!parent || !parent.studentIds.includes(alert.studentId)) {
+    const access = await checkParentAccess(parentId, alert.studentId);
+    if (!access.allowed) {
       return res.status(403).json({ error: 'Bu uyarıya erişim izniniz yok' });
     }
 
-    alert.status = 'resolved';
-    alert.resolvedAt = new Date().toISOString();
-
-    return res.json(alert);
+    const updated = await prisma.alert.update({
+      where: { id: alertId },
+      data: { status: 'resolved', resolvedAt: new Date() },
+    });
+    return res.json({
+      id: updated.id,
+      studentId: updated.studentId,
+      type: updated.type,
+      severity: updated.severity,
+      title: updated.title,
+      description: updated.description,
+      status: updated.status,
+      resolvedAt: updated.resolvedAt?.toISOString(),
+      detectedAt: updated.detectedAt.toISOString(),
+    });
   },
 );
 
-// Uyarıyı reddet
 router.put(
   '/alerts/:id/dismiss',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const alertId = String(req.params.id);
-    const alert = alerts.find((a) => a.id === alertId);
+    const alert = await prisma.alert.findUnique({ where: { id: alertId } });
 
     if (!alert) {
       return res.status(404).json({ error: 'Uyarı bulunamadı' });
     }
 
-    const parent = parents.find((p) => p.id === parentId);
-    if (!parent || !parent.studentIds.includes(alert.studentId)) {
+    const access = await checkParentAccess(parentId, alert.studentId);
+    if (!access.allowed) {
       return res.status(403).json({ error: 'Bu uyarıya erişim izniniz yok' });
     }
 
-    alert.status = 'dismissed';
-
-    return res.json(alert);
+    const updated = await prisma.alert.update({
+      where: { id: alertId },
+      data: { status: 'dismissed' },
+    });
+    return res.json({
+      id: updated.id,
+      studentId: updated.studentId,
+      type: updated.type,
+      severity: updated.severity,
+      title: updated.title,
+      description: updated.description,
+      status: updated.status,
+      detectedAt: updated.detectedAt.toISOString(),
+    });
   },
 );
 
@@ -1219,10 +1263,10 @@ router.put(
 router.get(
   '/children/:id/activity-summary',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
@@ -1235,10 +1279,11 @@ router.get(
 
     const now = new Date();
     let periodStart: Date;
-    let periodEnd: Date = now;
+    let periodEnd: Date = new Date(now);
 
     if (period === 'daily') {
-      periodStart = new Date(now.setHours(0, 0, 0, 0));
+      periodStart = new Date(now);
+      periodStart.setHours(0, 0, 0, 0);
     } else if (period === 'weekly') {
       periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     } else if (period === 'monthly') {
@@ -1250,24 +1295,34 @@ router.get(
       periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
 
-    const studentResults = testResults.filter(
-      (r) =>
-        r.studentId === studentId &&
-        new Date(r.completedAt) >= periodStart &&
-        new Date(r.completedAt) <= periodEnd,
-    );
-    const studentWatchRecords = watchRecords.filter(
-      (w) =>
-        w.studentId === studentId &&
-        new Date(w.lastWatchedAt) >= periodStart &&
-        new Date(w.lastWatchedAt) <= periodEnd,
-    );
-    const studentAssignments = assignments.filter(
-      (a) =>
-        a.assignedStudentIds.includes(studentId) &&
-        new Date(a.dueDate) >= periodStart &&
-        new Date(a.dueDate) <= periodEnd,
-    );
+    const [studentResults, studentWatchRecords, studentAssignments] = await Promise.all([
+      prisma.testResult.findMany({
+        where: {
+          studentId,
+          completedAt: { gte: periodStart, lte: periodEnd },
+        },
+      }),
+      prisma.watchRecord.findMany({
+        where: {
+          studentId,
+          lastWatchedAt: { gte: periodStart, lte: periodEnd },
+        },
+      }),
+      prisma.assignment.findMany({
+        where: {
+          students: { some: { studentId } },
+          dueDate: { gte: periodStart, lte: periodEnd },
+        },
+      }),
+    ]);
+
+    let assignmentsCompleted = 0;
+    let assignmentsOverdue = 0;
+    for (const a of studentAssignments) {
+      const s = await getAssignmentStatus(a, studentId);
+      if (s === 'completed') assignmentsCompleted++;
+      else if (s === 'overdue') assignmentsOverdue++;
+    }
 
     const testsSolved = studentResults.length;
     const questionsSolved = studentResults.reduce(
@@ -1277,64 +1332,36 @@ router.get(
     const averageScorePercent =
       studentResults.length === 0
         ? 0
-        : Math.round(
-            studentResults.reduce((sum, r) => sum + r.scorePercent, 0) /
-              studentResults.length,
-          );
+        : Math.round(studentResults.reduce((sum, r) => sum + r.scorePercent, 0) / studentResults.length);
     const totalStudyMinutes = Math.round(
       (studentResults.reduce((sum, r) => sum + r.durationSeconds, 0) +
         studentWatchRecords.reduce((sum, w) => sum + w.watchedSeconds, 0)) /
         60,
     );
-    const contentsWatched = new Set(
-      studentWatchRecords.map((w) => w.contentId),
-    ).size;
+    const contentsWatched = new Set(studentWatchRecords.map((w) => w.contentId)).size;
     const contentsWatchTimeMinutes = Math.round(
       studentWatchRecords.reduce((sum, w) => sum + w.watchedSeconds, 0) / 60,
     );
-    const assignmentsCompleted = studentAssignments.filter((a) =>
-      getAssignmentStatus(a, studentId) === 'completed',
-    ).length;
-    const assignmentsOverdue = studentAssignments.filter(
-      (a) => getAssignmentStatus(a, studentId) === 'overdue',
-    ).length;
 
-    // Günlük breakdown
     const dailyBreakdownMap = new Map<string, { testsSolved: number; questionsSolved: number; studyMinutes: number }>();
-    for (
-      let d = new Date(periodStart);
-      d <= periodEnd;
-      d.setDate(d.getDate() + 1)
-    ) {
-      const dateStr = d.toISOString().split('T')[0];
-      dailyBreakdownMap.set(dateStr, {
-        testsSolved: 0,
-        questionsSolved: 0,
-        studyMinutes: 0,
-      });
+    for (let d = new Date(periodStart); d <= periodEnd; d.setDate(d.getDate() + 1)) {
+      dailyBreakdownMap.set(d.toISOString().slice(0, 10), { testsSolved: 0, questionsSolved: 0, studyMinutes: 0 });
     }
 
     studentResults.forEach((r) => {
-      const dateStr = new Date(r.completedAt).toISOString().split('T')[0];
+      const dateStr = r.completedAt.toISOString().slice(0, 10);
       const day = dailyBreakdownMap.get(dateStr);
       if (day) {
         day.testsSolved++;
-        day.questionsSolved +=
-          r.correctCount + r.incorrectCount + r.blankCount;
+        day.questionsSolved += r.correctCount + r.incorrectCount + r.blankCount;
         day.studyMinutes += Math.round(r.durationSeconds / 60);
       }
     });
 
-    const dailyBreakdown = Array.from(dailyBreakdownMap.entries()).map(
-      ([date, data]) => ({ date, ...data }),
-    );
+    const dailyBreakdown = Array.from(dailyBreakdownMap.entries()).map(([date, data]) => ({ date, ...data }));
 
-    // Top subjects ve topics (basitleştirilmiş)
-    const topSubjects: { subjectName: string; studyMinutes: number }[] = [];
-    const topTopics: { topic: string; studyMinutes: number }[] = [];
-
-    const summary: ActivitySummary = {
-      period: period as any,
+    return res.json({
+      period,
       startDate: periodStart.toISOString(),
       endDate: periodEnd.toISOString(),
       testsSolved,
@@ -1345,38 +1372,46 @@ router.get(
       contentsWatchTimeMinutes,
       assignmentsCompleted,
       assignmentsOverdue,
-      topSubjects,
-      topTopics,
+      topSubjects: [] as { subjectName: string; studyMinutes: number }[],
+      topTopics: [] as { topic: string; studyMinutes: number }[],
       dailyBreakdown,
-    };
-
-    return res.json(summary);
+    });
   },
 );
 
-// Haftalık raporlar (basitleştirilmiş - gerçekte otomatik oluşturulmalı)
+// Haftalık raporlar
 router.get(
   '/children/:id/weekly-reports',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
       });
     }
 
-    const reports = weeklyReports
-      .filter((r) => r.studentId === studentId)
-      .sort(
-        (a, b) =>
-          new Date(b.weekStartDate).getTime() -
-          new Date(a.weekStartDate).getTime(),
-      );
-
-    return res.json({ reports, hasMore: false });
+    const reports = await prisma.weeklyReport.findMany({
+      where: { studentId },
+      orderBy: { weekStartDate: 'desc' },
+    });
+    return res.json({
+      reports: reports.map((r) => ({
+        id: r.id,
+        studentId: r.studentId,
+        weekStartDate: r.weekStartDate.toISOString(),
+        weekEndDate: r.weekEndDate.toISOString(),
+        generatedAt: r.generatedAt.toISOString(),
+        summary: r.summary,
+        comparison: r.comparison,
+        topicPerformance: r.topicPerformance,
+        teacherFeedback: r.teacherFeedback,
+        recommendations: r.recommendations,
+      })),
+      hasMore: false,
+    });
   },
 );
 
@@ -1384,45 +1419,53 @@ router.get(
 router.get(
   '/children/:id/goals',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
       });
     }
 
-    const studentGoals = parentGoals
-      .filter((g) => g.studentId === studentId)
-      .map((g) => {
-        // Basit ilerleme hesaplama (gerçekte daha karmaşık olmalı)
-        let currentValue = 0;
-        if (g.type === 'weekly_tests') {
-          const weekStart = new Date(g.startDate);
-          const now = new Date();
-          currentValue = testResults.filter(
-            (r) =>
-              r.studentId === studentId &&
-              new Date(r.completedAt) >= weekStart &&
-              new Date(r.completedAt) <= now,
-          ).length;
-        }
+    const studentGoals = await prisma.parentGoal.findMany({
+      where: { studentId, createdByParentId: parentId },
+    });
 
-        const progressPercent = Math.min(
-          Math.round((currentValue / g.targetValue) * 100),
-          100,
-        );
+    const testResultsData = await prisma.testResult.findMany({
+      where: { studentId },
+    });
 
-        return {
-          ...g,
-          currentValue,
-          progressPercent,
-        };
-      });
+    const withProgress = studentGoals.map((g) => {
+      let currentValue = 0;
+      if (g.type === 'weekly_tests') {
+        const weekStart = new Date(g.startDate);
+        const weekEnd = new Date(g.endDate);
+        currentValue = testResultsData.filter(
+          (r) => r.completedAt >= weekStart && r.completedAt <= weekEnd,
+        ).length;
+      }
+      const progressPercent = Math.min(Math.round((currentValue / g.targetValue) * 100), 100);
+      return {
+        id: g.id,
+        studentId: g.studentId,
+        createdByParentId: g.createdByParentId,
+        type: g.type,
+        targetValue: g.targetValue,
+        topic: g.topic ?? undefined,
+        startDate: g.startDate.toISOString(),
+        endDate: g.endDate.toISOString(),
+        status: g.status,
+        reward: g.reward ?? undefined,
+        completedAt: g.completedAt?.toISOString(),
+        createdAt: g.createdAt.toISOString(),
+        currentValue,
+        progressPercent,
+      };
+    });
 
-    return res.json(studentGoals);
+    return res.json(withProgress);
   },
 );
 
@@ -1430,10 +1473,10 @@ router.get(
 router.post(
   '/children/:id/goals',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
-    const access = checkParentAccess(parentId, studentId);
+    const access = await checkParentAccess(parentId, studentId);
     if (!access.allowed) {
       return res.status(access.error === 'Veli bulunamadı' ? 404 : 403).json({
         error: access.error,
@@ -1443,27 +1486,33 @@ router.post(
     const { type, targetValue, startDate, endDate, reward } = req.body;
 
     if (!type || !targetValue || !startDate || !endDate) {
-      return res
-        .status(400)
-        .json({ error: 'type, targetValue, startDate ve endDate gereklidir' });
+      return res.status(400).json({ error: 'type, targetValue, startDate ve endDate gereklidir' });
     }
 
-    const newGoal: ParentGoal = {
-      id: `goal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      studentId,
-      createdByParentId: parentId,
-      type,
-      targetValue,
-      startDate,
-      endDate,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      reward,
-    };
+    const newGoal = await prisma.parentGoal.create({
+      data: {
+        studentId,
+        createdByParentId: parentId,
+        type: type as 'weekly_questions' | 'weekly_tests' | 'topic_completion' | 'score_percent',
+        targetValue,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        reward: reward ?? undefined,
+      },
+    });
 
-    parentGoals.push(newGoal);
-
-    return res.json(newGoal);
+    return res.status(201).json({
+      id: newGoal.id,
+      studentId: newGoal.studentId,
+      createdByParentId: newGoal.createdByParentId,
+      type: newGoal.type,
+      targetValue: newGoal.targetValue,
+      startDate: newGoal.startDate.toISOString(),
+      endDate: newGoal.endDate.toISOString(),
+      status: newGoal.status,
+      createdAt: newGoal.createdAt.toISOString(),
+      reward: newGoal.reward ?? undefined,
+    });
   },
 );
 
@@ -1471,101 +1520,112 @@ router.post(
 router.get(
   '/calendar',
   authenticate('parent'),
-  (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res) => {
     const parentId = req.user!.id;
-    const parent = parents.find((p) => p.id === parentId);
+    const parent = await prisma.user.findFirst({
+      where: { id: parentId, role: 'parent' },
+      include: { parentStudents: { select: { studentId: true } } },
+    });
     if (!parent) {
       return res.status(404).json({ error: 'Veli bulunamadı' });
     }
 
+    const studentIds = parent.parentStudents.map((ps) => ps.studentId);
     const startDate = req.query.startDate
       ? new Date(String(req.query.startDate))
       : new Date();
     const endDate = req.query.endDate
       ? new Date(String(req.query.endDate))
-      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // Varsayılan: 30 gün sonrası
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     const events: CalendarEvent[] = [];
+    const now = new Date();
 
-    // Veli'nin çocuklarının görevleri
-    parent.studentIds.forEach((studentId) => {
-      const studentAssignments = assignments.filter((a) =>
-        a.assignedStudentIds.includes(studentId),
+    const [assignmentsData, testResultsData, meetingsData, studentsData] = await Promise.all([
+      prisma.assignment.findMany({
+        where: {
+          students: { some: { studentId: { in: studentIds } } },
+          dueDate: { gte: startDate, lte: endDate },
+        },
+        include: { students: { select: { studentId: true } } },
+      }),
+      prisma.testResult.findMany({ where: { studentId: { in: studentIds } } }),
+      prisma.meeting.findMany({
+        where: {
+          OR: [
+            { students: { some: { studentId: { in: studentIds } } } },
+            { parents: { some: { parentId } } },
+          ],
+        },
+        include: {
+          students: { select: { studentId: true } },
+          parents: { select: { parentId: true } },
+        },
+      }),
+      prisma.user.findMany({ where: { id: { in: studentIds } }, select: { id: true, name: true } }),
+    ]);
+
+    const studentMap = new Map(studentsData.map((s) => [s.id, s.name]));
+    const completedIds = new Set(
+      testResultsData.map((r) => `${r.assignmentId}-${r.studentId}`),
+    );
+
+    for (const studentId of studentIds) {
+      const studentAssignments = assignmentsData.filter((a) =>
+        a.students.some((s) => s.studentId === studentId),
       );
-
-      studentAssignments.forEach((assignment) => {
-        const dueDate = new Date(assignment.dueDate);
+      for (const assignment of studentAssignments) {
+        const dueDate = assignment.dueDate;
         if (dueDate >= startDate && dueDate <= endDate) {
-          const now = new Date();
           let status: 'pending' | 'completed' | 'overdue' = 'pending';
-          if (dueDate < now) {
-            status = 'overdue';
-          } else {
-            const hasResult = testResults.some(
-              (r) => r.assignmentId === assignment.id && r.studentId === studentId,
-            );
-            if (hasResult) {
-              status = 'completed';
-            }
-          }
+          if (dueDate < now) status = 'overdue';
+          else if (completedIds.has(`${assignment.id}-${studentId}`)) status = 'completed';
 
-          const student = students.find((s) => s.id === studentId);
           events.push({
             id: `assignment-${assignment.id}-${studentId}`,
             type: 'assignment',
-            title: `${student?.name || 'Öğrenci'}: ${assignment.title}`,
-            startDate: assignment.dueDate,
-            description: assignment.description,
+            title: `${studentMap.get(studentId) || 'Öğrenci'}: ${assignment.title}`,
+            startDate: dueDate.toISOString(),
+            description: assignment.description ?? undefined,
             status,
             color: status === 'overdue' ? '#e74c3c' : status === 'completed' ? '#27ae60' : '#3498db',
             relatedId: assignment.id,
           });
         }
-      });
+      }
 
-      // Çocuğun toplantıları
-      const studentMeetings = meetings.filter((m) =>
-        m.studentIds.includes(studentId) || m.parentIds.includes(parentId),
-      );
-      studentMeetings.forEach((meeting) => {
-        const meetingStart = new Date(meeting.scheduledAt);
+      for (const meeting of meetingsData) {
+        const meetingStart = meeting.scheduledAt;
         if (meetingStart >= startDate && meetingStart <= endDate) {
           const meetingEnd = new Date(
             meetingStart.getTime() + meeting.durationMinutes * 60 * 1000,
           );
-
-          const student = students.find((s) => s.id === studentId);
-          events.push({
-            id: `meeting-${meeting.id}-${studentId}`,
-            type: 'meeting',
-            title: `${student?.name || 'Öğrenci'}: ${meeting.title}`,
-            startDate: meeting.scheduledAt,
-            endDate: meetingEnd.toISOString(),
-            description: `${meeting.durationMinutes} dakika`,
-            status: meetingStart < new Date() ? 'completed' : 'pending',
-            color: '#9b59b6',
-            relatedId: meeting.id,
-          });
+          const isRelevant =
+            meeting.students.some((s) => s.studentId === studentId) ||
+            meeting.parents.some((p) => p.parentId === parentId);
+          if (isRelevant) {
+            events.push({
+              id: `meeting-${meeting.id}-${studentId}`,
+              type: 'meeting',
+              title: `${studentMap.get(studentId) || 'Öğrenci'}: ${meeting.title}`,
+              startDate: meetingStart.toISOString(),
+              endDate: meetingEnd.toISOString(),
+              description: `${meeting.durationMinutes} dakika`,
+              status: meetingStart < now ? 'completed' : 'pending',
+              color: '#9b59b6',
+              relatedId: meeting.id,
+            });
+          }
         }
-      });
-    });
+      }
+    }
 
-    // Tip ve durum filtreleme
     const typeFilter = req.query.type as CalendarEventType | undefined;
     const statusFilter = req.query.status as string | undefined;
-
     let filteredEvents = events;
-    if (typeFilter) {
-      filteredEvents = filteredEvents.filter((e) => e.type === typeFilter);
-    }
-    if (statusFilter) {
-      filteredEvents = filteredEvents.filter((e) => e.status === statusFilter);
-    }
-
-    // Tarihe göre sıralama
-    filteredEvents.sort(
-      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
-    );
+    if (typeFilter) filteredEvents = filteredEvents.filter((e) => e.type === typeFilter);
+    if (statusFilter) filteredEvents = filteredEvents.filter((e) => e.status === statusFilter);
+    filteredEvents.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
     return res.json({
       events: filteredEvents,
