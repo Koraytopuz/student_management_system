@@ -267,8 +267,19 @@ export const TeacherDashboard: React.FC = () => {
       // Düzenleme modu
       setEditingMeetingId(meeting.id);
       const scheduled = new Date(meeting.scheduledAt);
-      const local = new Date(scheduled.getTime() - scheduled.getTimezoneOffset() * 60 * 1000);
-      const scheduledValue = local.toISOString().slice(0, 16);
+      let scheduledValue = '';
+      if (!Number.isNaN(scheduled.getTime())) {
+        const local = new Date(scheduled.getTime() - scheduled.getTimezoneOffset() * 60 * 1000);
+        if (!Number.isNaN(local.getTime())) {
+          scheduledValue = local.toISOString().slice(0, 16);
+        }
+      }
+      // Tarih parse edilemezse (bozuk veri vb.), varsayılan değer öner
+      if (!scheduledValue) {
+        const base = new Date(Date.now() + 15 * 60 * 1000);
+        const localFallback = new Date(base.getTime() - base.getTimezoneOffset() * 60 * 1000);
+        scheduledValue = localFallback.toISOString().slice(0, 16);
+      }
       setMeetingDraft((prev) => ({
         ...prev,
         title: meeting.title,
@@ -808,8 +819,34 @@ const TeacherOverview: React.FC<{
           {activities.slice(0, 4).map((activity) => (
             <div className="list-row" key={activity}>
               <div>
-                <strong>{activity}</strong>
-                <small>Son 7 gün</small>
+                {(() => {
+                  const match = activity.match(
+                    /^Öğrenci\s+(.+?)\s+(\d+)%\s+skorla\s+"(.+)"\s+testini\s+tamamladı$/i,
+                  );
+                  if (!match) {
+                    return (
+                      <>
+                        <strong>{activity}</strong>
+                        <small>Son 7 gün</small>
+                      </>
+                    );
+                  }
+
+                  const studentNameRaw = (match[1] ?? '').trim();
+                  const studentName = studentNameRaw.replace(/\s+Öğrenci$/i, '').trim();
+                  const score = (match[2] ?? '').trim();
+                  const testTitle = (match[3] ?? '').trim();
+
+                  return (
+                    <>
+                      <strong style={{ display: 'block' }}>{studentName || 'Öğrenci'}</strong>
+                      <small style={{ display: 'block' }}>
+                        %{score} · {testTitle}
+                      </small>
+                      <small style={{ display: 'block', marginTop: '0.2rem' }}>Son 7 gün</small>
+                    </>
+                  );
+                })()}
               </div>
               <div
                 style={{

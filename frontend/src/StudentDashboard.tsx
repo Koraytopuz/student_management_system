@@ -38,6 +38,9 @@ import { LiveClassOverlay } from './LiveClassOverlay';
 type StudentTab = 'overview' | 'assignments' | 'planner' | 'grades';
 type AssignmentStatus = 'todo' | 'in-progress' | 'done' | 'overdue';
 
+const sortMeetingsByDate = (items: StudentMeeting[]): StudentMeeting[] =>
+  [...items].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
+
 const getWeekRange = () => {
   const now = new Date();
   const day = now.getDay() || 7;
@@ -102,7 +105,9 @@ export const StudentDashboard: React.FC = () => {
       .then((data) => setAssignments(data))
       .catch(() => {});
     getStudentContents(token).then(setContents).catch(() => {});
-    getStudentMeetings(token).then(setMeetings).catch(() => {});
+    getStudentMeetings(token)
+      .then((data) => setMeetings(sortMeetingsByDate(data)))
+      .catch(() => {});
     progressState.run(() => getStudentProgressTopics(token)).catch(() => {});
     chartsState.run(() => getStudentProgressCharts(token)).catch(() => {});
     const { start, end } = getWeekRange();
@@ -167,7 +172,20 @@ export const StudentDashboard: React.FC = () => {
     null,
   );
 
-  const handleJoinMeeting = async () => {
+  const nextMeeting = useMemo(() => {
+    if (!meetings.length) return null;
+    const now = Date.now();
+    const withDates = meetings
+      .map((meeting) => ({ meeting, start: new Date(meeting.scheduledAt) }))
+      .filter((item) => !Number.isNaN(item.start.getTime()))
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    const target =
+      withDates.find((item) => item.start.getTime() >= now - 10 * 60 * 1000) ?? withDates[0];
+    return target?.meeting ?? null;
+  }, [meetings]);
+
+  const handleJoinMeeting = async (meetingId?: string) => {
     if (!token) {
       setJoinMeetingHint('Oturum süresi dolmuş olabilir, lütfen tekrar giriş yapın.');
       return;
@@ -178,20 +196,14 @@ export const StudentDashboard: React.FC = () => {
       return;
     }
 
-    const now = new Date();
-    const withDates = meetings.map((meeting) => ({
-      meeting,
-      start: new Date(meeting.scheduledAt),
-    }));
-
-    withDates.sort((a, b) => a.start.getTime() - b.start.getTime());
-
-    const target =
-      withDates.find((item) => item.start.getTime() >= now.getTime() - 10 * 60 * 1000) ??
-      withDates[0];
+    const target = meetingId ? meetings.find((m) => m.id === meetingId) ?? null : nextMeeting;
+    if (!target) {
+      setJoinMeetingHint('Şu anda katılabileceğiniz planlı canlı ders bulunmuyor.');
+      return;
+    }
 
     try {
-      const session = await joinStudentLiveMeeting(token, target.meeting.id);
+      const session = await joinStudentLiveMeeting(token, target.id);
       if (session.mode === 'external' && session.meetingUrl) {
         setJoinMeetingHint(null);
         window.open(session.meetingUrl, '_blank', 'noopener,noreferrer');
@@ -199,7 +211,7 @@ export const StudentDashboard: React.FC = () => {
       }
       if (session.mode === 'internal' && session.url && session.token) {
         setJoinMeetingHint(null);
-        setLiveClass({ url: session.url, token: session.token, title: target.meeting.title });
+        setLiveClass({ url: session.url, token: session.token, title: target.title });
         return;
       }
       setJoinMeetingHint(
@@ -368,7 +380,7 @@ export const StudentDashboard: React.FC = () => {
       {activeTab === 'overview' && (
         <StudentOverview
           metrics={metrics}
-          meetings={meetings}
+          meeting={nextMeeting}
           events={calendarState.data ?? []}
           groupedAssignments={groupedAssignments}
           contents={contents}
@@ -1294,15 +1306,15 @@ const StudentOverview: React.FC<{
     trendLabel?: string;
     trendTone?: 'positive' | 'neutral' | 'negative';
   }>;
-  meetings: StudentMeeting[];
+  meeting: StudentMeeting | null;
   events: CalendarEvent[];
   groupedAssignments: Record<AssignmentStatus, StudentAssignment[]>;
   contents: StudentContent[];
-  onJoinMeeting: () => void;
+  onJoinMeeting: (meetingId?: string) => void;
   onOpenContentLibrary: () => void;
   loading: boolean;
   joinMeetingHint?: string | null;
-}> = ({ metrics, meetings, events, groupedAssignments, contents, onJoinMeeting, onOpenContentLibrary, loading, joinMeetingHint }) => (
+}> = ({ metrics, meeting, events, groupedAssignments, contents, onJoinMeeting, onOpenContentLibrary, loading, joinMeetingHint }) => (
   <>
     <div className="metric-grid">
       {metrics.map((metric) => (
@@ -1317,18 +1329,18 @@ const StudentOverview: React.FC<{
         <div className="list-stack">
           <div className="list-row">
             <div>
-              <strong>{meetings[0]?.title ?? 'Canlı Ders'}</strong>
+              <strong>{meeting?.title ?? 'Canlı Ders'}</strong>
               <small>
-                {meetings[0]
-                  ? `${formatShortDate(meetings[0].scheduledAt)}`
+                {meeting
+                  ? `${formatShortDate(meeting.scheduledAt)}`
                   : 'Planlı ders bulunamadı'}
               </small>
             </div>
             <button
               type="button"
               className="primary-btn"
-              onClick={onJoinMeeting}
-              disabled={!meetings.length}
+              onClick={() => onJoinMeeting(meeting?.id)}
+              disabled={!meeting}
             >
               Derse Katıl <ArrowRight size={16} />
             </button>
@@ -1362,13 +1374,39 @@ const StudentOverview: React.FC<{
               if (t.includes('test') || title.includes('test')) Icon = ClipboardList;
               else if (t.includes('meeting') || t.includes('live') || title.includes('canlı')) Icon = Video;
               else if (t.includes('lesson') || t.includes('ders')) Icon = BookOpen;
+
+              const isMeeting = t.includes('meeting') || t.includes('live') || title.includes('canlı');
+              const meetingId = event.relatedId;
+              const startTime = event.startDate ? new Date(event.startDate).getTime() : NaN;
+              const canJoin = isMeeting && Boolean(meetingId) && !Number.isNaN(startTime) && startTime >= Date.now() - 10 * 60 * 1000;
+
               return (
-                <div key={event.id} className="calendar-event calendar-event-inline">
+                <div
+                  key={event.id}
+                  className="calendar-event calendar-event-inline"
+                  style={canJoin ? { cursor: 'pointer' } : undefined}
+                  onClick={() => {
+                    if (canJoin) onJoinMeeting(meetingId);
+                  }}
+                >
                   <span className="calendar-event-icon"><Icon size={14} /></span>
                   <div>
                     <span className="calendar-event-title">{event.title}</span>
                     <span className="calendar-event-meta">{formatShortDate(event.startDate)} · {event.status ?? 'Plan'}</span>
                   </div>
+                  {canJoin && (
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onJoinMeeting(meetingId);
+                      }}
+                      style={{ marginLeft: 'auto', padding: '0.25rem 0.7rem', fontSize: '0.75rem' }}
+                    >
+                      Katıl
+                    </button>
+                  )}
                 </div>
               );
             })}

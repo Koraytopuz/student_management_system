@@ -557,12 +557,43 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string }>
   const handleSendChat = () => {
     const text = chatInput.trim();
     if (!text || !identity) return;
+    const ts = Date.now();
+    // Kendi mesajını anında göster (LiveKit kendi mesajını geri yollamayabilir)
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: ts + Math.random(),
+        fromId: identity,
+        fromName: displayName,
+        text,
+        ts,
+      },
+    ]);
     sendControlMessage({
       type: 'chat',
       fromId: identity,
       payload: { text },
+      ts,
     });
     setChatInput('');
+  };
+
+  const handleRootClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    const button = target.closest('button');
+    if (!button) return;
+
+    const aria = (button.getAttribute('aria-label') ?? '').toLowerCase();
+    const text = (button.textContent ?? '').trim().toLowerCase();
+
+    // LiveKit ControlBar Chat butonunu yakala ve kendi sohbetimizi aç/kapat.
+    // Not: UI metni şu an "Chat" görünüyor; aria-label de olabilir.
+    if (text === 'chat' || aria.includes('chat')) {
+      event.preventDefault();
+      event.stopPropagation();
+      setChatOpen((prev) => !prev);
+    }
   };
 
   return (
@@ -572,6 +603,7 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string }>
         height: '100%',
         position: 'relative',
       }}
+      onClickCapture={handleRootClickCapture}
     >
       <VideoConference />
       <ParticipantOverlay role={role} />
@@ -732,36 +764,6 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string }>
           </div>
         </div>
       )}
-
-      {/* Chat aç/kapa butonu – alt ortada modern pill */}
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          bottom: 16,
-          transform: 'translateX(-50%)',
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setChatOpen((prev) => !prev)}
-          style={{
-            borderRadius: 999,
-            padding: '0.6rem 1.4rem',
-            border: 'none',
-            background: chatOpen
-              ? 'linear-gradient(135deg, #4f46e5, #2563eb)'
-              : 'linear-gradient(135deg, #2563eb, #4f46e5)',
-            color: '#f9fafb',
-            fontWeight: 600,
-            fontSize: '0.9rem',
-            boxShadow: '0 16px 32px rgba(37,99,235,0.45)',
-            cursor: 'pointer',
-          }}
-        >
-          {chatOpen ? 'Sohbeti Kapat' : 'Sohbeti Aç'}
-        </button>
-      </div>
 
       {/* Sohbet paneli – alt taraftan açılan modern kutu */}
       {chatOpen && (
