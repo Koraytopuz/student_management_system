@@ -101,6 +101,16 @@ function authenticate(requiredRole) {
             if (requiredRole && dbUser.role !== requiredRole) {
                 return res.status(403).json({ error: 'Bu kaynağa erişim izniniz yok' });
             }
+            // Aktiflik takibi: her doğrulanmış istekte son görülme zamanını güncelle
+            try {
+                await db_1.prisma.user.update({
+                    where: { id: dbUser.id },
+                    data: { lastSeenAt: new Date() },
+                });
+            }
+            catch {
+                // ignore (aktiflik kritik değil)
+            }
             const studentIds = dbUser.role === 'parent' && dbUser.parentStudents
                 ? dbUser.parentStudents.map((ps) => ps.studentId)
                 : undefined;

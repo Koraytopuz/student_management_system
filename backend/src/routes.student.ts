@@ -288,6 +288,7 @@ router.get(
         assignment: {
           include: {
             students: { select: { studentId: true } },
+            testAsset: true,
           },
         },
       },
@@ -301,10 +302,24 @@ router.get(
         description: as.assignment.description ?? undefined,
         testId: as.assignment.testId ?? undefined,
         contentId: as.assignment.contentId ?? undefined,
+        // @ts-ignore: Prisma types sync issue
+        testAssetId: as.assignment.testAssetId ?? undefined,
         classId: as.assignment.classId ?? undefined,
         assignedStudentIds: as.assignment.students.map((s) => s.studentId),
         dueDate: as.assignment.dueDate.toISOString(),
         points: as.assignment.points,
+        // @ts-ignore: Prisma types sync issue
+        timeLimitMinutes: as.assignment.timeLimitMinutes ?? undefined,
+        // Test dosyası için öğrenci tarafında görüntüleme bilgileri
+        testAsset: as.assignment.testAsset
+          ? {
+              id: as.assignment.testAsset.id,
+              title: as.assignment.testAsset.title,
+              fileUrl: as.assignment.testAsset.fileUrl,
+              fileName: as.assignment.testAsset.fileName,
+              mimeType: as.assignment.testAsset.mimeType,
+            }
+          : undefined,
       })),
     );
   },
@@ -363,6 +378,10 @@ router.get(
         testId: as.assignment.testId ?? undefined,
         // @ts-ignore: Prisma types sync issue
         contentId: as.assignment.contentId ?? undefined,
+        // @ts-ignore: Prisma types sync issue
+        testAssetId: as.assignment.testAssetId ?? undefined,
+        // @ts-ignore: Prisma types sync issue
+        timeLimitMinutes: as.assignment.timeLimitMinutes ?? undefined,
       })),
     );
   },
@@ -463,10 +482,14 @@ router.get(
         description: assignment.description ?? undefined,
         testId: assignment.testId ?? undefined,
         contentId: assignment.contentId ?? undefined,
+        // @ts-ignore: Prisma types may lag behind schema
+        testAssetId: (assignment as any).testAssetId ?? undefined,
         classId: assignment.classId ?? undefined,
         assignedStudentIds: assignment.students.map((s) => s.studentId),
         dueDate: assignment.dueDate.toISOString(),
         points: assignment.points,
+        // @ts-ignore
+        timeLimitMinutes: (assignment as any).timeLimitMinutes ?? undefined,
       },
       test: test
         ? {
@@ -479,6 +502,298 @@ router.get(
         }
         : undefined,
       questions: testQuestions,
+    });
+  },
+);
+
+// Öğretmene sor (yardım talebi) - test içindeki soru için
+router.post(
+  '/help-requests',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const { assignmentId, questionId, message } = req.body as {
+      assignmentId?: string;
+      questionId?: string;
+      message?: string;
+    };
+
+    if (!assignmentId) {
+      return res.status(400).json({ error: 'assignmentId zorunludur' });
+    }
+    if (!questionId) {
+      return res.status(400).json({ error: 'questionId zorunludur' });
+    }
+
+    const assignment = await prisma.assignment.findFirst({
+      where: { id: assignmentId, students: { some: { studentId } } },
+      include: { test: true },
+    });
+    if (!assignment) {
+      return res.status(404).json({ error: 'Görev bulunamadı' });
+    }
+
+    // Öncelik: assignment.createdByTeacherId, yoksa class teacher (fallback)
+    const teacherId =
+      (assignment as any).createdByTeacherId ??
+      (assignment.classId
+        ? (await prisma.classGroup.findUnique({ where: { id: assignment.classId } }))?.teacherId
+        : null);
+
+    if (!teacherId) {
+      return res.status(409).json({ error: 'Bu görev için öğretmen bilgisi bulunamadı' });
+    }
+
+    const question = await prisma.question.findUnique({ where: { id: questionId } });
+    if (!question) {
+      return res.status(404).json({ error: 'Soru bulunamadı' });
+    }
+    if (assignment.testId && question.testId !== assignment.testId) {
+      return res.status(400).json({ error: 'Soru bu teste ait değil' });
+    }
+
+    const created = await prisma.helpRequest.create({
+      data: {
+        studentId,
+        teacherId,
+        assignmentId: assignment.id,
+        questionId,
+        message: message?.trim() ? message.trim() : undefined,
+        status: 'open',
+      },
+    });
+
+    const studentName = req.user!.name;
+    const testTitle = assignment.test?.title ?? assignment.title;
+    const questionNumber = (question.orderIndex ?? 0) + 1;
+
+    await prisma.notification.create({
+      data: {
+        userId: teacherId,
+        type: 'help_request_created',
+        title: 'Öğrenciden yardım isteği',
+        body: `${studentName} "${testTitle}" testinde ${questionNumber}. soruda takıldı.`,
+        read: false,
+        relatedEntityType: 'help_request',
+        relatedEntityId: created.id,
+      },
+    });
+
+    return res.status(201).json({
+      id: created.id,
+      studentId: created.studentId,
+      teacherId: created.teacherId,
+      assignmentId: created.assignmentId,
+      questionId: created.questionId ?? undefined,
+      message: created.message ?? undefined,
+      status: created.status,
+      createdAt: created.createdAt.toISOString(),
+    });
+  },
+);
+
+// Öğrencinin yardım talepleri
+router.get(
+  '/help-requests',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const list = await prisma.helpRequest.findMany({
+      where: {
+        studentId,
+        ...(status ? { status: status as any } : {}),
+      },
+      include: { response: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    return res.json(
+      list.map((r) => ({
+        id: r.id,
+        studentId: r.studentId,
+        teacherId: r.teacherId,
+        assignmentId: r.assignmentId,
+        questionId: r.questionId ?? undefined,
+        message: r.message ?? undefined,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+        resolvedAt: r.resolvedAt?.toISOString(),
+        response: r.response
+          ? {
+              id: r.response.id,
+              mode: r.response.mode,
+              url: r.response.url,
+              mimeType: r.response.mimeType ?? undefined,
+              createdAt: r.response.createdAt.toISOString(),
+            }
+          : undefined,
+      })),
+    );
+  },
+);
+
+router.get(
+  '/help-requests/:id',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const id = String(req.params.id);
+    const r = await prisma.helpRequest.findFirst({
+      where: { id, studentId },
+      include: { response: true },
+    });
+    if (!r) return res.status(404).json({ error: 'Yardım talebi bulunamadı' });
+    return res.json({
+      id: r.id,
+      studentId: r.studentId,
+      teacherId: r.teacherId,
+      assignmentId: r.assignmentId,
+      questionId: r.questionId ?? undefined,
+      message: r.message ?? undefined,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+      resolvedAt: r.resolvedAt?.toISOString(),
+      response: r.response
+        ? {
+            id: r.response.id,
+            mode: r.response.mode,
+            url: r.response.url,
+            mimeType: r.response.mimeType ?? undefined,
+            createdAt: r.response.createdAt.toISOString(),
+            playedAt: (r.response as any).playedAt ?? undefined,
+          }
+        : undefined,
+    });
+  },
+);
+
+// Öğrenci çözümü oynattığında (ilk oynatma) öğretmene bildirim gönder
+router.post(
+  '/help-requests/:id/response-played',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const helpRequestId = String(req.params.id);
+
+    const helpRequest = await prisma.helpRequest.findFirst({
+      where: { id: helpRequestId, studentId },
+      include: {
+        response: true,
+        teacher: { select: { id: true, name: true } },
+        assignment: { include: { test: { select: { title: true } } } },
+        question: { select: { orderIndex: true } },
+      },
+    });
+
+    if (!helpRequest) {
+      return res.status(404).json({ error: 'Yardım talebi bulunamadı' });
+    }
+    if (!helpRequest.response) {
+      return res.status(409).json({ error: 'Bu talep için henüz çözüm yok' });
+    }
+
+    // Zaten işaretlendiyse tekrar bildirim oluşturmayalım
+    if ((helpRequest.response as any).playedAt) {
+      return res.json({
+        success: true,
+        alreadyPlayed: true,
+        playedAt: (helpRequest.response as any).playedAt,
+      });
+    }
+
+    const updated = await prisma.helpResponse.update({
+      where: { helpRequestId },
+      data: { playedAt: new Date() },
+    });
+
+    const studentName = req.user!.name;
+    const teacherId = helpRequest.teacherId;
+    const testTitle =
+      helpRequest.assignment?.test?.title ?? helpRequest.assignment?.title ?? 'Test';
+    const questionNumber = (helpRequest.question?.orderIndex ?? 0) + 1;
+
+    if (teacherId) {
+      await prisma.notification.create({
+        data: {
+          userId: teacherId,
+          type: 'help_response_played' as any,
+          title: 'Çözüm izlendi',
+          body: `${studentName}, "${testTitle}" testindeki ${questionNumber}. soru çözümünüzü oynattı.`,
+          read: false,
+          relatedEntityType: 'help_response' as any,
+          relatedEntityId: updated.id,
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      alreadyPlayed: false,
+      playedAt: updated.playedAt?.toISOString(),
+    });
+  },
+);
+
+// Şikayet / öneri (admin'e)
+router.post(
+  '/complaints',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const { subject, body, aboutTeacherId } = req.body as {
+      subject?: string;
+      body?: string;
+      aboutTeacherId?: string;
+    };
+
+    if (!subject || !body) {
+      return res.status(400).json({ error: 'subject ve body alanları zorunludur' });
+    }
+
+    if (aboutTeacherId) {
+      const teacher = await prisma.user.findFirst({ where: { id: aboutTeacherId, role: 'teacher' } });
+      if (!teacher) {
+        return res.status(404).json({ error: 'Öğretmen bulunamadı' });
+      }
+    }
+
+    const created = await prisma.complaint.create({
+      data: {
+        fromRole: 'student',
+        fromUserId: studentId,
+        aboutTeacherId: aboutTeacherId ?? undefined,
+        subject: subject.trim(),
+        body: body.trim(),
+        status: 'open',
+      },
+    });
+
+    // Admin bildirimleri
+    const admins = await prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
+    if (admins.length > 0) {
+      await prisma.notification.createMany({
+        data: admins.map((a) => ({
+          userId: a.id,
+          type: 'complaint_created' as any,
+          title: 'Yeni şikayet/öneri',
+          body: 'Öğrenciden yeni bir şikayet/öneri gönderildi.',
+          read: false,
+          relatedEntityType: 'complaint' as any,
+          relatedEntityId: created.id,
+        })),
+      });
+    }
+
+    return res.status(201).json({
+      id: created.id,
+      fromRole: created.fromRole,
+      fromUserId: created.fromUserId,
+      aboutTeacherId: created.aboutTeacherId ?? undefined,
+      subject: created.subject,
+      body: created.body,
+      status: created.status,
+      createdAt: created.createdAt.toISOString(),
     });
   },
 );

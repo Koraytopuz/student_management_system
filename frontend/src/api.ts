@@ -120,6 +120,34 @@ export interface ParentNotification {
   read: boolean;
 }
 
+export interface TeacherNotification {
+  id: string;
+  userId: string;
+  studentId?: string;
+  type: string;
+  title: string;
+  body: string;
+  relatedEntityType?: 'assignment' | 'test' | 'meeting' | 'message' | 'content' | 'feedback';
+  relatedEntityId?: string;
+  createdAt: string;
+  read: boolean;
+  readAt?: string;
+}
+
+export interface TeacherFeedbackItem {
+  id: string;
+  studentId: string;
+  teacherId: string;
+  teacherName: string;
+  type: string;
+  relatedTestId?: string;
+  relatedAssignmentId?: string;
+  title: string;
+  content: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export interface StudentDashboardSummary {
   pendingAssignmentsCount: number;
   testsSolvedThisWeek: number;
@@ -139,6 +167,15 @@ export interface StudentAssignment {
   dueDate: string;
   testId?: string;
   contentId?: string;
+  testAssetId?: string;
+  timeLimitMinutes?: number;
+  testAsset?: {
+    id: string;
+    title: string;
+    fileUrl: string;
+    fileName: string;
+    mimeType: string;
+  };
 }
 
 export type QuestionType = 'multiple_choice' | 'true_false' | 'open_ended';
@@ -209,6 +246,12 @@ export interface StudentMeeting {
   meetingUrl: string;
 }
 
+export interface TeacherListItem {
+  id: string;
+  name: string;
+  email: string;
+}
+
 export interface StudentAiChatMessage {
   role: 'user' | 'assistant';
   content?: string;
@@ -266,6 +309,7 @@ export interface TeacherStudent {
   name: string;
   gradeLevel?: string;
   classId?: string;
+  lastSeenAt?: string;
 }
 
 export interface TeacherStudentProfile {
@@ -322,6 +366,79 @@ export interface TeacherAnnouncement {
   status: 'draft' | 'planned' | 'sent';
   createdAt: string;
   scheduledDate?: string;
+}
+
+export interface TeacherTest {
+  id: string;
+  title: string;
+  subjectId: string;
+  topic: string;
+  questionIds: string[];
+  createdByTeacherId: string;
+}
+
+export interface TeacherTestAsset {
+  id: string;
+  teacherId: string;
+  title: string;
+  subjectId: string;
+  topic: string;
+  gradeLevel: string;
+  fileUrl: string;
+  fileName: string;
+  mimeType: string;
+  createdAt: string;
+}
+
+export type TeacherQuestionType = 'multiple_choice' | 'true_false' | 'open_ended';
+
+export interface TeacherQuestionDraft {
+  text: string;
+  type: TeacherQuestionType;
+  choices?: string[];
+  correctAnswer?: string;
+  solutionExplanation?: string;
+  topic: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+}
+
+export interface HelpResponsePayload {
+  id: string;
+  mode: 'audio_only' | 'audio_video';
+  url: string;
+  mimeType?: string;
+  createdAt: string;
+  playedAt?: string;
+}
+
+export interface StudentHelpRequest {
+  id: string;
+  studentId: string;
+  teacherId: string;
+  assignmentId: string;
+  questionId?: string;
+  message?: string;
+  status: 'open' | 'in_progress' | 'resolved' | 'cancelled';
+  createdAt: string;
+  resolvedAt?: string;
+  response?: HelpResponsePayload;
+}
+
+export interface TeacherHelpRequestItem {
+  id: string;
+  studentId: string;
+  studentName: string;
+  teacherId: string;
+  assignmentId: string;
+  assignmentTitle: string;
+  questionId?: string;
+  questionNumber?: number;
+  questionText?: string;
+  message?: string;
+  status: 'open' | 'in_progress' | 'resolved' | 'cancelled';
+  createdAt: string;
+  resolvedAt?: string;
+  response?: HelpResponsePayload;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
@@ -413,6 +530,10 @@ export function markParentMessageRead(token: string, messageId: string) {
   return apiRequest(`/parent/messages/${messageId}/read`, { method: 'PUT' }, token);
 }
 
+export function markTeacherMessageRead(token: string, messageId: string) {
+  return apiRequest(`/teacher/messages/${messageId}/read`, { method: 'PUT' }, token);
+}
+
 export function getParentCalendar(token: string, startDate: string, endDate: string) {
   return apiRequest<{ events: CalendarEvent[] }>(
     `/parent/calendar?startDate=${startDate}&endDate=${endDate}&viewType=week`,
@@ -425,8 +546,32 @@ export function getParentNotifications(token: string, limit = 5) {
   return apiRequest<ParentNotification[]>(`/parent/notifications?limit=${limit}`, {}, token);
 }
 
+export function getTeacherNotifications(token: string, limit = 5) {
+  return apiRequest<TeacherNotification[]>(`/teacher/notifications?limit=${limit}`, {}, token);
+}
+
+export function getTeacherUnreadNotificationCount(token: string) {
+  return apiRequest<{ count: number }>('/teacher/notifications/unread-count', {}, token);
+}
+
+export function markTeacherNotificationRead(token: string, notificationId: string) {
+  return apiRequest(`/teacher/notifications/${notificationId}/read`, { method: 'PUT' }, token);
+}
+
+export function markAllTeacherNotificationsRead(token: string) {
+  return apiRequest('/teacher/notifications/read-all', { method: 'PUT' }, token);
+}
+
+export function deleteTeacherNotification(token: string, notificationId: string) {
+  return apiRequest(`/teacher/notifications/${notificationId}`, { method: 'DELETE' }, token);
+}
+
 export function getParentMeetings(token: string) {
   return apiRequest<ParentMeeting[]>('/parent/meetings', {}, token);
+}
+
+export function getParentChildFeedback(token: string, studentId: string) {
+  return apiRequest<TeacherFeedbackItem[]>(`/parent/children/${studentId}/feedback`, {}, token);
 }
 
 export function joinParentMeeting(token: string, meetingId: string) {
@@ -481,6 +626,51 @@ export function submitStudentAssignment(
   );
 }
 
+export function completeStudentAssignment(
+  token: string,
+  assignmentId: string,
+  submittedInLiveClass?: boolean,
+) {
+  return apiRequest(
+    `/student/assignments/${assignmentId}/complete`,
+    {
+      method: 'POST',
+      body: JSON.stringify(
+        submittedInLiveClass ? { submittedInLiveClass } : {},
+      ),
+    },
+    token,
+  );
+}
+
+export function createStudentHelpRequest(
+  token: string,
+  payload: { assignmentId: string; questionId: string; message?: string },
+) {
+  return apiRequest<StudentHelpRequest>(
+    '/student/help-requests',
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+export function getStudentHelpRequests(token: string, status?: string) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : '';
+  return apiRequest<StudentHelpRequest[]>(`/student/help-requests${q}`, {}, token);
+}
+
+export function getStudentHelpRequest(token: string, helpRequestId: string) {
+  return apiRequest<StudentHelpRequest>(`/student/help-requests/${helpRequestId}`, {}, token);
+}
+
+export function markStudentHelpResponsePlayed(token: string, helpRequestId: string) {
+  return apiRequest<{ success: boolean; alreadyPlayed?: boolean; playedAt?: string }>(
+    `/student/help-requests/${helpRequestId}/response-played`,
+    { method: 'POST' },
+    token,
+  );
+}
+
 export function getStudentProgressTopics(token: string) {
   return apiRequest<ProgressOverview>('/student/progress/topics', {}, token);
 }
@@ -501,6 +691,14 @@ export function getStudentMeetings(token: string) {
   return apiRequest<StudentMeeting[]>('/student/meetings', {}, token);
 }
 
+export function getStudentTeachers(token: string) {
+  return apiRequest<TeacherListItem[]>('/student/teachers', {}, token);
+}
+
+export function getParentTeachers(token: string) {
+  return apiRequest<TeacherListItem[]>('/parent/teachers', {}, token);
+}
+
 export function sendStudentAiMessage(
   token: string,
   payload: {
@@ -516,6 +714,55 @@ export function sendStudentAiMessage(
       method: 'POST',
       body: JSON.stringify(payload),
     },
+    token,
+  );
+}
+
+export interface ComplaintItem {
+  id: string;
+  fromRole: string;
+  fromUser?: { id: string; name: string; email: string; role: string };
+  aboutTeacher?: { id: string; name: string; email: string; role: string };
+  aboutTeacherId?: string;
+  subject: string;
+  body: string;
+  status: 'open' | 'reviewed' | 'closed';
+  createdAt: string;
+  reviewedAt?: string;
+  closedAt?: string;
+}
+
+export function createStudentComplaint(
+  token: string,
+  payload: { subject: string; body: string; aboutTeacherId?: string },
+) {
+  return apiRequest<ComplaintItem>(
+    '/student/complaints',
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+export function createParentComplaint(
+  token: string,
+  payload: { subject: string; body: string; aboutTeacherId?: string },
+) {
+  return apiRequest<ComplaintItem>(
+    '/parent/complaints',
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+export function getAdminComplaints(token: string, status?: string) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : '';
+  return apiRequest<ComplaintItem[]>(`/admin/complaints${q}`, {}, token);
+}
+
+export function updateAdminComplaintStatus(token: string, complaintId: string, status: 'open' | 'reviewed' | 'closed') {
+  return apiRequest<ComplaintItem>(
+    `/admin/complaints/${complaintId}`,
+    { method: 'PUT', body: JSON.stringify({ status }) },
     token,
   );
 }
@@ -644,6 +891,31 @@ export function getTeacherAssignments(token: string) {
   return apiRequest<StudentAssignment[]>('/teacher/assignments', {}, token);
 }
 
+export function createTeacherAssignment(
+  token: string,
+  payload: {
+    title: string;
+    description?: string;
+    dueDate: string;
+    points?: number;
+    studentIds?: string[];
+    classId?: string;
+    testId?: string;
+    testAssetId?: string;
+    contentId?: string;
+    timeLimitMinutes?: number;
+  },
+) {
+  return apiRequest<StudentAssignment>(
+    '/teacher/assignments',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
 export function getTeacherMessages(token: string) {
   return apiRequest<(Message & { fromUserName?: string; toUserName?: string })[]>(
     '/teacher/messages',
@@ -652,13 +924,40 @@ export function getTeacherMessages(token: string) {
   );
 }
 
-export function sendTeacherMessage(token: string, payload: { toUserId: string; text: string }) {
+export function getTeacherParents(
+  token: string,
+): Promise<{ id: string; name: string; email: string; role: 'parent'; studentIds: string[] }[]> {
+  return apiRequest('/teacher/parents', {}, token);
+}
+
+export function sendTeacherMessage(
+  token: string,
+  payload: { toUserId: string; text: string; studentId?: string; subject?: string },
+) {
   return apiRequest<Message>(
     '/teacher/messages',
     {
       method: 'POST',
       body: JSON.stringify(payload),
     },
+    token,
+  );
+}
+
+export function createTeacherFeedback(
+  token: string,
+  payload: {
+    studentId: string;
+    type: string;
+    title: string;
+    content: string;
+    relatedTestId?: string;
+    relatedAssignmentId?: string;
+  },
+) {
+  return apiRequest<TeacherFeedbackItem>(
+    '/teacher/feedback',
+    { method: 'POST', body: JSON.stringify(payload) },
     token,
   );
 }
@@ -734,6 +1033,107 @@ export function joinStudentLiveMeeting(token: string, meetingId: string) {
 
 export function getTeacherAnnouncements(token: string) {
   return apiRequest<TeacherAnnouncement[]>('/teacher/announcements', {}, token);
+}
+
+export function getTeacherHelpRequests(token: string, status?: string) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : '';
+  return apiRequest<TeacherHelpRequestItem[]>(`/teacher/help-requests${q}`, {}, token);
+}
+
+export function respondTeacherHelpRequest(
+  token: string,
+  helpRequestId: string,
+  payload: { mode: 'audio_only' | 'audio_video'; file: File },
+) {
+  const formData = new FormData();
+  formData.append('mode', payload.mode);
+  formData.append('file', payload.file);
+  return fetch(`${API_BASE_URL}/teacher/help-requests/${helpRequestId}/respond`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  }).then(async (res) => {
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({}));
+      throw new Error(errorBody.error ?? `API error: ${res.status}`);
+    }
+    return res.json() as Promise<{ helpRequestId: string; response: HelpResponsePayload }>;
+  });
+}
+
+export function deleteTeacherHelpResponse(token: string, helpRequestId: string) {
+  return apiRequest<{ success: boolean }>(
+    `/teacher/help-requests/${helpRequestId}/response`,
+    { method: 'DELETE' },
+    token,
+  );
+}
+
+export function getTeacherTests(token: string) {
+  return apiRequest<TeacherTest[]>('/teacher/tests', {}, token);
+}
+
+export function createTeacherStructuredTest(
+  token: string,
+  payload: {
+    title: string;
+    subjectId: string;
+    topic: string;
+    questions: TeacherQuestionDraft[];
+  },
+) {
+  return apiRequest<TeacherTest>(
+    '/teacher/tests/structured',
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+export function uploadTeacherTestAssetFile(token: string, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return fetch(`${API_BASE_URL}/teacher/test-assets/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  }).then(async (res) => {
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({}));
+      throw new Error(errorBody.error ?? `API error: ${res.status}`);
+    }
+    return res.json() as Promise<{ url: string; fileName: string; mimeType: string }>;
+  });
+}
+
+export function getTeacherTestAssets(token: string) {
+  return apiRequest<TeacherTestAsset[]>('/teacher/test-assets', {}, token);
+}
+
+export function createTeacherTestAsset(
+  token: string,
+  payload: {
+    title: string;
+    subjectId: string;
+    topic: string;
+    gradeLevel: string;
+    fileUrl: string;
+    fileName: string;
+    mimeType: string;
+  },
+) {
+  return apiRequest<TeacherTestAsset>(
+    '/teacher/test-assets',
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+export function deleteTeacherTestAsset(token: string, testAssetId: string) {
+  return apiRequest<{ success: true }>(
+    `/teacher/test-assets/${testAssetId}`,
+    { method: 'DELETE' },
+    token,
+  );
 }
 
 export function createTeacherAnnouncement(

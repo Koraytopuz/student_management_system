@@ -16,7 +16,7 @@ const db_1 = require("./db");
 const livekit_1 = require("./livekit");
 const router = express_1.default.Router();
 const USER_CONFIGURED_GEMINI_MODEL = (_a = process.env.GEMINI_MODEL) === null || _a === void 0 ? void 0 : _a.trim();
-const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 const TEACHER_SYSTEM_PROMPT = "Rolün: 20 yıllık deneyime sahip, soru bankası yazarlığı yapmış bir başöğretmen asistanı. Görevin: Kullanıcı (Öğretmen) sana 'Sınıf Seviyesi', 'Konu', 'Soru Sayısı' ve 'Zorluk Derecesi' (Kolay/Orta/Zor) verecek. Sen bu verilere göre hatasız bir test hazırlayacaksın.\n\n" +
     'Kurallar:\n\n' +
     '• Sorular Bloom Taksonomisi\'ne göre belirtilen zorluk seviyesine uygun tasarlanmalıdır (örneğin zor seviye analiz/sentez içermeli).\n' +
@@ -95,6 +95,15 @@ function toGeminiContents(history, latest) {
 async function generatePdfFromText(text) {
     return new Promise((resolve, reject) => {
         const doc = new pdfkit_1.default({ margin: 50 });
+        const fontPath = path_1.default.join(__dirname, 'assets', 'fonts', 'arial.ttf');
+        // Check if font exists, otherwise fallback (though we expect it to exist now)
+        const fs = require('fs');
+        if (fs.existsSync(fontPath)) {
+            doc.font(fontPath);
+        }
+        else {
+            console.warn('Custom font not found at', fontPath, 'falling back to default');
+        }
         const chunks = [];
         doc.on('data', (chunk) => chunks.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -121,8 +130,10 @@ const projectRoot = path_1.default.join(__dirname, '..', '..');
 const frontendPublicDir = path_1.default.join(projectRoot, 'frontend', 'public');
 const publicVideosDir = path_1.default.join(frontendPublicDir, 'videos');
 const publicPdfsDir = path_1.default.join(frontendPublicDir, 'pdfs');
+const publicTestsDir = path_1.default.join(frontendPublicDir, 'tests');
 const uploadsTempDir = path_1.default.join(__dirname, '..', 'uploads', 'tmp');
-[publicVideosDir, publicPdfsDir, uploadsTempDir].forEach((dir) => {
+const uploadsSolutionsDir = path_1.default.join(__dirname, '..', 'uploads', 'solutions');
+[publicVideosDir, publicPdfsDir, publicTestsDir, uploadsTempDir, uploadsSolutionsDir].forEach((dir) => {
     if (!fs_1.default.existsSync(dir)) {
         fs_1.default.mkdirSync(dir, { recursive: true });
     }
@@ -131,6 +142,18 @@ const videoUpload = (0, multer_1.default)({
     dest: uploadsTempDir,
     limits: {
         fileSize: 100 * 1024 * 1024, // 100MB
+    },
+});
+const testAssetUpload = (0, multer_1.default)({
+    dest: uploadsTempDir,
+    limits: {
+        fileSize: 30 * 1024 * 1024, // 30MB (pdf/test zip vs.)
+    },
+});
+const helpSolutionUpload = (0, multer_1.default)({
+    dest: uploadsTempDir,
+    limits: {
+        fileSize: 80 * 1024 * 1024, // 80MB
     },
 });
 // Öğretmen dashboard özeti
@@ -213,14 +236,29 @@ router.post('/ai/chat', (0, auth_1.authenticate)('teacher'), async (req, res) =>
         let lastError = null;
         for (const model of modelCandidates) {
             try {
-                const response = await genAi.models.generateContent({
-                    model,
-                    contents: [...systemInstruction, ...contents],
-                    generationConfig: {
-                        temperature: 0.4,
-                        maxOutputTokens: 768,
-                    },
-                });
+                // Retry logic wrapper
+                const generateContentWithRetry = async (modelName, contents, retries = 3, delay = 1000) => {
+                    var _a;
+                    try {
+                        return await genAi.models.generateContent({
+                            model: modelName,
+                            contents,
+                            generationConfig: {
+                                temperature: 0.4,
+                                maxOutputTokens: 768,
+                            },
+                        });
+                    }
+                    catch (err) {
+                        if (retries > 0 && (err.status === 503 || ((_a = err.message) === null || _a === void 0 ? void 0 : _a.includes('503')))) {
+                            console.warn(`Model ${modelName} overloaded (503). Retrying in ${delay}ms...`);
+                            await new Promise((resolve) => setTimeout(resolve, delay));
+                            return generateContentWithRetry(modelName, contents, retries - 1, delay * 2);
+                        }
+                        throw err;
+                    }
+                };
+                const response = await generateContentWithRetry(model, [...systemInstruction, ...contents]);
                 const reply = extractResponseText(response);
                 if (!reply) {
                     return res.status(502).json({ error: 'Yanıt alınamadı' });
@@ -332,10 +370,10 @@ router.get('/students', (0, auth_1.authenticate)('teacher'), async (req, res) =>
     const studentIds = new Set(teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)));
     const teacherStudents = await db_1.prisma.user.findMany({
         where: { id: { in: [...studentIds] }, role: 'student' },
-        select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+        select: { id: true, name: true, email: true, gradeLevel: true, classId: true, lastSeenAt: true },
     });
     return res.json(teacherStudents.map((s) => {
-        var _a, _b;
+        var _a, _b, _c;
         return ({
             id: s.id,
             name: s.name,
@@ -343,6 +381,7 @@ router.get('/students', (0, auth_1.authenticate)('teacher'), async (req, res) =>
             role: 'student',
             gradeLevel: (_a = s.gradeLevel) !== null && _a !== void 0 ? _a : '',
             classId: (_b = s.classId) !== null && _b !== void 0 ? _b : '',
+            lastSeenAt: (_c = s.lastSeenAt) === null || _c === void 0 ? void 0 : _c.toISOString(),
         });
     }));
 });
@@ -438,31 +477,81 @@ router.get('/students/:id', (0, auth_1.authenticate)('teacher'), async (req, res
         })),
     });
 });
-// İçerik listesi
-router.get('/contents', (0, auth_1.authenticate)('teacher'), async (_req, res) => {
-    const list = await db_1.prisma.contentItem.findMany({
-        include: {
-            classGroups: { select: { classGroupId: true } },
-            students: { select: { studentId: true } },
+// Veliye özel değerlendirme (öğrenci görmez)
+router.post('/feedback', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    var _a, _b;
+    const teacherId = req.user.id;
+    const teacherName = req.user.name;
+    const { studentId, type, title, content, relatedTestId, relatedAssignmentId } = req.body;
+    if (!studentId || !type || !title || !content) {
+        return res.status(400).json({ error: 'studentId, type, title, content zorunludur' });
+    }
+    // Sadece öğretmenin sınıflarındaki öğrenciler
+    const teacherClasses = await db_1.prisma.classGroup.findMany({
+        where: { teacherId },
+        include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)));
+    if (!allowedStudentIds.has(studentId)) {
+        return res.status(403).json({ error: 'Bu öğrenci için değerlendirme yazamazsınız' });
+    }
+    const created = await db_1.prisma.teacherFeedback.create({
+        data: {
+            studentId,
+            teacherId,
+            teacherName,
+            type: type.trim(),
+            relatedTestId: relatedTestId !== null && relatedTestId !== void 0 ? relatedTestId : undefined,
+            relatedAssignmentId: relatedAssignmentId !== null && relatedAssignmentId !== void 0 ? relatedAssignmentId : undefined,
+            title: title.trim(),
+            content: content.trim(),
+            read: false,
         },
     });
-    return res.json(list.map((c) => {
-        var _a, _b;
-        return ({
-            id: c.id,
-            title: c.title,
-            description: (_a = c.description) !== null && _a !== void 0 ? _a : undefined,
-            type: c.type,
-            subjectId: c.subjectId,
-            topic: c.topic,
-            gradeLevel: c.gradeLevel,
-            durationMinutes: (_b = c.durationMinutes) !== null && _b !== void 0 ? _b : undefined,
-            tags: c.tags,
-            url: c.url,
-            assignedToClassIds: c.classGroups.map((g) => g.classGroupId),
-            assignedToStudentIds: c.students.map((s) => s.studentId),
+    return res.status(201).json({
+        id: created.id,
+        studentId: created.studentId,
+        teacherId: created.teacherId,
+        teacherName: created.teacherName,
+        type: created.type,
+        relatedTestId: (_a = created.relatedTestId) !== null && _a !== void 0 ? _a : undefined,
+        relatedAssignmentId: (_b = created.relatedAssignmentId) !== null && _b !== void 0 ? _b : undefined,
+        title: created.title,
+        content: created.content,
+        createdAt: created.createdAt.toISOString(),
+    });
+});
+// İçerik listesi
+router.get('/contents', (0, auth_1.authenticate)('teacher'), async (_req, res) => {
+    try {
+        const list = await db_1.prisma.contentItem.findMany({
+            include: {
+                classGroups: { select: { classGroupId: true } },
+                students: { select: { studentId: true } },
+            },
         });
-    }));
+        return res.json(list.map((c) => {
+            var _a, _b;
+            return ({
+                id: c.id,
+                title: c.title,
+                description: (_a = c.description) !== null && _a !== void 0 ? _a : undefined,
+                type: c.type,
+                subjectId: c.subjectId,
+                topic: c.topic,
+                gradeLevel: c.gradeLevel,
+                durationMinutes: (_b = c.durationMinutes) !== null && _b !== void 0 ? _b : undefined,
+                tags: c.tags,
+                url: c.url,
+                assignedToClassIds: c.classGroups.map((g) => g.classGroupId),
+                assignedToStudentIds: c.students.map((s) => s.studentId),
+            });
+        }));
+    }
+    catch (error) {
+        console.error('İçerik listesi alınırken hata:', error);
+        return res.status(500).json({ error: 'İçerik listesi alınamadı' });
+    }
 });
 // Test listesi
 router.get('/tests', (0, auth_1.authenticate)('teacher'), async (_req, res) => {
@@ -477,6 +566,289 @@ router.get('/tests', (0, auth_1.authenticate)('teacher'), async (_req, res) => {
         questionIds: t.questions.map((q) => q.id),
         createdByTeacherId: t.createdByTeacherId,
     })));
+});
+// Yapılandırılmış test (sorularla birlikte) oluşturma
+router.post('/tests/structured', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const { title, subjectId, topic, questions } = req.body;
+    if (!title || !subjectId || !topic) {
+        return res.status(400).json({ error: 'title, subjectId ve topic zorunludur' });
+    }
+    if (!Array.isArray(questions) || questions.length === 0) {
+        return res.status(400).json({ error: 'questions alanı zorunludur (en az 1 soru)' });
+    }
+    const normalizedQuestions = questions.map((q, idx) => {
+        var _a, _b, _c, _d;
+        return ({
+            text: String((_a = q.text) !== null && _a !== void 0 ? _a : '').trim(),
+            type: (_b = q.type) !== null && _b !== void 0 ? _b : 'multiple_choice',
+            choices: Array.isArray(q.choices) ? q.choices : undefined,
+            correctAnswer: q.correctAnswer ? String(q.correctAnswer).trim() : undefined,
+            solutionExplanation: q.solutionExplanation ? String(q.solutionExplanation).trim() : undefined,
+            topic: String((_c = q.topic) !== null && _c !== void 0 ? _c : topic).trim(),
+            difficulty: ((_d = q.difficulty) !== null && _d !== void 0 ? _d : 'medium'),
+            orderIndex: idx,
+        });
+    });
+    if (normalizedQuestions.some((q) => !q.text)) {
+        return res.status(400).json({ error: 'Her soru için text zorunludur' });
+    }
+    const created = await db_1.prisma.test.create({
+        data: {
+            title: title.trim(),
+            subjectId,
+            topic: topic.trim(),
+            createdByTeacherId: teacherId,
+            questions: {
+                create: normalizedQuestions.map((q) => {
+                    var _a;
+                    return ({
+                        text: q.text,
+                        type: q.type,
+                        choices: (_a = q.choices) !== null && _a !== void 0 ? _a : undefined,
+                        correctAnswer: q.correctAnswer,
+                        solutionExplanation: q.solutionExplanation,
+                        topic: q.topic,
+                        difficulty: q.difficulty,
+                        orderIndex: q.orderIndex,
+                    });
+                }),
+            },
+        },
+        include: { questions: { select: { id: true }, orderBy: { orderIndex: 'asc' } } },
+    });
+    return res.status(201).json({
+        id: created.id,
+        title: created.title,
+        subjectId: created.subjectId,
+        topic: created.topic,
+        questionIds: created.questions.map((q) => q.id),
+        createdByTeacherId: created.createdByTeacherId,
+    });
+});
+// Test dosyası yükleme (PDF vb.)
+router.post('/test-assets/upload', (0, auth_1.authenticate)('teacher'), testAssetUpload.single('file'), (req, res) => {
+    const uploadedFile = req.file;
+    if (!uploadedFile) {
+        return res.status(400).json({ error: 'Dosya gereklidir' });
+    }
+    try {
+        const original = uploadedFile.originalname || 'test.pdf';
+        const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const targetPath = path_1.default.join(publicTestsDir, `${Date.now()}-${safeName}`);
+        fs_1.default.copyFileSync(uploadedFile.path, targetPath);
+        fs_1.default.unlinkSync(uploadedFile.path);
+        const relativeUrl = `/tests/${path_1.default.basename(targetPath)}`;
+        return res.status(201).json({
+            url: relativeUrl,
+            fileName: original,
+            mimeType: uploadedFile.mimetype || 'application/octet-stream',
+        });
+    }
+    catch (error) {
+        console.error('Test dosyası yükleme hatası:', error);
+        return res.status(500).json({ error: 'Dosya yüklenirken sunucu hatası oluştu' });
+    }
+});
+// Test dosyası kayıtları (TestAsset)
+router.get('/test-assets', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const list = await db_1.prisma.testAsset.findMany({
+        where: { teacherId },
+        orderBy: { createdAt: 'desc' },
+    });
+    return res.json(list.map((a) => ({
+        id: a.id,
+        teacherId: a.teacherId,
+        title: a.title,
+        subjectId: a.subjectId,
+        topic: a.topic,
+        gradeLevel: a.gradeLevel,
+        fileUrl: a.fileUrl,
+        fileName: a.fileName,
+        mimeType: a.mimeType,
+        createdAt: a.createdAt.toISOString(),
+    })));
+});
+router.post('/test-assets', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const { title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType } = req.body;
+    if (!title || !subjectId || !topic || !gradeLevel || !fileUrl || !fileName || !mimeType) {
+        return res.status(400).json({
+            error: 'title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType zorunludur',
+        });
+    }
+    const created = await db_1.prisma.testAsset.create({
+        data: {
+            teacherId,
+            title: title.trim(),
+            subjectId,
+            topic: topic.trim(),
+            gradeLevel: gradeLevel.trim(),
+            fileUrl: fileUrl.trim(),
+            fileName: fileName.trim(),
+            mimeType: mimeType.trim(),
+        },
+    });
+    return res.status(201).json({
+        id: created.id,
+        teacherId: created.teacherId,
+        title: created.title,
+        subjectId: created.subjectId,
+        topic: created.topic,
+        gradeLevel: created.gradeLevel,
+        fileUrl: created.fileUrl,
+        fileName: created.fileName,
+        mimeType: created.mimeType,
+        createdAt: created.createdAt.toISOString(),
+    });
+});
+router.delete('/test-assets/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const id = String(req.params.id);
+    const existing = await db_1.prisma.testAsset.findUnique({ where: { id } });
+    if (!existing) {
+        return res.status(404).json({ error: 'Test dosyası bulunamadı' });
+    }
+    if (existing.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu kaydı silme yetkiniz yok' });
+    }
+    await db_1.prisma.testAsset.delete({ where: { id } });
+    return res.json({ success: true });
+});
+// Yardım talepleri (öğrenciden gelen "öğretmene sor" istekleri)
+router.get('/help-requests', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const list = await db_1.prisma.helpRequest.findMany({
+        where: {
+            teacherId,
+            ...(status ? { status: status } : {}),
+        },
+        include: {
+            student: { select: { id: true, name: true } },
+            assignment: { select: { id: true, title: true, testId: true } },
+            question: { select: { id: true, orderIndex: true, text: true } },
+            response: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+    });
+    return res.json(list.map((r) => {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+        return ({
+            id: r.id,
+            studentId: r.studentId,
+            studentName: (_b = (_a = r.student) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : 'Öğrenci',
+            teacherId: r.teacherId,
+            assignmentId: r.assignmentId,
+            assignmentTitle: (_d = (_c = r.assignment) === null || _c === void 0 ? void 0 : _c.title) !== null && _d !== void 0 ? _d : '',
+            questionId: (_e = r.questionId) !== null && _e !== void 0 ? _e : undefined,
+            questionNumber: r.question ? ((_f = r.question.orderIndex) !== null && _f !== void 0 ? _f : 0) + 1 : undefined,
+            questionText: (_h = (_g = r.question) === null || _g === void 0 ? void 0 : _g.text) !== null && _h !== void 0 ? _h : undefined,
+            message: (_j = r.message) !== null && _j !== void 0 ? _j : undefined,
+            status: r.status,
+            createdAt: r.createdAt.toISOString(),
+            resolvedAt: (_k = r.resolvedAt) === null || _k === void 0 ? void 0 : _k.toISOString(),
+            response: r.response
+                ? {
+                    id: r.response.id,
+                    mode: r.response.mode,
+                    url: r.response.url,
+                    mimeType: (_l = r.response.mimeType) !== null && _l !== void 0 ? _l : undefined,
+                    createdAt: r.response.createdAt.toISOString(),
+                }
+                : undefined,
+        });
+    }));
+});
+// Öğretmen çözüm gönder (ses / ses+video)
+router.post('/help-requests/:id/respond', (0, auth_1.authenticate)('teacher'), helpSolutionUpload.single('file'), async (req, res) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    const teacherId = req.user.id;
+    const teacherName = req.user.name;
+    const helpRequestId = String(req.params.id);
+    const modeRaw = String((_a = req.body.mode) !== null && _a !== void 0 ? _a : '').trim();
+    const mode = modeRaw === 'audio_video' || modeRaw === 'audio_only'
+        ? modeRaw
+        : null;
+    const uploadedFile = req.file;
+    if (!mode) {
+        return res.status(400).json({ error: 'mode alanı zorunludur (audio_only | audio_video)' });
+    }
+    if (!uploadedFile) {
+        return res.status(400).json({ error: 'file alanı zorunludur' });
+    }
+    const requestRecord = await db_1.prisma.helpRequest.findUnique({
+        where: { id: helpRequestId },
+        include: {
+            student: { select: { id: true, name: true } },
+            assignment: { include: { test: { select: { title: true } } } },
+            question: { select: { orderIndex: true } },
+        },
+    });
+    if (!requestRecord) {
+        return res.status(404).json({ error: 'Yardım talebi bulunamadı' });
+    }
+    if (requestRecord.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu talebe yanıt verme yetkiniz yok' });
+    }
+    try {
+        const original = uploadedFile.originalname || (mode === 'audio_only' ? 'solution.webm' : 'solution.webm');
+        const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const targetPath = path_1.default.join(uploadsSolutionsDir, `${Date.now()}-${helpRequestId}-${safeName}`);
+        fs_1.default.copyFileSync(uploadedFile.path, targetPath);
+        fs_1.default.unlinkSync(uploadedFile.path);
+        const relativeUrl = `/uploads/solutions/${path_1.default.basename(targetPath)}`;
+        const responseRecord = await db_1.prisma.helpResponse.upsert({
+            where: { helpRequestId: helpRequestId },
+            create: {
+                helpRequestId: helpRequestId,
+                teacherId,
+                mode: mode,
+                url: relativeUrl,
+                mimeType: uploadedFile.mimetype || undefined,
+            },
+            update: {
+                mode: mode,
+                url: relativeUrl,
+                mimeType: uploadedFile.mimetype || undefined,
+                createdAt: new Date(),
+            },
+        });
+        await db_1.prisma.helpRequest.update({
+            where: { id: helpRequestId },
+            data: { status: 'resolved', resolvedAt: new Date() },
+        });
+        const studentName = (_c = (_b = requestRecord.student) === null || _b === void 0 ? void 0 : _b.name) !== null && _c !== void 0 ? _c : 'Öğrenci';
+        const testTitle = (_h = (_f = (_e = (_d = requestRecord.assignment) === null || _d === void 0 ? void 0 : _d.test) === null || _e === void 0 ? void 0 : _e.title) !== null && _f !== void 0 ? _f : (_g = requestRecord.assignment) === null || _g === void 0 ? void 0 : _g.title) !== null && _h !== void 0 ? _h : 'Test';
+        const questionNumber = ((_k = (_j = requestRecord.question) === null || _j === void 0 ? void 0 : _j.orderIndex) !== null && _k !== void 0 ? _k : 0) + 1;
+        await db_1.prisma.notification.create({
+            data: {
+                userId: requestRecord.studentId,
+                type: 'help_response_ready',
+                title: 'Çözüm hazır',
+                body: `${teacherName}, ${studentName} için "${testTitle}" testindeki ${questionNumber}. soruyu çözdü.`,
+                read: false,
+                relatedEntityType: 'help_request',
+                relatedEntityId: helpRequestId,
+            },
+        });
+        return res.status(201).json({
+            helpRequestId: helpRequestId,
+            response: {
+                id: responseRecord.id,
+                mode: responseRecord.mode,
+                url: responseRecord.url,
+                mimeType: (_l = responseRecord.mimeType) !== null && _l !== void 0 ? _l : undefined,
+                createdAt: responseRecord.createdAt.toISOString(),
+            },
+        });
+    }
+    catch (error) {
+        console.error('HelpResponse upload error:', error);
+        return res.status(500).json({ error: 'Çözüm yüklenemedi' });
+    }
 });
 // Soru bankası listesi
 router.get('/questions', (0, auth_1.authenticate)('teacher'), async (_req, res) => {
@@ -499,45 +871,54 @@ router.get('/questions', (0, auth_1.authenticate)('teacher'), async (_req, res) 
 // Yeni içerik oluşturma
 router.post('/contents', (0, auth_1.authenticate)('teacher'), async (req, res) => {
     var _a, _b;
-    const { title, description, type, subjectId, topic, gradeLevel, durationMinutes, tags, url, } = req.body;
-    if (!title || !type || !subjectId || !topic || !gradeLevel || !url) {
-        return res.status(400).json({
-            error: 'title, type, subjectId, topic, gradeLevel ve url alanları zorunludur',
+    try {
+        const { title, description, type, subjectId, topic, gradeLevel, durationMinutes, tags, url, } = req.body;
+        if (!title || !type || !subjectId || !topic || !gradeLevel || !url) {
+            return res.status(400).json({
+                error: 'title, type, subjectId, topic, gradeLevel ve url alanları zorunludur',
+            });
+        }
+        const tagArray = typeof tags === 'string'
+            ? tags
+                .split(',')
+                .map((t) => t.trim())
+                .filter(Boolean)
+            : tags !== null && tags !== void 0 ? tags : [];
+        const content = await db_1.prisma.contentItem.create({
+            data: {
+                title,
+                description,
+                type: type,
+                subjectId,
+                topic,
+                gradeLevel,
+                durationMinutes,
+                tags: tagArray,
+                url,
+            },
+        });
+        return res.status(201).json({
+            id: content.id,
+            title: content.title,
+            description: (_a = content.description) !== null && _a !== void 0 ? _a : undefined,
+            type: content.type,
+            subjectId: content.subjectId,
+            topic: content.topic,
+            gradeLevel: content.gradeLevel,
+            durationMinutes: (_b = content.durationMinutes) !== null && _b !== void 0 ? _b : undefined,
+            tags: content.tags,
+            url: content.url,
+            assignedToClassIds: [],
+            assignedToStudentIds: [],
         });
     }
-    const tagArray = typeof tags === 'string'
-        ? tags
-            .split(',')
-            .map((t) => t.trim())
-            .filter(Boolean)
-        : tags !== null && tags !== void 0 ? tags : [];
-    const content = await db_1.prisma.contentItem.create({
-        data: {
-            title,
-            description,
-            type: type,
-            subjectId,
-            topic,
-            gradeLevel,
-            durationMinutes,
-            tags: tagArray,
-            url,
-        },
-    });
-    return res.status(201).json({
-        id: content.id,
-        title: content.title,
-        description: (_a = content.description) !== null && _a !== void 0 ? _a : undefined,
-        type: content.type,
-        subjectId: content.subjectId,
-        topic: content.topic,
-        gradeLevel: content.gradeLevel,
-        durationMinutes: (_b = content.durationMinutes) !== null && _b !== void 0 ? _b : undefined,
-        tags: content.tags,
-        url: content.url,
-        assignedToClassIds: [],
-        assignedToStudentIds: [],
-    });
+    catch (error) {
+        console.error('İçerik oluşturma hatası:', error);
+        return res.status(500).json({
+            error: 'İçerik oluşturulurken hata oluştu',
+            details: error instanceof Error ? error.message : String(error)
+        });
+    }
 });
 // Video yükleme (öğretmen içerikleri için)
 router.post('/contents/upload-video', (0, auth_1.authenticate)('teacher'), videoUpload.single('file'), (req, res) => {
@@ -545,13 +926,21 @@ router.post('/contents/upload-video', (0, auth_1.authenticate)('teacher'), video
     if (!uploadedFile) {
         return res.status(400).json({ error: 'Video dosyası gereklidir' });
     }
-    // Dosyayı anlamlı bir isimle yeniden adlandır ve frontend/public/videos altına taşı
-    const original = uploadedFile.originalname || 'video.mp4';
-    const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const targetPath = path_1.default.join(publicVideosDir, `${Date.now()}-${safeName}`);
-    fs_1.default.renameSync(uploadedFile.path, targetPath);
-    const relativeUrl = `/videos/${path_1.default.basename(targetPath)}`;
-    return res.status(201).json({ url: relativeUrl });
+    try {
+        // Dosyayı anlamlı bir isimle yeniden adlandır ve frontend/public/videos altına taşı
+        const original = uploadedFile.originalname || 'video.mp4';
+        const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const targetPath = path_1.default.join(publicVideosDir, `${Date.now()}-${safeName}`);
+        // fs.renameSync yerine copy ve unlink kullanarak olası EXDEV (cross-device) hatalarını önle
+        fs_1.default.copyFileSync(uploadedFile.path, targetPath);
+        fs_1.default.unlinkSync(uploadedFile.path);
+        const relativeUrl = `/videos/${path_1.default.basename(targetPath)}`;
+        return res.status(201).json({ url: relativeUrl });
+    }
+    catch (error) {
+        console.error('Video yükleme hatası:', error);
+        return res.status(500).json({ error: 'Video yüklenirken sunucu hatası oluştu' });
+    }
 });
 // Yeni test oluşturma
 router.post('/tests', (0, auth_1.authenticate)('teacher'), async (req, res) => {
@@ -581,27 +970,31 @@ router.post('/tests', (0, auth_1.authenticate)('teacher'), async (req, res) => {
 });
 // Yeni görev / assignment oluşturma
 router.post('/assignments', (0, auth_1.authenticate)('teacher'), async (req, res) => {
-    var _a, _b, _c, _d;
-    const { title, description, testId, contentId, classId, dueDate, points } = req.body;
-    if (!title || (!testId && !contentId) || !dueDate || points == null) {
+    var _a, _b, _c, _d, _e, _f;
+    const teacherId = req.user.id;
+    const { title, description, testId, contentId, classId, dueDate, points, testAssetId, timeLimitMinutes, studentIds: requestedStudentIds } = req.body;
+    if (!title || (!testId && !contentId && !testAssetId) || !dueDate || points == null) {
         return res.status(400).json({
-            error: 'title, (testId veya contentId), dueDate ve points alanları zorunludur',
+            error: 'title, (testId veya contentId veya testAssetId), dueDate ve points alanları zorunludur',
         });
     }
-    let studentIds = [];
-    if (classId) {
+    let targetStudentIds = [];
+    if (Array.isArray(requestedStudentIds) && requestedStudentIds.length > 0) {
+        targetStudentIds = requestedStudentIds.map((x) => String(x));
+    }
+    else if (classId) {
         const classStudents = await db_1.prisma.classGroupStudent.findMany({
             where: { classGroupId: classId },
             select: { studentId: true },
         });
-        studentIds = classStudents.map((s) => s.studentId);
+        targetStudentIds = classStudents.map((s) => s.studentId);
     }
     else {
         const allStudents = await db_1.prisma.user.findMany({
             where: { role: 'student' },
             select: { id: true },
         });
-        studentIds = allStudents.map((s) => s.id);
+        targetStudentIds = allStudents.map((s) => s.id);
     }
     const assignment = await db_1.prisma.assignment.create({
         data: {
@@ -609,11 +1002,16 @@ router.post('/assignments', (0, auth_1.authenticate)('teacher'), async (req, res
             description,
             testId: testId !== null && testId !== void 0 ? testId : undefined,
             contentId: contentId !== null && contentId !== void 0 ? contentId : undefined,
+            testAssetId: testAssetId !== null && testAssetId !== void 0 ? testAssetId : undefined,
             classId: classId !== null && classId !== void 0 ? classId : undefined,
             dueDate: new Date(dueDate),
             points: points !== null && points !== void 0 ? points : 100,
+            timeLimitMinutes: typeof timeLimitMinutes === 'number' && timeLimitMinutes > 0
+                ? Math.round(timeLimitMinutes)
+                : undefined,
+            createdByTeacherId: teacherId,
             students: {
-                create: studentIds.map((studentId) => ({ studentId })),
+                create: targetStudentIds.map((studentId) => ({ studentId })),
             },
         },
         include: { students: { select: { studentId: true } } },
@@ -624,10 +1022,12 @@ router.post('/assignments', (0, auth_1.authenticate)('teacher'), async (req, res
         description: (_a = assignment.description) !== null && _a !== void 0 ? _a : undefined,
         testId: (_b = assignment.testId) !== null && _b !== void 0 ? _b : undefined,
         contentId: (_c = assignment.contentId) !== null && _c !== void 0 ? _c : undefined,
-        classId: (_d = assignment.classId) !== null && _d !== void 0 ? _d : undefined,
+        testAssetId: (_d = assignment.testAssetId) !== null && _d !== void 0 ? _d : undefined,
+        classId: (_e = assignment.classId) !== null && _e !== void 0 ? _e : undefined,
         assignedStudentIds: assignment.students.map((s) => s.studentId),
         dueDate: assignment.dueDate.toISOString(),
         points: assignment.points,
+        timeLimitMinutes: (_f = assignment.timeLimitMinutes) !== null && _f !== void 0 ? _f : undefined,
     });
 });
 // Görev listesi
@@ -636,17 +1036,19 @@ router.get('/assignments', (0, auth_1.authenticate)('teacher'), async (_req, res
         include: { students: { select: { studentId: true } } },
     });
     return res.json(list.map((a) => {
-        var _a, _b, _c, _d;
+        var _a, _b, _c, _d, _e, _f;
         return ({
             id: a.id,
             title: a.title,
             description: (_a = a.description) !== null && _a !== void 0 ? _a : undefined,
             testId: (_b = a.testId) !== null && _b !== void 0 ? _b : undefined,
             contentId: (_c = a.contentId) !== null && _c !== void 0 ? _c : undefined,
-            classId: (_d = a.classId) !== null && _d !== void 0 ? _d : undefined,
+            testAssetId: (_d = a.testAssetId) !== null && _d !== void 0 ? _d : undefined,
+            classId: (_e = a.classId) !== null && _e !== void 0 ? _e : undefined,
             assignedStudentIds: a.students.map((s) => s.studentId),
             dueDate: a.dueDate.toISOString(),
             points: a.points,
+            timeLimitMinutes: (_f = a.timeLimitMinutes) !== null && _f !== void 0 ? _f : undefined,
         });
     }));
 });
@@ -1050,6 +1452,7 @@ router.get('/assignments/live-status', (0, auth_1.authenticate)('teacher'), asyn
         select: {
             assignmentId: true,
             studentId: true,
+            // @ts-ignore: Prisma types sync issue
             status: true,
             completedAt: true,
             assignment: {

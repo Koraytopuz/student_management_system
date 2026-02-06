@@ -21,6 +21,8 @@ import {
 import { useAuth } from './AuthContext';
 import {
   createTeacherContent,
+  createTeacherAssignment,
+  createTeacherFeedback,
   createTeacherMeeting,
   updateTeacherMeeting,
   deleteTeacherMeeting,
@@ -34,25 +36,54 @@ import {
   getTeacherMessages,
   getTeacherStudents,
   getTeacherStudentProfile,
+  getTeacherHelpRequests,
+  respondTeacherHelpRequest,
   sendTeacherMessage,
   uploadTeacherVideo,
+  getTeacherTests,
+  createTeacherStructuredTest,
+  uploadTeacherTestAssetFile,
+  getTeacherTestAssets,
+  createTeacherTestAsset,
+  deleteTeacherTestAsset,
+  deleteTeacherHelpResponse,
+  getTeacherParents,
   type CalendarEvent,
   type TeacherContent,
   type TeacherDashboardSummary,
   type TeacherMeeting,
   type TeacherStudent,
   type TeacherStudentProfile,
+  type TeacherHelpRequestItem,
   type Message,
   sendTeacherAiMessage,
   type TeacherAnnouncement,
   createTeacherAnnouncement,
+  type TeacherTest,
+  type TeacherTestAsset,
+  type TeacherQuestionDraft,
+  type TeacherNotification,
+  getTeacherNotifications,
+  getTeacherUnreadNotificationCount,
+  markTeacherNotificationRead,
+  markAllTeacherNotificationsRead,
+  deleteTeacherNotification,
+  markTeacherMessageRead,
 } from './api';
 import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import type { SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { LiveClassOverlay } from './LiveClassOverlay';
 
-type TeacherTab = 'overview' | 'content' | 'calendar' | 'students';
+type TeacherTab =
+  | 'overview'
+  | 'content'
+  | 'live'
+  | 'calendar'
+  | 'students'
+  | 'tests'
+  | 'support'
+  | 'notifications';
 
 type AiMessage = {
   id: string;
@@ -119,10 +150,28 @@ const getEventIcon = (event: CalendarEvent) => {
 export const TeacherDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TeacherTab>('overview');
+
+  const [readingMode, setReadingMode] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('reading_mode') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      document.documentElement.classList.toggle('reading-mode', readingMode);
+      window.localStorage.setItem('reading_mode', readingMode ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [readingMode]);
   const [contents, setContents] = useState<TeacherContent[]>([]);
   const [students, setStudents] = useState<TeacherStudent[]>([]);
+  const [tests, setTests] = useState<TeacherTest[]>([]);
+  const [testAssets, setTestAssets] = useState<TeacherTestAsset[]>([]);
   const [meetings, setMeetings] = useState<TeacherMeeting[]>([]);
-  const [messageText, setMessageText] = useState('');
   const [studentMessages, setStudentMessages] = useState<Message[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [selectedStudentProfile, setSelectedStudentProfile] = useState<TeacherStudentProfile | null>(null);
@@ -176,6 +225,93 @@ export const TeacherDashboard: React.FC = () => {
   });
   const [liveClass, setLiveClass] = useState<{ url: string; token: string; title?: string } | null>(null);
 
+  // Bildirimler (öğretmen)
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<TeacherNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
+
+  const handleReloadNotifications = async () => {
+    if (!token) return;
+    try {
+      setNotificationsLoading(true);
+      setNotificationsError(null);
+      const data = await getTeacherNotifications(token, 10);
+      setNotifications(data);
+      // Eğer aktif bildirim yoksa, en üstteki bildirimi seçili yap
+      if (!activeNotificationId && data.length > 0) {
+        setActiveNotificationId(data[0].id);
+      }
+    } catch (e) {
+      setNotificationsError((e as Error).message);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  };
+
+  const handleReloadUnreadCount = async () => {
+    if (!token) return;
+    try {
+      const { count } = await getTeacherUnreadNotificationCount(token);
+      setUnreadNotificationCount(count);
+    } catch {
+      // sessizce yut
+    }
+  };
+
+  const handleNotificationClick = (notification: TeacherNotification) => {
+    // Sadece seçili bildirimi değiştir, sekme yönlendirmesi yapma
+    setActiveNotificationId(notification.id);
+  };
+
+  // Bildirim listesi değiştiğinde seçili bildirimi doğrula
+  useEffect(() => {
+    if (!activeNotificationId) return;
+    const exists = notifications.some((n) => n.id === activeNotificationId);
+    if (!exists) {
+      setActiveNotificationId(notifications[0]?.id ?? null);
+    }
+  }, [notifications, activeNotificationId]);
+
+  const handleMarkNotificationRead = async (id: string) => {
+    if (!token) return;
+    try {
+      await markTeacherNotificationRead(token, id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true, readAt: new Date().toISOString() } : n)),
+      );
+      handleReloadUnreadCount().catch(() => {});
+    } catch (e) {
+      setNotificationsError((e as Error).message);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    if (!token) return;
+    try {
+      await markAllTeacherNotificationsRead(token);
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, read: true, readAt: new Date().toISOString() })),
+      );
+      setUnreadNotificationCount(0);
+    } catch (e) {
+      setNotificationsError((e as Error).message);
+    }
+  };
+
+  const handleDeleteNotification = async (id: string) => {
+    if (!token) return;
+    try {
+      await deleteTeacherNotification(token, id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      handleReloadUnreadCount().catch(() => {});
+    } catch (e) {
+      setNotificationsError((e as Error).message);
+    }
+  };
+
   const dashboardState = useApiState<TeacherDashboardSummary>(null);
   const assignmentsState = useApiState<Array<{ id: string; title?: string; dueDate?: string }>>([]);
   const calendarState = useApiState<CalendarEvent[]>([]);
@@ -184,16 +320,10 @@ export const TeacherDashboard: React.FC = () => {
     if (!token) return;
     dashboardState.run(() => getTeacherDashboard(token)).catch(() => {});
     getTeacherContents(token).then(setContents).catch(() => {});
+    getTeacherTests(token).then(setTests).catch(() => {});
+    getTeacherTestAssets(token).then(setTestAssets).catch(() => {});
     getTeacherMessages(token)
       .then(setStudentMessages)
-      .catch(() => {});
-    getTeacherStudents(token)
-      .then((data) => {
-        setStudents(data);
-        if (!selectedStudentId && data[0]) {
-          setSelectedStudentId(data[0].id);
-        }
-      })
       .catch(() => {});
     getTeacherMeetings(token)
       .then((data) => setMeetings(sortMeetingsByDate(data)))
@@ -207,7 +337,71 @@ export const TeacherDashboard: React.FC = () => {
         return payload.events;
       })
       .catch(() => {});
+
+    // Öğretmen bildirimlerini ve okunmamış sayısını yükle
+    const loadNotifications = async () => {
+      try {
+        setNotificationsLoading(true);
+        setNotificationsError(null);
+        const data = await getTeacherNotifications(token, 10);
+        setNotifications(data);
+      } catch (e) {
+        setNotificationsError((e as Error).message);
+      } finally {
+        setNotificationsLoading(false);
+      }
+    };
+
+    const loadUnreadCount = async () => {
+      try {
+        const { count } = await getTeacherUnreadNotificationCount(token);
+        setUnreadNotificationCount(count);
+      } catch {
+        // sessizce yut
+      }
+    };
+
+    loadNotifications().catch(() => {});
+    loadUnreadCount().catch(() => {});
+
+    const interval = window.setInterval(() => {
+      loadUnreadCount().catch(() => {});
+    }, 30000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
   }, [token]);
+
+  // Öğrenci listesini ve online/offline durumunu periyodik olarak güncelle
+  useEffect(() => {
+    if (!token) return;
+
+    let cancelled = false;
+
+    const loadStudents = async () => {
+      try {
+        const data = await getTeacherStudents(token);
+        if (cancelled) return;
+        setStudents(data);
+        if (!selectedStudentId && data[0]) {
+          setSelectedStudentId(data[0].id);
+        }
+      } catch {
+        // sessizce yut
+      }
+    };
+
+    loadStudents().catch(() => {});
+    const id = window.setInterval(() => {
+      loadStudents().catch(() => {});
+    }, 30000); // 30 saniyede bir güncelle
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [token, selectedStudentId]);
 
   useEffect(() => {
     if (!token || !selectedStudentId) {
@@ -299,11 +493,19 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!token || !selectedStudentId || !messageText.trim()) return;
-    const created = await sendTeacherMessage(token, { toUserId: selectedStudentId, text: messageText.trim() });
-    setMessageText('');
-    setStudentMessages((prev) => [...prev, created]);
+  const handleMarkMessageRead = async (messageId: string) => {
+    if (!token) return;
+    try {
+      await markTeacherMessageRead(token, messageId);
+      setStudentMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? { ...m, read: true, readAt: new Date().toISOString() } : m,
+        ),
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert(e instanceof Error ? e.message : 'Mesaj okundu olarak işaretlenemedi.');
+    }
   };
 
   const handleSaveMeeting = async () => {
@@ -601,6 +803,38 @@ export const TeacherDashboard: React.FC = () => {
         onClick: () => setActiveTab('content'),
       },
       {
+        id: 'live',
+        label: 'Canlı Ders',
+        icon: <Video size={18} />,
+        description: 'Ders yayınları',
+        active: activeTab === 'live',
+        onClick: () => setActiveTab('live'),
+      },
+      {
+        id: 'tests',
+        label: 'Test & Sorular',
+        icon: <ClipboardList size={18} />,
+        description: 'Soru yükle',
+        active: activeTab === 'tests',
+        onClick: () => setActiveTab('tests'),
+      },
+      {
+        id: 'support',
+        label: 'Yardım Talepleri',
+        icon: <MessageCircle size={18} />,
+        description: 'Soru çöz',
+        active: activeTab === 'support',
+        onClick: () => setActiveTab('support'),
+      },
+      {
+        id: 'notifications',
+        label: 'Bildirimler',
+        icon: <Bell size={18} />,
+        description: 'Mesaj & uyarı',
+        active: activeTab === 'notifications',
+        onClick: () => setActiveTab('notifications'),
+      },
+      {
         id: 'calendar',
         label: 'Takvim & Etüt',
         icon: <CalendarCheck size={18} />,
@@ -625,7 +859,7 @@ export const TeacherDashboard: React.FC = () => {
       accent="slate"
       brand="SKYTECH"
       tagline={user?.name ?? 'Öğretmen'}
-      title="Öğretmen Kontrol Merkezi"
+      title="Öğretmen Yönetim Paneli"
       subtitle="Gerçek zamanlı içerik, takvim ve öğrenci verileri."
       status={{ label: `${dashboardState.data?.recentActivity?.length ?? 0} aktivite`, tone: 'warning' }}
       sidebarItems={sidebarItems}
@@ -635,12 +869,588 @@ export const TeacherDashboard: React.FC = () => {
         subtitle: 'Öğretmen',
       }}
       headerActions={
-        <button type="button" className="ghost-btn" aria-label="Bildirimler">
-          <Bell size={16} />
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="ghost-btn"
+            aria-label={readingMode ? 'Okuma modunu kapat' : 'Okuma modunu aç'}
+            onClick={() => setReadingMode((p) => !p)}
+            style={{
+              border: readingMode ? '1px solid rgba(99,102,241,0.9)' : undefined,
+              background: readingMode ? 'rgba(99,102,241,0.15)' : undefined,
+            }}
+          >
+            <BookOpen size={16} />
+          </button>
+          <button
+            type="button"
+            className="ghost-btn"
+            aria-label="Bildirimler"
+            onClick={() => {
+              setNotificationsOpen((open) => !open);
+              if (!notificationsOpen) {
+                handleReloadNotifications().catch(() => {});
+                handleReloadUnreadCount().catch(() => {});
+              }
+            }}
+            style={{ position: 'relative' }}
+          >
+            <Bell size={16} />
+            {unreadNotificationCount > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: 2,
+                  right: 4,
+                  minWidth: 14,
+                  height: 14,
+                  borderRadius: 999,
+                  background: 'var(--color-danger, #ef4444)',
+                  color: '#fff',
+                  fontSize: '0.6rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 3px',
+                }}
+              >
+                {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+              </span>
+            )}
+          </button>
+        </div>
       }
       onLogout={logout}
     >
+      {notificationsOpen && activeTab !== 'notifications' && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 80,
+            right: 24,
+            width: 320,
+            maxHeight: '70vh',
+            background: 'var(--color-surface)',
+            borderRadius: 16,
+            boxShadow: '0 18px 45px rgba(15,23,42,0.45)',
+            border: '1px solid var(--color-border-subtle)',
+            padding: '0.85rem 0.9rem',
+            zIndex: 40,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.5rem',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '0.25rem',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>Bildirimler</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                {unreadNotificationCount > 0
+                  ? `${unreadNotificationCount} okunmamış bildirim`
+                  : 'Tüm bildirimler okundu'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.25rem' }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }}
+                onClick={() => {
+                  handleMarkAllNotificationsRead().catch(() => {});
+                }}
+              >
+                Tümünü okundu
+              </button>
+            </div>
+          </div>
+
+          {(() => {
+            const active = notifications.find((n) => n.id === activeNotificationId) ?? null;
+            if (!active) return null;
+            return (
+              <div
+                className="card"
+                style={{
+                  padding: '0.6rem 0.7rem',
+                  borderRadius: 12,
+                  border: '1px solid var(--color-border-subtle)',
+                  background: 'var(--color-surface-strong, rgba(15,23,42,0.04))',
+                  marginBottom: '0.25rem',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start',
+                    gap: '0.5rem',
+                    marginBottom: '0.3rem',
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: '0.9rem',
+                        fontWeight: 600,
+                        marginBottom: '0.15rem',
+                      }}
+                    >
+                      {active.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '0.78rem',
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      {active.type === 'message_received'
+                        ? 'Veli / öğrenci mesajı'
+                        : active.type === 'help_response_played'
+                          ? 'Çözüm oynatıldı bildirimi'
+                          : 'Sistem bildirimi'}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div
+                      style={{
+                        fontSize: '0.72rem',
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      {new Date(active.createdAt).toLocaleString('tr-TR')}
+                    </div>
+                    <div style={{ marginTop: '0.25rem' }}>
+                      {!active.read ? (
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
+                          onClick={() => {
+                            handleMarkNotificationRead(active.id).catch(() => {});
+                          }}
+                        >
+                          Okundu
+                        </button>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            color: 'var(--color-text-muted)',
+                          }}
+                        >
+                          Okundu
+                          {active.readAt
+                            ? ` · ${new Date(active.readAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`
+                            : ''}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    fontSize: '0.82rem',
+                    color: 'var(--color-text-main)',
+                  }}
+                >
+                  {active.body}
+                </div>
+              </div>
+            );
+          })()}
+
+          {notificationsError && (
+            <div
+              style={{
+                fontSize: '0.75rem',
+                color: 'var(--color-danger, #ef4444)',
+                marginBottom: '0.25rem',
+              }}
+            >
+              {notificationsError}
+            </div>
+          )}
+
+          {notificationsLoading && (
+            <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Yükleniyor…</div>
+          )}
+
+          {!notificationsLoading && notifications.length === 0 && (
+            <div
+              style={{
+                fontSize: '0.8rem',
+                color: 'var(--color-text-muted)',
+                padding: '0.5rem 0.25rem 0.25rem',
+              }}
+            >
+              Henüz bildirim yok.
+            </div>
+          )}
+
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.4rem',
+              marginTop: '0.2rem',
+              overflowY: 'auto',
+            }}
+          >
+            {notifications.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => {
+                  handleNotificationClick(n);
+                  setActiveTab('notifications');
+                  setNotificationsOpen(false);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '0.5rem',
+                  padding: '0.45rem 0.5rem',
+                  borderRadius: 10,
+                  border: n.read
+                    ? '1px solid rgba(148,163,184,0.25)'
+                    : '1px solid rgba(59,130,246,0.55)',
+                  background:
+                    activeNotificationId === n.id
+                      ? 'rgba(59,130,246,0.12)'
+                      : n.read
+                        ? 'var(--color-elevated, rgba(15,23,42,0.03))'
+                        : 'rgba(59,130,246,0.06)',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                <div
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 999,
+                    background: 'rgba(59,130,246,0.12)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  {n.type === 'message_received' ? (
+                    <MessageCircle size={14} />
+                  ) : n.type === 'help_response_played' ? (
+                    <TrendingUp size={14} />
+                  ) : (
+                    <Bell size={14} />
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: '0.25rem',
+                      marginBottom: '0.15rem',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '0.85rem',
+                        fontWeight: n.read ? 500 : 600,
+                        color: 'var(--color-text-main)',
+                      }}
+                    >
+                      {n.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '0.7rem',
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      {new Date(n.createdAt).toLocaleTimeString('tr-TR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '0.78rem',
+                      color: 'var(--color-text-muted)',
+                      marginBottom: '0.1rem',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {n.body}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {activeTab === 'notifications' && (
+        <GlassCard title="Bildirimler" subtitle="Mesaj ve sistem uyarıları">
+          {notificationsLoading && <div className="empty-state">Yükleniyor...</div>}
+          {notificationsError && (
+            <div className="error" style={{ marginBottom: '0.75rem' }}>
+              {notificationsError}
+            </div>
+          )}
+          {!notificationsLoading && notifications.length === 0 && (
+            <div className="empty-state">Henüz bildirim yok.</div>
+          )}
+
+          {notifications.length > 0 && (
+            <div
+              className="dual-grid"
+              style={{ gridTemplateColumns: 'minmax(0, 260px) minmax(0, 1fr)' }}
+            >
+              <div className="list-stack" style={{ maxHeight: 420, overflowY: 'auto' }}>
+                {notifications.map((n) => (
+                  <button
+                    key={n.id}
+                    type="button"
+                    className="list-row"
+                    onClick={() => handleNotificationClick(n)}
+                    style={{
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      background:
+                        activeNotificationId === n.id
+                          ? 'var(--color-surface-strong, rgba(248,250,252,0.98))'
+                          : undefined,
+                      borderColor:
+                        !n.read && activeNotificationId === n.id
+                          ? 'rgba(37,99,235,0.65)'
+                          : undefined,
+                    }}
+                  >
+                    <div>
+                      <strong>{n.title}</strong>
+                      <small style={{ display: 'block', marginTop: '0.15rem' }}>{n.body}</small>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: '0.75rem',
+                        color: 'var(--color-text-muted)',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      {new Date(n.createdAt).toLocaleDateString('tr-TR', {
+                        day: '2-digit',
+                        month: 'short',
+                      })}
+                      {!n.read && ' • Yeni'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="card" style={{ margin: 0 }}>
+                <h3>Detaylı Bildirim</h3>
+                {(() => {
+                  const current =
+                    notifications.find((n) => n.id === activeNotificationId) ??
+                    notifications[0] ??
+                    null;
+                  if (!current) {
+                    return (
+                      <div style={{ color: 'var(--color-text-muted)' }}>
+                        Soldan bir bildirim seçin.
+                      </div>
+                    );
+                  }
+
+                  const relatedMessage =
+                    current.relatedEntityType === 'message' && current.relatedEntityId
+                      ? studentMessages.find((m) => m.id === current.relatedEntityId)
+                      : null;
+
+                  const isCallRequest =
+                    current.type === 'message_received' &&
+                    current.body.toLowerCase().includes('canlı görüşme talep ediyor');
+
+                  return (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.75rem',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{current.title}</div>
+                        <div
+                          style={{
+                            fontSize: '0.85rem',
+                            color: 'var(--color-text-muted)',
+                            marginTop: '0.25rem',
+                          }}
+                        >
+                          Tür: {current.type}
+                          {' · '}
+                          {new Date(current.createdAt).toLocaleString('tr-TR')}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          padding: '0.75rem 0.85rem',
+                          borderRadius: 10,
+                          border: '1px solid var(--color-border-subtle)',
+                          background: 'var(--color-surface-soft)',
+                          whiteSpace: 'pre-wrap',
+                          fontSize: '0.9rem',
+                        }}
+                      >
+                        {current.body}
+                      </div>
+
+                      {relatedMessage && (
+                        <div
+                          style={{
+                            padding: '0.75rem 0.85rem',
+                            borderRadius: 10,
+                            border: '1px solid var(--color-border-subtle)',
+                            background: 'var(--color-surface)',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                            Mesaj Detayı
+                          </div>
+                          <div>
+                            {relatedMessage.fromUserName ?? relatedMessage.fromUserId} →{' '}
+                            {relatedMessage.toUserName ?? relatedMessage.toUserId}
+                          </div>
+                          {relatedMessage.subject && (
+                            <div style={{ marginTop: '0.15rem' }}>
+                              Konu: {relatedMessage.subject}
+                            </div>
+                          )}
+                          <div style={{ marginTop: '0.35rem' }}>{relatedMessage.text}</div>
+                        </div>
+                      )}
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '0.5rem',
+                          justifyContent: 'flex-end',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: '0.8rem',
+                            color: 'var(--color-text-muted)',
+                            marginRight: '0.25rem',
+                          }}
+                        >
+                          Durum: {current.read ? 'Okundu' : 'Yeni'}
+                        </span>
+                        {!current.read && (
+                          <button
+                            type="button"
+                            className="ghost-btn"
+                            onClick={() => handleMarkNotificationRead(current.id).catch(() => {})}
+                          >
+                            Okundu
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() => handleDeleteNotification(current.id).catch(() => {})}
+                        >
+                          Sil
+                        </button>
+                      </div>
+
+                      {isCallRequest && relatedMessage && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: '0.5rem',
+                            justifyContent: 'flex-end',
+                            marginTop: '0.25rem',
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="ghost-btn"
+                            onClick={async () => {
+                              if (!token) return;
+                              try {
+                                await sendTeacherMessage(token, {
+                                  toUserId: relatedMessage.fromUserId,
+                                  text:
+                                    'Canlı görüşme talebinizi aldım. Kısa süre içinde sizinle görüşme planlayacağım.',
+                                  studentId: relatedMessage.studentId,
+                                  subject: 'Canlı görüşme talebi – Kabul',
+                                });
+                                await handleMarkNotificationRead(current.id);
+                                // eslint-disable-next-line no-alert
+                                alert('Görüşme talebi kabul edildi ve veliye bilgi verildi.');
+                              } catch (e) {
+                                // eslint-disable-next-line no-alert
+                                alert(
+                                  e instanceof Error
+                                    ? e.message
+                                    : 'Talep yanıtı gönderilemedi.',
+                                );
+                              }
+                            }}
+                          >
+                            Görüşmeyi Kabul Et
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-btn"
+                            onClick={async () => {
+                              if (!token) return;
+                              try {
+                                await sendTeacherMessage(token, {
+                                  toUserId: relatedMessage.fromUserId,
+                                  text:
+                                    'Canlı görüşme talebinizi şu an için gerçekleştiremiyorum. Mesaj üzerinden iletişim kurabiliriz.',
+                                  studentId: relatedMessage.studentId,
+                                  subject: 'Canlı görüşme talebi – Reddedildi',
+                                });
+                                await handleMarkNotificationRead(current.id);
+                                // eslint-disable-next-line no-alert
+                                alert('Görüşme talebi reddedildi ve veliye bilgi verildi.');
+                              } catch (e) {
+                                // eslint-disable-next-line no-alert
+                                alert(
+                                  e instanceof Error
+                                    ? e.message
+                                    : 'Talep yanıtı gönderilemedi.',
+                                );
+                              }
+                            }}
+                          >
+                            Görüşmeyi Reddet
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+        </GlassCard>
+      )}
       {activeTab === 'overview' && (
         <TeacherOverview
           metrics={metrics}
@@ -663,6 +1473,67 @@ export const TeacherDashboard: React.FC = () => {
           uploadingVideo={contentUploading}
         />
       )}
+      {activeTab === 'live' && (
+        <GlassCard
+          title="Canlı Dersler"
+          subtitle="Öğrencilerle anlık canlı yayın oturumlarını buradan başlatın ve yönetin."
+          actions={
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => openMeetingModal()}
+            >
+              Yeni Canlı Ders Planla
+            </button>
+          }
+        >
+          <div className="list-stack">
+            {meetings.length === 0 && (
+              <div className="empty-state">Planlanmış canlı ders bulunmuyor.</div>
+            )}
+            {meetings.map((meeting) => (
+              <div key={meeting.id} className="list-row">
+                <div>
+                  <strong>{meeting.title}</strong>
+                  <small>
+                    {formatShortDate(meeting.scheduledAt)} · {formatTime(meeting.scheduledAt)}
+                  </small>
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '0.4rem',
+                    flexWrap: 'wrap',
+                    justifyContent: 'flex-end',
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => handleStartLiveMeeting(meeting.id)}
+                  >
+                    Canlı Dersi Başlat
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => handleEditMeeting(meeting.id)}
+                  >
+                    Düzenle
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-btn"
+                    onClick={() => handleDeleteMeeting(meeting.id)}
+                  >
+                    Sil
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
       {activeTab === 'calendar' && (
         <TeacherCalendar
           events={calendarState.data ?? []}
@@ -679,18 +1550,40 @@ export const TeacherDashboard: React.FC = () => {
           announcementError={announcementError}
         />
       )}
+      {activeTab === 'tests' && (
+        <TeacherTests
+          token={token}
+          students={students}
+          tests={tests}
+          testAssets={testAssets}
+          onTestsChanged={() => {
+            if (!token) return;
+            getTeacherTests(token).then(setTests).catch(() => {});
+          }}
+          onTestAssetsChanged={() => {
+            if (!token) return;
+            getTeacherTestAssets(token).then(setTestAssets).catch(() => {});
+          }}
+          onAssignmentCreated={() => {
+            if (!token) return;
+            assignmentsState.run(() => getTeacherAssignments(token)).catch(() => {});
+          }}
+        />
+      )}
+      {activeTab === 'support' && (
+        <TeacherSupport token={token} />
+      )}
       {activeTab === 'students' && (
         <TeacherStudents
+          token={token}
           students={students}
-          messageText={messageText}
-          onMessageChange={setMessageText}
           selectedStudentId={selectedStudentId}
           onSelectStudent={setSelectedStudentId}
-          onSendMessage={handleSendMessage}
           assignments={assignmentsState.data ?? []}
           messages={studentMessages}
           studentProfile={selectedStudentProfile}
           profileLoading={studentProfileLoading}
+          onMarkMessageRead={handleMarkMessageRead}
         />
       )}
       <TeacherAiAssistant
@@ -740,6 +1633,847 @@ export const TeacherDashboard: React.FC = () => {
         />
       )}
     </DashboardLayout>
+  );
+};
+
+const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
+  const [items, setItems] = useState<TeacherHelpRequestItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'audio_only' | 'audio_video'>('audio_only');
+  const [useScreenShare, setUseScreenShare] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const liveVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+
+  const refresh = async () => {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getTeacherHelpRequests(token);
+      setItems(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Yardım talepleri yüklenemedi.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh().catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        mediaRecorderRef.current?.stop();
+      } catch {
+        // ignore
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (liveVideoRef.current) {
+        // eslint-disable-next-line no-param-reassign
+        liveVideoRef.current.srcObject = null;
+      }
+      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+    };
+  }, [recordedUrl]);
+
+  const stopStream = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    if (liveVideoRef.current) {
+      // eslint-disable-next-line no-param-reassign
+      liveVideoRef.current.srcObject = null;
+    }
+  };
+
+  const startRecording = async () => {
+    if (recording) return;
+    if (!activeRequestId) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError('Tarayıcı medya kaydını desteklemiyor.');
+      return;
+    }
+    setError(null);
+    setRecordedBlob(null);
+    if (recordedUrl) {
+      URL.revokeObjectURL(recordedUrl);
+      setRecordedUrl(null);
+    }
+    chunksRef.current = [];
+    stopStream();
+
+    let stream: MediaStream;
+    if (mode === 'audio_video' && useScreenShare) {
+      try {
+        let displayStream: MediaStream | null = null;
+
+        if ((navigator.mediaDevices as any)?.getDisplayMedia) {
+          displayStream = await (navigator.mediaDevices as any).getDisplayMedia({
+            video: true,
+          });
+        } else if ((navigator as any).getDisplayMedia) {
+          displayStream = await (navigator as any).getDisplayMedia({ video: true });
+        }
+
+        if (!displayStream) {
+          setError('Tarayıcı ekran paylaşımını desteklemiyor.');
+          return;
+        }
+        let audioStream: MediaStream | null = null;
+        try {
+          audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        } catch {
+          // Mikrofon alınamazsa sadece ekran paylaşımıyla devam et.
+        }
+        const tracks = [
+          ...displayStream.getVideoTracks(),
+          ...(audioStream ? audioStream.getAudioTracks() : []),
+        ];
+        stream = new MediaStream(tracks);
+      } catch (e) {
+        setError(
+          e instanceof Error
+            ? `Ekran paylaşımı başlatılamadı: ${e.message}`
+            : 'Ekran paylaşımı başlatılamadı.',
+        );
+        return;
+      }
+    } else {
+      const constraints: MediaStreamConstraints =
+        mode === 'audio_video' ? { audio: true, video: true } : { audio: true, video: false };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    }
+
+    streamRef.current = stream;
+
+    if (liveVideoRef.current) {
+      // eslint-disable-next-line no-param-reassign
+      liveVideoRef.current.srcObject = stream;
+      liveVideoRef.current
+        .play()
+        .catch(() => {
+          // autoplay engellenirse sessizce geç
+        });
+    }
+
+    const recorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = recorder;
+    recorder.ondataavailable = (evt) => {
+      if (evt.data && evt.data.size > 0) chunksRef.current.push(evt.data);
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, {
+        type: recorder.mimeType || (mode === 'audio_video' ? 'video/webm' : 'audio/webm'),
+      });
+      setRecordedBlob(blob);
+      const url = URL.createObjectURL(blob);
+      setRecordedUrl(url);
+      stopStream();
+      chunksRef.current = [];
+    };
+    recorder.start();
+    setRecording(true);
+    setPaused(false);
+  };
+
+  const stopRecording = () => {
+    if (!recording) return;
+    setRecording(false);
+    setPaused(false);
+    try {
+      mediaRecorderRef.current?.stop();
+    } catch {
+      stopStream();
+    }
+  };
+
+  const clearRecording = () => {
+    setRecordedBlob(null);
+    if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+    setRecordedUrl(null);
+  };
+
+  const pauseRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return;
+    if (recorder.state !== 'recording') return;
+    try {
+      recorder.pause();
+      setPaused(true);
+    } catch {
+      // ignore
+    }
+  };
+
+  const resumeRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return;
+    if (recorder.state !== 'paused') return;
+    try {
+      recorder.resume();
+      setPaused(false);
+    } catch {
+      // ignore
+    }
+  };
+
+  const sendRecording = async () => {
+    if (!token || !activeRequestId || !recordedBlob) return;
+    setSending(true);
+    setError(null);
+    try {
+      const file = new File([recordedBlob], `solution-${activeRequestId}.webm`, {
+        type: recordedBlob.type || (mode === 'audio_video' ? 'video/webm' : 'audio/webm'),
+      });
+      await respondTeacherHelpRequest(token, activeRequestId, { mode, file });
+      clearRecording();
+      setActiveRequestId(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Gönderilemedi.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const activeRequest = items.find((x) => x.id === activeRequestId) ?? null;
+
+  return (
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <GlassCard
+        title="Yardım Talepleri"
+        subtitle="Öğrencilerin “Öğretmene sor” istekleri"
+        actions={
+          <button type="button" className="ghost-btn" onClick={() => refresh().catch(() => {})}>
+            Yenile
+          </button>
+        }
+      >
+        {loading && <div className="empty-state">Yükleniyor...</div>}
+        {error && <div style={{ color: '#fb7185', fontSize: '0.9rem' }}>{error}</div>}
+        {!loading && items.length === 0 && <div className="empty-state">Henüz talep yok.</div>}
+        <div className="list-stack">
+          {items.map((r) => (
+            <div key={r.id} className="list-row" style={{ alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <strong style={{ display: 'block' }}>
+                  {r.studentName} · {r.assignmentTitle}
+                </strong>
+                <small style={{ display: 'block', marginTop: '0.15rem' }}>
+                  {r.questionNumber ? `${r.questionNumber}. soru` : 'Soru'} {r.message ? `— ${r.message}` : ''}
+                </small>
+                <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.75 }}>
+                  {new Date(r.createdAt).toLocaleString('tr-TR')}
+                </small>
+                {r.response && (
+                  <small style={{ display: 'block', marginTop: '0.25rem', color: '#34d399' }}>
+                    Çözüm gönderildi
+                    {(r.response as any).playedAt && ' · Öğrenci oynattı'}
+                  </small>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setActiveRequestId(r.id);
+                    setMode('audio_only');
+                    setUseScreenShare(false);
+                    clearRecording();
+                  }}
+                >
+                  Çözümü başlat
+                </button>
+                {r.response && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={async () => {
+                      if (!token) return;
+                      // eslint-disable-next-line no-alert
+                      const confirmed = window.confirm(
+                        'Bu soruya gönderdiğiniz çözümü geri almak/silmek istediğinize emin misiniz? Öğrenciler artık bu çözümü göremeyecek.',
+                      );
+                      if (!confirmed) return;
+                      try {
+                        await deleteTeacherHelpResponse(token, r.id);
+                        if (activeRequestId === r.id) {
+                          clearRecording();
+                          setActiveRequestId(null);
+                        }
+                        await refresh();
+                      } catch (e) {
+                        // eslint-disable-next-line no-alert
+                        alert(
+                          e instanceof Error
+                            ? e.message
+                            : 'Çözüm silinirken bir hata oluştu.',
+                        );
+                      }
+                    }}
+                  >
+                    Çözümü geri al
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+
+      {activeRequest && (
+        <GlassCard
+          title="Çözüm Kaydı"
+          subtitle={`${activeRequest.studentName} · ${activeRequest.assignmentTitle} · ${activeRequest.questionNumber ?? '-'} `}
+        >
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={mode === 'audio_only' ? 'primary-btn' : 'ghost-btn'}
+                onClick={() => {
+                  setMode('audio_only');
+                  setUseScreenShare(false);
+                  clearRecording();
+                }}
+              >
+                Sadece ses
+              </button>
+              <button
+                type="button"
+                className={mode === 'audio_video' ? 'primary-btn' : 'ghost-btn'}
+                onClick={() => {
+                  setMode('audio_video');
+                  clearRecording();
+                }}
+              >
+                Ses + video
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {!recording && (
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => startRecording().catch(() => {})}
+                >
+                  Kaydı başlat
+                </button>
+              )}
+              {recording && (
+                <>
+                  <button type="button" className="primary-btn" onClick={stopRecording}>
+                    Durdur
+                  </button>
+                  {!paused && (
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={pauseRecording}
+                    >
+                      Duraklat
+                    </button>
+                  )}
+                  {paused && (
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={resumeRecording}
+                    >
+                      Devam et
+                    </button>
+                  )}
+                </>
+              )}
+              <button type="button" className="ghost-btn" onClick={clearRecording} disabled={!recordedBlob || recording}>
+                Sil
+              </button>
+              <button type="button" className="ghost-btn" onClick={() => startRecording().catch(() => {})} disabled={recording}>
+                Tekrar kaydet
+              </button>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setUseScreenShare((prev) => !prev)}
+                disabled={recording}
+                style={
+                  useScreenShare
+                    ? {
+                        background: 'rgba(37,99,235,0.12)',
+                        borderColor: 'rgba(37,99,235,0.6)',
+                      }
+                    : undefined
+                }
+              >
+                {useScreenShare ? 'Ekran paylaş: Açık' : 'Ekran paylaş: Kapalı'}
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => sendRecording().catch(() => {})}
+                disabled={!recordedBlob || sending || recording}
+              >
+                {sending ? 'Gönderiliyor...' : 'Gönder'}
+              </button>
+            </div>
+
+            <div style={{ opacity: 0.85 }}>
+              Mod: <strong>{mode === 'audio_only' ? 'Sadece ses' : 'Ses + video'}</strong>
+            </div>
+
+            {mode === 'audio_video' && (
+              <div>
+                <div
+                  style={{
+                    fontSize: '0.8rem',
+                    color: 'var(--color-text-muted)',
+                    marginBottom: '0.25rem',
+                  }}
+                >
+                  Canlı önizleme
+                </div>
+                <video
+                  ref={liveVideoRef}
+                  muted
+                  autoPlay
+                  playsInline
+                  style={{ width: '100%', borderRadius: 12, backgroundColor: '#000' }}
+                />
+              </div>
+            )}
+
+            {recordedUrl && (
+              <div>
+                {mode === 'audio_only' ? (
+                  <audio controls style={{ width: '100%' }} src={recordedUrl} />
+                ) : (
+                  <video controls style={{ width: '100%', borderRadius: 12 }} src={recordedUrl} />
+                )}
+              </div>
+            )}
+          </div>
+        </GlassCard>
+      )}
+    </div>
+  );
+};
+
+const TeacherTests: React.FC<{
+  token: string | null;
+  students: TeacherStudent[];
+  tests: TeacherTest[];
+  testAssets: TeacherTestAsset[];
+  onTestsChanged: () => void;
+  onTestAssetsChanged: () => void;
+  onAssignmentCreated: () => void;
+}> = ({ token, students, tests, testAssets, onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
+  // Yapılandırılmış test oluşturma UI'ı geçici olarak devre dışı (sadece dosya tabanlı testler kullanılıyor)
+
+  const [assetDraft, setAssetDraft] = useState({
+    title: '',
+    subjectId: 'sub1',
+    topic: '',
+    gradeLevel: '9',
+  });
+  const [assetFile, setAssetFile] = useState<File | null>(null);
+  const [assetUploading, setAssetUploading] = useState(false);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  const [isAssetDragOver, setIsAssetDragOver] = useState(false);
+  const assetInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [assignDraft, setAssignDraft] = useState<{
+    studentId: string;
+    dueDate: string;
+    points: number;
+    timeLimitMinutes: number;
+    mode: 'structured' | 'file';
+    testId: string;
+    testAssetId: string;
+  }>({
+    studentId: students[0]?.id ?? '',
+    dueDate: '',
+    points: 100,
+    timeLimitMinutes: 15,
+    mode: 'structured',
+    testId: tests[0]?.id ?? '',
+    testAssetId: testAssets[0]?.id ?? '',
+  });
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+
+  const [assignFileId, setAssignFileId] = useState<string>('');
+
+  useEffect(() => {
+    if (!assignDraft.studentId && students[0]) {
+      setAssignDraft((p) => ({ ...p, studentId: students[0].id }));
+    }
+  }, [students]);
+
+  useEffect(() => {
+    if (!assignDraft.testId && tests[0]) {
+      setAssignDraft((p) => ({ ...p, testId: tests[0].id }));
+    }
+  }, [tests]);
+
+  useEffect(() => {
+    if (!assignDraft.testAssetId && testAssets[0]) {
+      setAssignDraft((p) => ({ ...p, testAssetId: testAssets[0].id }));
+    }
+  }, [testAssets]);
+
+  const ensureDueDateDefault = () => {
+    if (assignDraft.dueDate) return;
+    const base = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const local = new Date(base.getTime() - base.getTimezoneOffset() * 60 * 1000);
+    setAssignDraft((p) => ({ ...p, dueDate: local.toISOString().slice(0, 16) }));
+  };
+
+  const handleAddQuestion = () => {};
+
+  const handleSaveStructured = async () => {};
+
+  const handleUploadAsset = async () => {
+    if (!token) return;
+    setAssetError(null);
+    const title = assetDraft.title.trim();
+    const topic = assetDraft.topic.trim();
+    if (!title || !topic) {
+      setAssetError('Lütfen test başlığı ve konu girin.');
+      return;
+    }
+    if (!assetFile) {
+      setAssetError('Lütfen bir dosya seçin (PDF vb.).');
+      return;
+    }
+    setAssetUploading(true);
+    try {
+      const uploaded = await uploadTeacherTestAssetFile(token, assetFile);
+      await createTeacherTestAsset(token, {
+        title,
+        subjectId: assetDraft.subjectId,
+        topic,
+        gradeLevel: assetDraft.gradeLevel,
+        fileUrl: uploaded.url,
+        fileName: uploaded.fileName,
+        mimeType: uploaded.mimeType,
+      });
+      setAssetDraft({ title: '', subjectId: 'sub1', topic: '', gradeLevel: '9' });
+      setAssetFile(null);
+      onTestAssetsChanged();
+    } catch (e) {
+      setAssetError(e instanceof Error ? e.message : 'Dosya yüklenemedi.');
+    } finally {
+      setAssetUploading(false);
+    }
+  };
+
+  const handleDeleteAsset = async (id: string) => {
+    if (!token) return;
+    // eslint-disable-next-line no-alert
+    const confirmed = window.confirm('Bu test dosyasını silmek istediğinize emin misiniz?');
+    if (!confirmed) return;
+    try {
+      await deleteTeacherTestAsset(token, id);
+      onTestAssetsChanged();
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert(e instanceof Error ? e.message : 'Silinemedi');
+    }
+  };
+
+  const handleAssign = async () => {
+    if (!token) return;
+    setAssignError(null);
+    ensureDueDateDefault();
+    if (!assignDraft.studentId) {
+      setAssignError('Lütfen bir öğrenci seçin.');
+      return;
+    }
+    if (!assignDraft.dueDate) {
+      setAssignError('Lütfen son teslim tarihini seçin.');
+      return;
+    }
+    if (assignDraft.timeLimitMinutes < 1 || assignDraft.timeLimitMinutes > 240) {
+      setAssignError('Süre 1 ile 240 dakika arasında olmalıdır.');
+      return;
+    }
+
+    if (assignDraft.mode === 'structured' && !assignDraft.testId) {
+      setAssignError('Lütfen bir yapılandırılmış test seçin.');
+      return;
+    }
+    if (assignDraft.mode === 'file' && !assignDraft.testAssetId) {
+      setAssignError('Lütfen bir test dosyası seçin.');
+      return;
+    }
+
+    const due = new Date(assignDraft.dueDate);
+    if (Number.isNaN(due.getTime())) {
+      setAssignError('Geçerli bir tarih/saat girin.');
+      return;
+    }
+
+    setAssignSaving(true);
+    try {
+      await createTeacherAssignment(token, {
+        title:
+          assignDraft.mode === 'structured'
+            ? `Test: ${tests.find((t) => t.id === assignDraft.testId)?.title ?? 'Test'}`
+            : `Test Dosyası: ${testAssets.find((a) => a.id === assignDraft.testAssetId)?.title ?? 'Dosya'}`,
+        dueDate: due.toISOString(),
+        points: assignDraft.points,
+        studentIds: [assignDraft.studentId],
+        timeLimitMinutes: assignDraft.timeLimitMinutes,
+        ...(assignDraft.mode === 'structured'
+          ? { testId: assignDraft.testId }
+          : { testAssetId: assignDraft.testAssetId }),
+      });
+      onAssignmentCreated();
+      setAssignDraft((p) => ({ ...p, dueDate: '' }));
+    } catch (e) {
+      setAssignError(e instanceof Error ? e.message : 'Atama başarısız.');
+    } finally {
+      setAssignSaving(false);
+    }
+  };
+
+  return (
+    <div className="dual-grid">
+      <div style={{ display: 'grid', gap: '1rem' }}>
+        <GlassCard title="Test Dosyası Yükle" subtitle="PDF gibi bir dosyayı test olarak ekleyin">
+          <div style={{ display: 'grid', gap: '0.6rem' }}>
+            <input
+              type="text"
+              placeholder="Test başlığı"
+              value={assetDraft.title}
+              onChange={(e) => setAssetDraft((p) => ({ ...p, title: e.target.value }))}
+            />
+            <select
+              value={assetDraft.subjectId}
+              onChange={(e) => setAssetDraft((p) => ({ ...p, subjectId: e.target.value }))}
+            >
+              <option value="sub1">Matematik</option>
+              <option value="sub2">Fizik</option>
+              <option value="sub3">Biyoloji</option>
+              <option value="sub4">Kimya</option>
+            </select>
+            <input
+              type="text"
+              placeholder="Konu"
+              value={assetDraft.topic}
+              onChange={(e) => setAssetDraft((p) => ({ ...p, topic: e.target.value }))}
+            />
+            <select
+              value={assetDraft.gradeLevel}
+              onChange={(e) => setAssetDraft((p) => ({ ...p, gradeLevel: e.target.value }))}
+            >
+              <option value="9">9. Sınıf</option>
+              <option value="10">10. Sınıf</option>
+              <option value="11">11. Sınıf</option>
+              <option value="12">12. Sınıf</option>
+            </select>
+
+            <div
+              onClick={() => assetInputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsAssetDragOver(true);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  setIsAssetDragOver(false);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsAssetDragOver(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file) {
+                  setAssetFile(file);
+                  setAssetError(null);
+                }
+              }}
+              style={{
+                borderRadius: 14,
+                border: isAssetDragOver
+                  ? '2px dashed rgba(59,130,246,0.9)'
+                  : '1px dashed rgba(148,163,184,0.85)',
+                padding: '0.75rem 0.9rem',
+                background: isAssetDragOver
+                  ? 'rgba(59,130,246,0.06)'
+                  : 'rgba(248,250,252,0.96)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.35rem',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-main)' }}>
+                Dosya seç veya sürükleyip bırak
+              </div>
+              <div
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                {assetFile
+                  ? `Seçilen: ${assetFile.name}`
+                  : 'PDF, resim veya .zip dosyasını buraya bırakabilirsiniz.'}
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.9rem' }}
+                >
+                  Dosya Seç
+                </button>
+              </div>
+              <input
+                ref={assetInputRef}
+                type="file"
+                accept=".pdf,application/pdf,image/*,.zip"
+                onChange={(e) => setAssetFile(e.target.files?.[0] ?? null)}
+                style={{ display: 'none' }}
+              />
+            </div>
+            {assetError && <div style={{ color: '#f97316', fontSize: '0.85rem' }}>{assetError}</div>}
+            <button type="button" className="primary-btn" onClick={handleUploadAsset} disabled={assetUploading}>
+              {assetUploading ? 'Yükleniyor...' : 'Dosyayı Yükle ve Kaydet'}
+            </button>
+          </div>
+        </GlassCard>
+
+        <GlassCard title="Öğrenciye Test Ata" subtitle="Öğrenciye özel test + süre belirleyin">
+          <div style={{ display: 'grid', gap: '0.6rem' }}>
+            <select
+              value={assignDraft.studentId}
+              onChange={(e) => setAssignDraft((p) => ({ ...p, studentId: e.target.value }))}
+            >
+              <option value="">Öğrenci seçin</option>
+              {students.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={assignDraft.mode === 'structured' ? 'primary-btn' : 'ghost-btn'}
+                onClick={() => setAssignDraft((p) => ({ ...p, mode: 'structured' }))}
+              >
+                Yapılandırılmış test
+              </button>
+              <button
+                type="button"
+                className={assignDraft.mode === 'file' ? 'primary-btn' : 'ghost-btn'}
+                onClick={() => setAssignDraft((p) => ({ ...p, mode: 'file' }))}
+              >
+                Dosya testi
+              </button>
+            </div>
+
+            {assignDraft.mode === 'structured' && (
+              <select
+                value={assignDraft.testId}
+                onChange={(e) => setAssignDraft((p) => ({ ...p, testId: e.target.value }))}
+              >
+                <option value="">Test seçin</option>
+                {tests.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {assignDraft.mode === 'file' && (
+              <select
+                value={assignDraft.testAssetId}
+                onChange={(e) => setAssignDraft((p) => ({ ...p, testAssetId: e.target.value }))}
+              >
+                <option value="">Dosya seçin</option>
+                {testAssets.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.title} ({a.gradeLevel})
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <label style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+              Son teslim:
+              <input
+                type="datetime-local"
+                value={assignDraft.dueDate}
+                onFocus={ensureDueDateDefault}
+                onChange={(e) => setAssignDraft((p) => ({ ...p, dueDate: e.target.value }))}
+                style={{ width: '100%', marginTop: '0.2rem' }}
+              />
+            </label>
+            <label style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+              Süre (dk):
+              <input
+                type="number"
+                min={1}
+                max={240}
+                value={assignDraft.timeLimitMinutes}
+                onChange={(e) => setAssignDraft((p) => ({ ...p, timeLimitMinutes: Number(e.target.value) || 0 }))}
+                style={{ width: '100%', marginTop: '0.2rem' }}
+              />
+            </label>
+            {assignError && <div style={{ color: '#f97316', fontSize: '0.85rem' }}>{assignError}</div>}
+            <button type="button" className="primary-btn" onClick={handleAssign} disabled={assignSaving}>
+              {assignSaving ? 'Atanıyor...' : 'Testi Ata'}
+            </button>
+          </div>
+        </GlassCard>
+
+        <GlassCard title="Yüklenen Test Dosyaları" subtitle="Kayıtlar">
+          <div className="list-stack">
+            {testAssets.length === 0 && <div className="empty-state">Henüz test dosyası yok.</div>}
+            {testAssets.slice(0, 8).map((a) => (
+              <div className="list-row" key={a.id}>
+                <div>
+                  <strong>{a.title}</strong>
+                  <small>
+                    {a.topic} · {a.gradeLevel}. sınıf
+                  </small>
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => window.open(a.fileUrl, '_blank', 'noopener,noreferrer')}
+                  >
+                    Aç
+                  </button>
+                  <button type="button" className="ghost-btn" onClick={() => handleDeleteAsset(a.id)}>
+                    Sil
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      </div>
+    </div>
   );
 };
 
@@ -818,8 +2552,8 @@ const TeacherOverview: React.FC<{
 
       <GlassCard title="Son Aktiviteler" subtitle="Güncel hareketler">
         <div className="list-stack">
-          {activities.slice(0, 4).map((activity) => (
-            <div className="list-row" key={activity}>
+          {activities.slice(0, 4).map((activity, idx) => (
+            <div className="list-row" key={`${activity}-${idx}`}>
               <div>
                 {(() => {
                   const match = activity.match(
@@ -1163,9 +2897,6 @@ const TeacherCalendar: React.FC<{
             onClick={() => onToggleAnnouncement(!announcementOpen)}
           >
             <Layers size={16} /> Duyuru Oluştur
-          </button>
-          <button type="button" className="primary-btn" onClick={onCreateMeeting}>
-            Canlı Ders Planla
           </button>
         </>
       }
@@ -1856,38 +3587,95 @@ const TeacherMeetingModal: React.FC<{
 };
 
 const TeacherStudents: React.FC<{
+  token: string | null;
   students: TeacherStudent[];
-  messageText: string;
-  onMessageChange: (value: string) => void;
   selectedStudentId: string;
   onSelectStudent: (value: string) => void;
-  onSendMessage: () => void;
   assignments: Array<{ id: string; title?: string; dueDate?: string }>;
   messages: (Message & { fromUserName?: string; toUserName?: string })[];
   studentProfile: TeacherStudentProfile | null;
   profileLoading: boolean;
+  onMarkMessageRead: (messageId: string) => void;
 }> = ({
+  token,
   students,
-  messageText,
-  onMessageChange,
   selectedStudentId,
   onSelectStudent,
-  onSendMessage,
   assignments,
   messages,
   studentProfile,
   profileLoading,
+  onMarkMessageRead,
 }) => {
+  type MessageMode = 'none' | 'student' | 'parent';
+  const [messageMode, setMessageMode] = useState<MessageMode>('none');
+  const [studentMessageText, setStudentMessageText] = useState('');
+  const [parentMessageText, setParentMessageText] = useState('');
   const [showAllMessages, setShowAllMessages] = useState(true);
+  const now = Date.now();
+  const studentsWithPresence = students.map((s) => {
+    const last = s.lastSeenAt ? new Date(s.lastSeenAt).getTime() : NaN;
+    const isOnline = !Number.isNaN(last) && now - last <= 2 * 60 * 1000;
+    return { ...s, isOnline };
+  });
 
-  const visibleMessages = showAllMessages
-    ? messages
-    : messages.filter(
-        (message) =>
-          message.fromUserId === selectedStudentId ||
-          message.toUserId === selectedStudentId ||
-          message.studentId === selectedStudentId,
-      );
+  const [feedbackDraft, setFeedbackDraft] = useState({
+    type: 'general_feedback',
+    title: '',
+    content: '',
+  });
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
+  const [parents, setParents] = useState<
+    { id: string; name: string; email: string; role: 'parent'; studentIds: string[] }[]
+  >([]);
+  const [selectedParentId, setSelectedParentId] = useState<string>('');
+  const [parentLoading, setParentLoading] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    setParentLoading(true);
+    getTeacherParents(token)
+      .then((data) => setParents(data))
+      .catch(() => {})
+      .finally(() => setParentLoading(false));
+  }, [token]);
+
+  useEffect(() => {
+    setSelectedParentId('');
+  }, [selectedStudentId]);
+
+  // Aktif mesaj, mesaj listesi değişirse hala mevcut mu kontrol et
+  // Öğrenci sekmesinde artık bireysel mesaj detayı veya liste tutulmuyor;
+  // tüm mesaj/bildirim akışı 'Bildirimler' sekmesinde yönetiliyor.
+
+  const handleCreateFeedback = async () => {
+    if (!token || !selectedStudentId) return;
+    const title = feedbackDraft.title.trim();
+    const content = feedbackDraft.content.trim();
+    if (!title || !content) {
+      setFeedbackError('Lütfen başlık ve içerik girin.');
+      return;
+    }
+    setFeedbackSaving(true);
+    setFeedbackError(null);
+    try {
+      await createTeacherFeedback(token, {
+        studentId: selectedStudentId,
+        type: feedbackDraft.type,
+        title,
+        content,
+      });
+      setFeedbackDraft({ type: 'general_feedback', title: '', content: '' });
+      // eslint-disable-next-line no-alert
+      alert('Değerlendirme kaydedildi. Sadece veli panelinde görüntülenir.');
+    } catch (e) {
+      setFeedbackError(e instanceof Error ? e.message : 'Kaydedilemedi.');
+    } finally {
+      setFeedbackSaving(false);
+    }
+  };
 
   return (
     <GlassCard
@@ -1909,24 +3697,52 @@ const TeacherStudents: React.FC<{
         </>
       }
     >
-      <div style={{ display: 'grid', gap: '0.6rem', marginBottom: '1.25rem' }}>
-        <select value={selectedStudentId} onChange={(event) => onSelectStudent(event.target.value)}>
-          {students.map((student) => (
-            <option key={student.id} value={student.id}>
-              {student.name} {student.gradeLevel ? `(${student.gradeLevel}. Sınıf)` : ''}
-            </option>
+      <div style={{ marginBottom: '1rem' }}>
+        <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.45rem' }}>
+          Aktiflik
+        </div>
+        <div className="list-stack" style={{ maxHeight: 240, overflow: 'auto' }}>
+          {studentsWithPresence.length === 0 && <div className="empty-state">Öğrenci bulunamadı.</div>}
+          {studentsWithPresence.map((student) => (
+            <button
+              key={student.id}
+              type="button"
+              className="list-row"
+              style={{
+                textAlign: 'left',
+                cursor: 'pointer',
+                background: student.id === selectedStudentId ? 'var(--color-surface-strong)' : undefined,
+              }}
+              onClick={() => onSelectStudent(student.id)}
+            >
+              <div style={{ flex: 1 }}>
+                <strong
+                  style={{
+                    display: 'block',
+                    color: 'var(--color-text-main)',
+                  }}
+                >
+                  {student.name} {student.gradeLevel ? `(${student.gradeLevel}. Sınıf)` : ''}
+                </strong>
+                <small
+                  style={{
+                    display: 'block',
+                    color: 'var(--color-text-muted)',
+                  }}
+                >
+                  {student.isOnline
+                    ? 'Çevrimiçi'
+                    : student.lastSeenAt
+                      ? `Son görülme: ${new Date(student.lastSeenAt).toLocaleString('tr-TR')}`
+                      : 'Son görülme: -'}
+                </small>
+              </div>
+              <TagChip label={student.isOnline ? 'Online' : 'Offline'} tone={student.isOnline ? 'success' : 'warning'} />
+            </button>
           ))}
-        </select>
-        <input
-          type="text"
-          placeholder="Mesajınız"
-          value={messageText}
-          onChange={(event) => onMessageChange(event.target.value)}
-        />
-        <button type="button" className="ghost-btn" onClick={onSendMessage}>
-          Hızlı Gönder
-        </button>
+        </div>
       </div>
+
       <div style={{ marginBottom: '1.25rem' }}>
         {profileLoading ? (
           <div className="empty-state">Öğrenci verileri yükleniyor...</div>
@@ -1968,6 +3784,166 @@ const TeacherStudents: React.FC<{
                 <div className="sparkline-bar" />
               </MetricCard>
             </div>
+
+            {/* Mesaj Gönder - test sonuçlarının üzerinde */}
+            <div
+              style={{
+                marginTop: '1.25rem',
+                marginBottom: '1.25rem',
+                padding: '1.25rem',
+                borderRadius: 12,
+                background: 'var(--color-surface-soft, #f9fafb)',
+                border: '1px solid var(--color-border-subtle)',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                <MessageCircle size={18} style={{ color: 'var(--color-primary)' }} />
+                <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--color-text-main)' }}>
+                  Mesaj gönder
+                </span>
+              </div>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: 'var(--color-text-muted)', marginBottom: '0.4rem' }}>
+                  Alıcı öğrenci
+                </label>
+                <select
+                  value={selectedStudentId}
+                  onChange={(e) => onSelectStudent(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem 0.9rem',
+                    fontSize: '0.9rem',
+                    borderRadius: 8,
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-main)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <option value="">{students.length === 0 ? 'Öğrenci bulunamadı' : 'Öğrenci seçin'}</option>
+                  {students.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name} {s.gradeLevel ? ` — ${s.gradeLevel}. Sınıf` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              {messageMode === 'none' ? (
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => setMessageMode('student')}
+                    disabled={!selectedStudentId}
+                    style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 500, borderRadius: 999, border: 'none', cursor: selectedStudentId ? 'pointer' : 'not-allowed', opacity: selectedStudentId ? 1 : 0.5, background: 'var(--color-primary-soft, #dbeafe)', color: 'var(--color-primary)' }}
+                  >
+                    Öğrenciye Mesaj
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMessageMode('parent')}
+                    disabled={!selectedStudentId}
+                    style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 500, borderRadius: 999, border: 'none', cursor: selectedStudentId ? 'pointer' : 'not-allowed', opacity: selectedStudentId ? 1 : 0.5, background: 'var(--color-accent-soft, #ede9fe)', color: 'var(--color-accent)' }}
+                  >
+                    Veliye Mesaj
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setMessageMode('none'); setStudentMessageText(''); setParentMessageText(''); setSelectedParentId(''); }}
+                      style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem', borderRadius: 6, border: '1px solid var(--color-border-subtle)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                    >
+                      <ArrowRight size={14} style={{ transform: 'rotate(180deg)' }} /> Geri
+                    </button>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', padding: '0.2rem 0.5rem', borderRadius: 4, background: 'var(--color-surface)' }}>
+                      {messageMode === 'student' ? 'Öğrenciye mesaj' : 'Veliye mesaj'}
+                    </span>
+                  </div>
+                  {messageMode === 'student' && (
+                    <>
+                      <textarea
+                        placeholder="Mesajınızı yazın..."
+                        value={studentMessageText}
+                        onChange={(e) => setStudentMessageText(e.target.value)}
+                        rows={4}
+                        style={{ width: '100%', padding: '0.75rem 1rem', fontSize: '0.9rem', borderRadius: 10, border: '1px solid var(--color-border-subtle)', background: 'var(--color-surface)', color: 'var(--color-text-main)', resize: 'vertical', minHeight: 100 }}
+                      />
+                      <button
+                        type="button"
+                        className="primary-btn"
+                        disabled={!selectedStudentId || !studentMessageText.trim() || !token}
+                        onClick={async () => {
+                          if (!token || !selectedStudentId || !studentMessageText.trim()) return;
+                          try {
+                            await sendTeacherMessage(token, { toUserId: selectedStudentId, text: studentMessageText.trim() });
+                            setStudentMessageText('');
+                            setMessageMode('none');
+                            alert('Mesaj gönderildi.');
+                          } catch (e) {
+                            alert(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
+                          }
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', padding: '0.6rem 1.25rem' }}
+                      >
+                        <Send size={16} /> Gönder
+                      </button>
+                    </>
+                  )}
+                  {messageMode === 'parent' && (
+                    <>
+                      {(() => {
+                        const parentsOfStudent = parents.filter((p) => p.studentIds.includes(selectedStudentId));
+                        return (
+                          <>
+                            <select
+                              value={selectedParentId}
+                              onChange={(e) => setSelectedParentId(e.target.value)}
+                              disabled={parentLoading || parentsOfStudent.length === 0}
+                              style={{ width: '100%', padding: '0.6rem 0.9rem', fontSize: '0.9rem', borderRadius: 8, border: '1px solid var(--color-border-subtle)', background: 'var(--color-surface)', color: 'var(--color-text-main)', cursor: 'pointer' }}
+                            >
+                              <option value="">{parentLoading ? 'Veliler yükleniyor...' : parentsOfStudent.length === 0 ? 'Bu öğrenciye bağlı veli bulunamadı' : 'Veli seçin'}</option>
+                              {parentsOfStudent.map((p) => (
+                                <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
+                              ))}
+                            </select>
+                            <textarea
+                              placeholder="Veliyi bilgilendireceğiniz mesaj..."
+                              value={parentMessageText}
+                              onChange={(e) => setParentMessageText(e.target.value)}
+                              rows={4}
+                              style={{ width: '100%', padding: '0.75rem 1rem', fontSize: '0.9rem', borderRadius: 10, border: '1px solid var(--color-border-subtle)', background: 'var(--color-surface)', color: 'var(--color-text-main)', resize: 'vertical', minHeight: 100 }}
+                            />
+                            <button
+                              type="button"
+                              className="primary-btn"
+                              disabled={!selectedParentId || !parentMessageText.trim() || !token}
+                              onClick={async () => {
+                                if (!token || !selectedParentId || !parentMessageText.trim()) return;
+                                try {
+                                  const studentName = students.find((s) => s.id === selectedStudentId)?.name ?? 'Öğrenci';
+                                  await sendTeacherMessage(token, { toUserId: selectedParentId, text: parentMessageText.trim(), studentId: selectedStudentId, subject: `Öğrenci hakkında mesaj (${studentName})` });
+                                  setParentMessageText('');
+                                  setSelectedParentId('');
+                                  setMessageMode('none');
+                                  alert('Veliye mesaj gönderildi.');
+                                } catch (e) {
+                                  alert(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
+                                }
+                              }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', padding: '0.6rem 1.25rem' }}
+                            >
+                              <Send size={16} /> Veliyi Bilgilendir
+                            </button>
+                          </>
+                        );
+                      })()}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="list-stack" style={{ marginTop: '1rem' }}>
               {studentProfile.results.length === 0 && (
                 <div className="empty-state">Bu öğrenci için test sonucu bulunamadı.</div>
@@ -1997,31 +3973,55 @@ const TeacherStudents: React.FC<{
           <div className="empty-state">Öğrenci seçildiğinde performans burada görünecek.</div>
         )}
       </div>
+
+      {/* Veliye Özel Notlar - performans metriklerinin altında ayrı bölüm */}
       <div
-        className="list-stack"
         style={{
           marginBottom: '1.25rem',
-          maxHeight: 260,
-          overflow: 'auto',
+          padding: '1rem',
+          borderRadius: 8,
+          background: 'var(--color-surface-subtle, rgba(255,255,255,0.04))',
+          border: '1px solid var(--color-border-subtle, rgba(255,255,255,0.08))',
         }}
       >
-        {visibleMessages
-          .slice()
-          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-          .reverse()
-          .map((message) => (
-            <div key={message.id} className="list-row">
-              <div>
-                <strong>
-                  {message.fromUserName ?? message.fromUserId} → {message.toUserName ?? message.toUserId}
-                </strong>
-                <small>{message.text}</small>
-              </div>
-              <span className="chip subtle">{formatShortDate(message.createdAt)}</span>
-            </div>
-          ))}
-        {visibleMessages.length === 0 && <div className="empty-state">Henüz mesaj yok.</div>}
+        <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '0.25rem' }}>
+          Veliye Özel Notlar
+        </div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+          Sadece veli panelinde görünür; öğrenci bu notları görmez.
+        </div>
+        <div style={{ display: 'grid', gap: '0.6rem' }}>
+          <select
+            value={feedbackDraft.type}
+            onChange={(e) => setFeedbackDraft((p) => ({ ...p, type: e.target.value }))}
+          >
+            <option value="general_feedback">Genel değerlendirme</option>
+            <option value="performance_note">Performans notu</option>
+            <option value="test_feedback">Test değerlendirmesi</option>
+          </select>
+          <input
+            type="text"
+            placeholder="Başlık"
+            value={feedbackDraft.title}
+            onChange={(e) => setFeedbackDraft((p) => ({ ...p, title: e.target.value }))}
+          />
+          <textarea
+            placeholder="Değerlendirme içeriği (veli görecek)"
+            value={feedbackDraft.content}
+            onChange={(e) => setFeedbackDraft((p) => ({ ...p, content: e.target.value }))}
+            rows={4}
+            style={{ resize: 'vertical' }}
+          />
+          {feedbackError && <div style={{ color: '#f97316', fontSize: '0.85rem' }}>{feedbackError}</div>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" className="primary-btn" onClick={handleCreateFeedback} disabled={feedbackSaving}>
+              {feedbackSaving ? 'Kaydediliyor...' : 'Değerlendirmeyi Kaydet'}
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* Bildirimler artık ayrı 'Bildirimler' sekmesinde; burada mesaj listesi gösterilmiyor */}
       <div className="list-stack">
         {assignments.slice(0, 4).map((assignment) => (
           <div className="list-row" key={assignment.id}>

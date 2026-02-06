@@ -1,6 +1,6 @@
 import React from 'react';
 import { Moon, Sun } from 'lucide-react';
-import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { LoginPage } from './LoginPage';
 import { TeacherDashboard } from './TeacherDashboard';
@@ -39,12 +39,25 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     window.localStorage.setItem('theme_mode', isDark ? 'dark' : 'light');
   }, [isDark]);
 
+  const panelTitle =
+    user?.role === 'teacher'
+      ? 'Öğretmen Paneli'
+      : user?.role === 'parent'
+        ? 'Veli Paneli'
+        : user?.role === 'admin'
+          ? 'Admin Paneli'
+          : user?.role === 'student'
+            ? 'Öğrenci Paneli'
+            : null;
+
+  const mainClassName = panelTitle ? 'main main--dashboard' : 'main main--auth';
+
   return (
     <div>
       <header className="topbar">
         <div className="topbar-left">
           <Link to="/" className="logo-text">
-            Öğrenci Yönetim Sistemi
+            {panelTitle ?? 'Öğrenci Yönetim Sistemi'}
           </Link>
         </div>
         <div className="topbar-right">
@@ -60,6 +73,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
           {user ? (
             <>
+              {panelTitle && <span className="panel-pill">{panelTitle}</span>}
               <span className="user-pill">
                 {user.name} ({user.role})
               </span>
@@ -72,8 +86,92 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           )}
         </div>
       </header>
-      <main className="main">{children}</main>
+      <main className={mainClassName}>{children}</main>
     </div>
+  );
+};
+
+const AppRoutes: React.FC = () => {
+  const location = useLocation();
+  const { user } = useAuth();
+
+  React.useEffect(() => {
+    const baseTitle = 'Öğrenci Yönetim Sistemi';
+    const roleTitle =
+      user?.role === 'teacher'
+        ? 'Öğretmen Paneli'
+        : user?.role === 'parent'
+          ? 'Veli Paneli'
+          : user?.role === 'admin'
+            ? 'Admin Paneli'
+            : user?.role === 'student'
+              ? 'Öğrenci Paneli'
+              : null;
+
+    if (typeof document !== 'undefined') {
+      document.title = roleTitle ? `${roleTitle} – ${baseTitle}` : baseTitle;
+    }
+  }, [location.pathname, user?.role]);
+
+  return (
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <Layout>
+            <LoginPage />
+          </Layout>
+        }
+      />
+      <Route
+        path="/login"
+        element={
+          <Layout>
+            <LoginPage />
+          </Layout>
+        }
+      />
+      <Route
+        path="/teacher"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="teacher">
+              <TeacherDashboard />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/student"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="student">
+              <StudentDashboard />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/parent"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="parent">
+              <ParentDashboard />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="admin">
+              <AdminDashboard />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+    </Routes>
   );
 };
 
@@ -81,64 +179,7 @@ export const App: React.FC = () => {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <Layout>
-                <LoginPage />
-              </Layout>
-            }
-          />
-          <Route
-            path="/login"
-            element={
-              <Layout>
-                <LoginPage />
-              </Layout>
-            }
-          />
-          <Route
-            path="/teacher"
-            element={
-              <Layout>
-                <ProtectedRoute requiredRole="teacher">
-                  <TeacherDashboard />
-                </ProtectedRoute>
-              </Layout>
-            }
-          />
-          <Route
-            path="/student"
-            element={
-              <Layout>
-                <ProtectedRoute requiredRole="student">
-                  <StudentDashboard />
-                </ProtectedRoute>
-              </Layout>
-            }
-          />
-          <Route
-            path="/parent"
-            element={
-              <Layout>
-                <ProtectedRoute requiredRole="parent">
-                  <ParentDashboard />
-                </ProtectedRoute>
-              </Layout>
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              <Layout>
-                <ProtectedRoute requiredRole="admin">
-                  <AdminDashboard />
-                </ProtectedRoute>
-              </Layout>
-            }
-          />
-        </Routes>
+        <AppRoutes />
       </BrowserRouter>
     </AuthProvider>
   );

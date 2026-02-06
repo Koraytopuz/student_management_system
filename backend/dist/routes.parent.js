@@ -586,6 +586,14 @@ router.get('/messages/conversation/:userId', (0, auth_1.authenticate)('parent'),
         });
     }));
 });
+// Velinin iletişim kurabileceği öğretmen listesi (şikayet/öneri seçimi için de kullanılabilir)
+router.get('/teachers', (0, auth_1.authenticate)('parent'), async (_req, res) => {
+    const teachersData = await db_1.prisma.user.findMany({
+        where: { role: 'teacher' },
+        select: { id: true, name: true, email: true },
+    });
+    return res.json(teachersData);
+});
 // Mesaj gönder
 router.post('/messages', (0, auth_1.authenticate)('parent'), async (req, res) => {
     var _a, _b;
@@ -1326,6 +1334,55 @@ router.get('/calendar', (0, auth_1.authenticate)('parent'), async (req, res) => 
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
         viewType: req.query.viewType || 'month',
+    });
+});
+// Şikayet / öneri (admin'e)
+router.post('/complaints', (0, auth_1.authenticate)('parent'), async (req, res) => {
+    var _a;
+    const parentId = req.user.id;
+    const { subject, body, aboutTeacherId } = req.body;
+    if (!subject || !body) {
+        return res.status(400).json({ error: 'subject ve body alanları zorunludur' });
+    }
+    if (aboutTeacherId) {
+        const teacher = await db_1.prisma.user.findFirst({ where: { id: aboutTeacherId, role: 'teacher' } });
+        if (!teacher) {
+            return res.status(404).json({ error: 'Öğretmen bulunamadı' });
+        }
+    }
+    const created = await db_1.prisma.complaint.create({
+        data: {
+            fromRole: 'parent',
+            fromUserId: parentId,
+            aboutTeacherId: aboutTeacherId !== null && aboutTeacherId !== void 0 ? aboutTeacherId : undefined,
+            subject: subject.trim(),
+            body: body.trim(),
+            status: 'open',
+        },
+    });
+    const admins = await db_1.prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
+    if (admins.length > 0) {
+        await db_1.prisma.notification.createMany({
+            data: admins.map((a) => ({
+                userId: a.id,
+                type: 'complaint_created',
+                title: 'Yeni şikayet/öneri',
+                body: 'Veliden yeni bir şikayet/öneri gönderildi.',
+                read: false,
+                relatedEntityType: 'complaint',
+                relatedEntityId: created.id,
+            })),
+        });
+    }
+    return res.status(201).json({
+        id: created.id,
+        fromRole: created.fromRole,
+        fromUserId: created.fromUserId,
+        aboutTeacherId: (_a = created.aboutTeacherId) !== null && _a !== void 0 ? _a : undefined,
+        subject: created.subject,
+        body: created.body,
+        status: created.status,
+        createdAt: created.createdAt.toISOString(),
     });
 });
 exports.default = router;

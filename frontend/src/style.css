@@ -35,6 +35,9 @@
   --color-primary-strong: #1d4ed8;
   --color-accent: #4f46e5;
   --color-accent-soft: #ede9fe;
+  /* Default accent vars for areas outside dashboard shell */
+  --accent-color: var(--color-primary);
+  --accent-strong: var(--color-primary-strong);
 
   /* Status colors */
   --error: #dc2626;
@@ -65,6 +68,36 @@
   --panel-border: rgba(15, 23, 42, 0.75);
   --list-row-bg: rgba(15, 23, 42, 0.85);
   --list-row-border: rgba(59, 73, 99, 0.7);
+}
+
+:root.reading-mode {
+  /* Warm, low-contrast reading palette */
+  --bg-gradient: radial-gradient(circle at top left, #fff7ed, #fffbeb 40%, #fefce8);
+  --noise-strength: 0.06;
+  --color-text-main: #111827;
+  --color-text-muted: #6b7280;
+  --color-surface: #fffaf0;
+  --color-surface-soft: #fff7ed;
+  --glass-bg: rgba(255, 250, 240, 0.9);
+  --panel-surface: rgba(255, 250, 240, 0.92);
+  --list-row-bg: rgba(255, 251, 235, 0.9);
+}
+
+:root.reading-mode body {
+  line-height: 1.75;
+}
+
+:root[data-theme='dark'].reading-mode {
+  /* Dark + warm reading palette */
+  --bg-gradient: radial-gradient(circle at top left, #020617, #020617 40%, #020617);
+  --noise-strength: 0.08;
+  --color-text-main: #e5e7eb;
+  --color-text-muted: #a3a3a3;
+  --color-surface: #0b1220;
+  --color-surface-soft: #0b1220;
+  --glass-bg: rgba(11, 18, 32, 0.92);
+  --panel-surface: rgba(11, 18, 32, 0.92);
+  --list-row-bg: rgba(15, 23, 42, 0.85);
 }
 
 *,
@@ -170,8 +203,27 @@ a {
   font-size: 0.85rem;
 }
 
+.panel-pill {
+  padding: 0.35rem 1.25rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  font-size: 0.85rem;
+  color: #e5e7eb;
+}
+
 .main {
   padding: 1.5rem;
+}
+
+.main.main--dashboard {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: calc(100vh - 56px);
+}
+
+.main.main--auth {
   max-width: 1100px;
   margin: 0 auto;
 }
@@ -406,13 +458,7 @@ button:disabled {
 }
 
 .panel {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  max-width: 72rem;
-  margin: 0 auto;
   width: 100%;
-  padding-top: 1rem;
 }
 
 .panel h2 {
@@ -427,6 +473,40 @@ button:disabled {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+.admin-panel {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: flex-start;
+  width: 100%;
+  padding: 1.5rem 0;
+}
+
+.admin-sidebar {
+  align-self: stretch;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem 1rem;
+  border-right: 1px solid var(--color-border-subtle);
+}
+
+.admin-sidebar-title {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+.admin-sidebar-nav {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.admin-main {
+  width: 100%;
 }
 
 .stats-grid {
@@ -558,6 +638,7 @@ button:disabled {
   grid-template-columns: 280px minmax(0, 1fr);
   min-height: 100vh;
   background: transparent;
+  width: 100%;
 }
 
 .dashboard-shell.accent-emerald {
@@ -708,9 +789,9 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 2rem;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-soft);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .dashboard-header {
@@ -787,6 +868,12 @@ button:disabled {
   align-items: center;
   justify-content: center;
   font-weight: 700;
+}
+
+:root[data-theme='dark'] .user-avatar {
+  background: rgba(15, 23, 42, 0.9);
+  color: #e5e7eb;
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.55);
 }
 
 .user-meta {
@@ -913,10 +1000,16 @@ button:disabled {
 .ghost-btn {
   border-radius: var(--radius-pill);
   padding: 0.55rem 1.2rem;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  background: rgba(248, 250, 252, 0.9);
   color: var(--color-text-main);
   font-weight: 600;
+}
+
+:root[data-theme='dark'] .ghost-btn {
+  border-color: rgba(148, 163, 184, 0.65);
+  background: rgba(15, 23, 42, 0.85);
+  color: #e5e7eb;
 }
 
 .primary-btn {
@@ -944,6 +1037,7 @@ button:disabled {
   border-radius: var(--radius-md);
   background: var(--list-row-bg);
   border: 1px solid var(--list-row-border);
+  color: var(--color-text-main);
 }
 
 .list-row strong {

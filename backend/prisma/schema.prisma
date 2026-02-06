@@ -75,6 +75,10 @@ enum NotificationType {
   message_received
   goal_achieved
   content_assigned
+  help_request_created
+  help_response_ready
+  help_response_played
+  complaint_created
 }
 
 enum RelatedEntityType {
@@ -83,6 +87,34 @@ enum RelatedEntityType {
   meeting
   message
   content
+  test_asset
+  help_request
+  help_response
+  complaint
+  teacher_feedback
+}
+
+enum HelpRequestStatus {
+  open
+  in_progress
+  resolved
+  cancelled
+}
+
+enum HelpResponseMode {
+  audio_only
+  audio_video
+}
+
+enum ComplaintFromRole {
+  student
+  parent
+}
+
+enum ComplaintStatus {
+  open
+  reviewed
+  closed
 }
 
 enum AlertType {
@@ -116,6 +148,7 @@ model User {
   role         UserRole
   passwordHash String   @map("password_hash")
   createdAt    DateTime @default(now())
+  lastSeenAt   DateTime? @map("last_seen_at")
 
   // Teacher-specific
   subjectAreas String[] @default([]) @map("subject_areas")
@@ -134,6 +167,14 @@ model User {
   watchRecords          WatchRecord[]
   meetingStudents       MeetingStudent[]
   meetingParents        MeetingParent[]
+  assignmentsCreated    Assignment[]         @relation("AssignmentCreatedByTeacher")
+
+  testAssetsCreated      TestAsset[]         @relation("TestAssetTeacher")
+  helpRequestsAsStudent  HelpRequest[]       @relation("HelpRequestStudent")
+  helpRequestsAsTeacher  HelpRequest[]       @relation("HelpRequestTeacher")
+  helpResponsesAsTeacher HelpResponse[]      @relation("HelpResponseTeacher")
+  complaintsCreated      Complaint[]         @relation("ComplaintFromUser")
+  complaintsAboutTeacher Complaint[]         @relation("ComplaintAboutTeacher")
 
   @@unique([email, role])
   @@map("users")
@@ -155,6 +196,7 @@ model Subject {
 
   contents ContentItem[]
   tests    Test[]
+  testAssets TestAsset[]
 
   @@map("subjects")
 }
@@ -254,6 +296,7 @@ model Question {
 
   test        Test          @relation(fields: [testId], references: [id], onDelete: Cascade)
   testResults TestResultAnswer[]
+  helpRequests HelpRequest[]
 
   @@map("questions")
 }
@@ -264,18 +307,100 @@ model Assignment {
   description String?
   testId      String?   @map("test_id")
   contentId   String?   @map("content_id")
+  testAssetId String?   @map("test_asset_id")
   classId     String?   @map("class_id")
   dueDate     DateTime  @map("due_date")
   points      Int       @default(100)
+  timeLimitMinutes Int? @map("time_limit_minutes")
+  createdByTeacherId String? @map("created_by_teacher_id")
   createdAt   DateTime  @default(now())
 
   test       Test?           @relation(fields: [testId], references: [id], onDelete: SetNull)
   content    ContentItem?    @relation(fields: [contentId], references: [id], onDelete: SetNull)
+  testAsset  TestAsset?      @relation(fields: [testAssetId], references: [id], onDelete: SetNull)
   classGroup ClassGroup?     @relation(fields: [classId], references: [id], onDelete: SetNull)
+  createdByTeacher User?     @relation("AssignmentCreatedByTeacher", fields: [createdByTeacherId], references: [id], onDelete: SetNull)
   students   AssignmentStudent[]
   testResults TestResult[]
+  helpRequests HelpRequest[]
 
   @@map("assignments")
+}
+
+model TestAsset {
+  id        String   @id @default(cuid())
+  teacherId String   @map("teacher_id")
+  title     String
+  subjectId String   @map("subject_id")
+  topic     String
+  gradeLevel String  @map("grade_level")
+  fileUrl   String   @map("file_url")
+  fileName  String   @map("file_name")
+  mimeType  String   @map("mime_type")
+  createdAt DateTime @default(now())
+
+  teacher   User     @relation("TestAssetTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+
+  @@map("test_assets")
+}
+
+model HelpRequest {
+  id          String            @id @default(cuid())
+  studentId   String            @map("student_id")
+  teacherId   String            @map("teacher_id")
+  assignmentId String           @map("assignment_id")
+  questionId  String?           @map("question_id")
+  message     String?
+  status      HelpRequestStatus @default(open)
+  createdAt   DateTime          @default(now())
+  resolvedAt  DateTime?         @map("resolved_at")
+
+  student     User              @relation("HelpRequestStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  teacher     User              @relation("HelpRequestTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  assignment  Assignment        @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  question    Question?         @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  response    HelpResponse?
+
+  @@index([teacherId, status, createdAt])
+  @@index([studentId, status, createdAt])
+  @@map("help_requests")
+}
+
+model HelpResponse {
+  id            String           @id @default(cuid())
+  helpRequestId String           @unique @map("help_request_id")
+  teacherId     String           @map("teacher_id")
+  mode          HelpResponseMode
+  url           String
+  mimeType      String?          @map("mime_type")
+  createdAt     DateTime         @default(now())
+  playedAt      DateTime?        @map("played_at")
+
+  helpRequest   HelpRequest      @relation(fields: [helpRequestId], references: [id], onDelete: Cascade)
+  teacher       User             @relation("HelpResponseTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@map("help_responses")
+}
+
+model Complaint {
+  id             String            @id @default(cuid())
+  fromRole       ComplaintFromRole @map("from_role")
+  fromUserId     String            @map("from_user_id")
+  aboutTeacherId String?           @map("about_teacher_id")
+  subject        String
+  body           String
+  status         ComplaintStatus   @default(open)
+  createdAt      DateTime          @default(now())
+  reviewedAt     DateTime?         @map("reviewed_at")
+  closedAt       DateTime?         @map("closed_at")
+
+  fromUser       User              @relation("ComplaintFromUser", fields: [fromUserId], references: [id], onDelete: Cascade)
+  aboutTeacher   User?             @relation("ComplaintAboutTeacher", fields: [aboutTeacherId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@map("complaints")
 }
 
 model AssignmentStudent {

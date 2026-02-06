@@ -156,9 +156,11 @@ const projectRoot = path.join(__dirname, '..', '..');
 const frontendPublicDir = path.join(projectRoot, 'frontend', 'public');
 const publicVideosDir = path.join(frontendPublicDir, 'videos');
 const publicPdfsDir = path.join(frontendPublicDir, 'pdfs');
+const publicTestsDir = path.join(frontendPublicDir, 'tests');
 const uploadsTempDir = path.join(__dirname, '..', 'uploads', 'tmp');
+const uploadsSolutionsDir = path.join(__dirname, '..', 'uploads', 'solutions');
 
-[publicVideosDir, publicPdfsDir, uploadsTempDir].forEach((dir) => {
+[publicVideosDir, publicPdfsDir, publicTestsDir, uploadsTempDir, uploadsSolutionsDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -168,6 +170,20 @@ const videoUpload = multer({
   dest: uploadsTempDir,
   limits: {
     fileSize: 100 * 1024 * 1024, // 100MB
+  },
+});
+
+const testAssetUpload = multer({
+  dest: uploadsTempDir,
+  limits: {
+    fileSize: 30 * 1024 * 1024, // 30MB (pdf/test zip vs.)
+  },
+});
+
+const helpSolutionUpload = multer({
+  dest: uploadsTempDir,
+  limits: {
+    fileSize: 80 * 1024 * 1024, // 80MB
   },
 });
 
@@ -443,7 +459,7 @@ router.get(
     );
     const teacherStudents = await prisma.user.findMany({
       where: { id: { in: [...studentIds] }, role: 'student' },
-      select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+      select: { id: true, name: true, email: true, gradeLevel: true, classId: true, lastSeenAt: true },
     });
     return res.json(
       teacherStudents.map((s) => ({
@@ -453,6 +469,7 @@ router.get(
         role: 'student' as const,
         gradeLevel: s.gradeLevel ?? '',
         classId: s.classId ?? '',
+        lastSeenAt: s.lastSeenAt?.toISOString(),
       })),
     );
   },
@@ -567,6 +584,65 @@ router.get(
   },
 );
 
+// Veliye özel değerlendirme (öğrenci görmez)
+router.post(
+  '/feedback',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const teacherName = req.user!.name;
+    const { studentId, type, title, content, relatedTestId, relatedAssignmentId } = req.body as {
+      studentId?: string;
+      type?: string;
+      title?: string;
+      content?: string;
+      relatedTestId?: string;
+      relatedAssignmentId?: string;
+    };
+
+    if (!studentId || !type || !title || !content) {
+      return res.status(400).json({ error: 'studentId, type, title, content zorunludur' });
+    }
+
+    // Sadece öğretmenin sınıflarındaki öğrenciler
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)));
+    if (!allowedStudentIds.has(studentId)) {
+      return res.status(403).json({ error: 'Bu öğrenci için değerlendirme yazamazsınız' });
+    }
+
+    const created = await prisma.teacherFeedback.create({
+      data: {
+        studentId,
+        teacherId,
+        teacherName,
+        type: type.trim(),
+        relatedTestId: relatedTestId ?? undefined,
+        relatedAssignmentId: relatedAssignmentId ?? undefined,
+        title: title.trim(),
+        content: content.trim(),
+        read: false,
+      },
+    });
+
+    return res.status(201).json({
+      id: created.id,
+      studentId: created.studentId,
+      teacherId: created.teacherId,
+      teacherName: created.teacherName,
+      type: created.type,
+      relatedTestId: created.relatedTestId ?? undefined,
+      relatedAssignmentId: created.relatedAssignmentId ?? undefined,
+      title: created.title,
+      content: created.content,
+      createdAt: created.createdAt.toISOString(),
+    });
+  },
+);
+
 // İçerik listesi
 router.get(
   '/contents',
@@ -620,6 +696,418 @@ router.get(
         createdByTeacherId: t.createdByTeacherId,
       })),
     );
+  },
+);
+
+// Yapılandırılmış test (sorularla birlikte) oluşturma
+router.post(
+  '/tests/structured',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const { title, subjectId, topic, questions } = req.body as {
+      title?: string;
+      subjectId?: string;
+      topic?: string;
+      questions?: Array<{
+        text?: string;
+        type?: 'multiple_choice' | 'true_false' | 'open_ended';
+        choices?: string[];
+        correctAnswer?: string;
+        solutionExplanation?: string;
+        topic?: string;
+        difficulty?: 'easy' | 'medium' | 'hard';
+      }>;
+    };
+
+    if (!title || !subjectId || !topic) {
+      return res.status(400).json({ error: 'title, subjectId ve topic zorunludur' });
+    }
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ error: 'questions alanı zorunludur (en az 1 soru)' });
+    }
+
+    const normalizedQuestions = questions.map((q, idx) => ({
+      text: String(q.text ?? '').trim(),
+      type: q.type ?? 'multiple_choice',
+      choices: Array.isArray(q.choices) ? q.choices : undefined,
+      correctAnswer: q.correctAnswer ? String(q.correctAnswer).trim() : undefined,
+      solutionExplanation: q.solutionExplanation ? String(q.solutionExplanation).trim() : undefined,
+      topic: String(q.topic ?? topic).trim(),
+      difficulty: (q.difficulty ?? 'medium') as 'easy' | 'medium' | 'hard',
+      orderIndex: idx,
+    }));
+
+    if (normalizedQuestions.some((q) => !q.text)) {
+      return res.status(400).json({ error: 'Her soru için text zorunludur' });
+    }
+
+    const created = await prisma.test.create({
+      data: {
+        title: title.trim(),
+        subjectId,
+        topic: topic.trim(),
+        createdByTeacherId: teacherId,
+        questions: {
+          create: normalizedQuestions.map((q) => ({
+            text: q.text,
+            type: q.type as any,
+            choices: q.choices ?? undefined,
+            correctAnswer: q.correctAnswer,
+            solutionExplanation: q.solutionExplanation,
+            topic: q.topic,
+            difficulty: q.difficulty,
+            orderIndex: q.orderIndex,
+          })),
+        },
+      },
+      include: { questions: { select: { id: true }, orderBy: { orderIndex: 'asc' } } },
+    });
+
+    return res.status(201).json({
+      id: created.id,
+      title: created.title,
+      subjectId: created.subjectId,
+      topic: created.topic,
+      questionIds: created.questions.map((q) => q.id),
+      createdByTeacherId: created.createdByTeacherId,
+    });
+  },
+);
+
+// Test dosyası yükleme (PDF vb.)
+router.post(
+  '/test-assets/upload',
+  authenticate('teacher'),
+  testAssetUpload.single('file'),
+  (req: AuthenticatedRequest, res) => {
+    const uploadedFile = (req as AuthenticatedRequest & { file?: Express.Multer.File }).file;
+    if (!uploadedFile) {
+      return res.status(400).json({ error: 'Dosya gereklidir' });
+    }
+    try {
+      const original = uploadedFile.originalname || 'test.pdf';
+      const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const targetPath = path.join(publicTestsDir, `${Date.now()}-${safeName}`);
+      fs.copyFileSync(uploadedFile.path, targetPath);
+      fs.unlinkSync(uploadedFile.path);
+
+      const relativeUrl = `/tests/${path.basename(targetPath)}`;
+      return res.status(201).json({
+        url: relativeUrl,
+        fileName: original,
+        mimeType: uploadedFile.mimetype || 'application/octet-stream',
+      });
+    } catch (error) {
+      console.error('Test dosyası yükleme hatası:', error);
+      return res.status(500).json({ error: 'Dosya yüklenirken sunucu hatası oluştu' });
+    }
+  },
+);
+
+// Test dosyası kayıtları (TestAsset)
+router.get(
+  '/test-assets',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const list = await prisma.testAsset.findMany({
+      where: { teacherId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return res.json(
+      list.map((a) => ({
+        id: a.id,
+        teacherId: a.teacherId,
+        title: a.title,
+        subjectId: a.subjectId,
+        topic: a.topic,
+        gradeLevel: a.gradeLevel,
+        fileUrl: a.fileUrl,
+        fileName: a.fileName,
+        mimeType: a.mimeType,
+        createdAt: a.createdAt.toISOString(),
+      })),
+    );
+  },
+);
+
+router.post(
+  '/test-assets',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const { title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType } = req.body as {
+      title?: string;
+      subjectId?: string;
+      topic?: string;
+      gradeLevel?: string;
+      fileUrl?: string;
+      fileName?: string;
+      mimeType?: string;
+    };
+
+    if (!title || !subjectId || !topic || !gradeLevel || !fileUrl || !fileName || !mimeType) {
+      return res.status(400).json({
+        error: 'title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType zorunludur',
+      });
+    }
+
+    try {
+      const subject = await prisma.subject.findUnique({ where: { id: subjectId } });
+      if (!subject) {
+        return res.status(400).json({ error: 'Geçersiz subjectId: ilgili ders bulunamadı' });
+      }
+
+      const created = await prisma.testAsset.create({
+        data: {
+          teacherId,
+          title: title.trim(),
+          subjectId,
+          topic: topic.trim(),
+          gradeLevel: gradeLevel.trim(),
+          fileUrl: fileUrl.trim(),
+          fileName: fileName.trim(),
+          mimeType: mimeType.trim(),
+        },
+      });
+
+      return res.status(201).json({
+        id: created.id,
+        teacherId: created.teacherId,
+        title: created.title,
+        subjectId: created.subjectId,
+        topic: created.topic,
+        gradeLevel: created.gradeLevel,
+        fileUrl: created.fileUrl,
+        fileName: created.fileName,
+        mimeType: created.mimeType,
+        createdAt: created.createdAt.toISOString(),
+      });
+    } catch (error) {
+      console.error('TestAsset create error:', error);
+      return res
+        .status(500)
+        .json({ error: 'Test dosyası kaydedilemedi, lütfen daha sonra tekrar deneyin.' });
+    }
+  },
+);
+
+router.delete(
+  '/test-assets/:id',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const id = String(req.params.id);
+    const existing = await prisma.testAsset.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Test dosyası bulunamadı' });
+    }
+    if (existing.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu kaydı silme yetkiniz yok' });
+    }
+    await prisma.testAsset.delete({ where: { id } });
+    return res.json({ success: true });
+  },
+);
+
+// Yardım talepleri (öğrenciden gelen "öğretmene sor" istekleri)
+router.get(
+  '/help-requests',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const list = await prisma.helpRequest.findMany({
+      where: {
+        teacherId,
+        ...(status ? { status: status as any } : {}),
+      },
+      include: {
+        student: { select: { id: true, name: true } },
+        assignment: { select: { id: true, title: true, testId: true } },
+        question: { select: { id: true, orderIndex: true, text: true } },
+        response: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return res.json(
+      list.map((r) => ({
+        id: r.id,
+        studentId: r.studentId,
+        studentName: r.student?.name ?? 'Öğrenci',
+        teacherId: r.teacherId,
+        assignmentId: r.assignmentId,
+        assignmentTitle: r.assignment?.title ?? '',
+        questionId: r.questionId ?? undefined,
+        questionNumber: r.question ? (r.question.orderIndex ?? 0) + 1 : undefined,
+        questionText: r.question?.text ?? undefined,
+        message: r.message ?? undefined,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+        resolvedAt: r.resolvedAt?.toISOString(),
+        response: r.response
+          ? {
+              id: r.response.id,
+              mode: r.response.mode,
+              url: r.response.url,
+              mimeType: r.response.mimeType ?? undefined,
+              createdAt: r.response.createdAt.toISOString(),
+              playedAt: (r.response as any).playedAt ?? undefined,
+            }
+          : undefined,
+      })),
+    );
+  },
+);
+
+// Öğretmen çözüm gönder (ses / ses+video)
+router.post(
+  '/help-requests/:id/respond',
+  authenticate('teacher'),
+  helpSolutionUpload.single('file'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const teacherName = req.user!.name;
+    const helpRequestId = String(req.params.id);
+    const modeRaw = String((req.body as any).mode ?? '').trim();
+    const mode =
+      modeRaw === 'audio_video' || modeRaw === 'audio_only'
+        ? (modeRaw as 'audio_video' | 'audio_only')
+        : null;
+
+    const uploadedFile = (req as AuthenticatedRequest & { file?: Express.Multer.File }).file;
+    if (!mode) {
+      return res.status(400).json({ error: 'mode alanı zorunludur (audio_only | audio_video)' });
+    }
+    if (!uploadedFile) {
+      return res.status(400).json({ error: 'file alanı zorunludur' });
+    }
+
+    const requestRecord = await prisma.helpRequest.findUnique({
+      where: { id: helpRequestId },
+      include: {
+        student: { select: { id: true, name: true } },
+        assignment: { include: { test: { select: { title: true } } } },
+        question: { select: { orderIndex: true } },
+      },
+    });
+    if (!requestRecord) {
+      return res.status(404).json({ error: 'Yardım talebi bulunamadı' });
+    }
+    if (requestRecord.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu talebe yanıt verme yetkiniz yok' });
+    }
+
+    try {
+      const original = uploadedFile.originalname || (mode === 'audio_only' ? 'solution.webm' : 'solution.webm');
+      const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const targetPath = path.join(uploadsSolutionsDir, `${Date.now()}-${helpRequestId}-${safeName}`);
+      fs.copyFileSync(uploadedFile.path, targetPath);
+      fs.unlinkSync(uploadedFile.path);
+
+      const relativeUrl = `/uploads/solutions/${path.basename(targetPath)}`;
+
+      const responseRecord = await prisma.helpResponse.upsert({
+        where: { helpRequestId: helpRequestId },
+        create: {
+          helpRequestId: helpRequestId,
+          teacherId,
+          mode: mode as any,
+          url: relativeUrl,
+          mimeType: uploadedFile.mimetype || undefined,
+        },
+        update: {
+          mode: mode as any,
+          url: relativeUrl,
+          mimeType: uploadedFile.mimetype || undefined,
+          createdAt: new Date(),
+        },
+      });
+
+      await prisma.helpRequest.update({
+        where: { id: helpRequestId },
+        data: { status: 'resolved', resolvedAt: new Date() },
+      });
+
+      const studentName = requestRecord.student?.name ?? 'Öğrenci';
+      const testTitle = requestRecord.assignment?.test?.title ?? requestRecord.assignment?.title ?? 'Test';
+      const questionNumber = (requestRecord.question?.orderIndex ?? 0) + 1;
+
+      await prisma.notification.create({
+        data: {
+          userId: requestRecord.studentId,
+          type: 'help_response_ready',
+          title: 'Çözüm hazır',
+          body: `${teacherName}, ${studentName} için "${testTitle}" testindeki ${questionNumber}. soruyu çözdü.`,
+          read: false,
+          relatedEntityType: 'help_request',
+          relatedEntityId: helpRequestId,
+        },
+      });
+
+      return res.status(201).json({
+        helpRequestId: helpRequestId,
+        response: {
+          id: responseRecord.id,
+          mode: responseRecord.mode,
+          url: responseRecord.url,
+          mimeType: responseRecord.mimeType ?? undefined,
+          createdAt: responseRecord.createdAt.toISOString(),
+        },
+      });
+    } catch (error) {
+      console.error('HelpResponse upload error:', error);
+      return res.status(500).json({ error: 'Çözüm yüklenemedi' });
+    }
+  },
+);
+
+// Öğretmen gönderdiği çözümü geri alabilir / silebilir
+router.delete(
+  '/help-requests/:id/response',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const helpRequestId = String(req.params.id);
+
+    const existing = await prisma.helpResponse.findUnique({
+      where: { helpRequestId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Bu talep için kayıtlı bir çözüm bulunamadı' });
+    }
+    if (existing.teacherId !== teacherId) {
+      return res
+        .status(403)
+        .json({ error: 'Bu çözümü silme yetkiniz yok. Sadece kendi yanıtlarınızı silebilirsiniz.' });
+    }
+
+    // Çözüm dosyasını diskten silmeye çalış
+    try {
+      if (existing.url && existing.url.startsWith('/uploads/solutions/')) {
+        const filePath = path.join(uploadsSolutionsDir, path.basename(existing.url));
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+    } catch (e) {
+      console.warn('HelpResponse file delete error:', e);
+    }
+
+    await prisma.helpResponse.delete({
+      where: { helpRequestId },
+    });
+
+    await prisma.helpRequest.update({
+      where: { id: helpRequestId },
+      data: { status: 'open', resolvedAt: null },
+    });
+
+    return res.json({ success: true });
   },
 );
 
@@ -797,37 +1285,43 @@ router.post(
   '/assignments',
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res) => {
-    const { title, description, testId, contentId, classId, dueDate, points } =
+    const teacherId = req.user!.id;
+    const { title, description, testId, contentId, classId, dueDate, points, testAssetId, timeLimitMinutes, studentIds: requestedStudentIds } =
       req.body as {
         title?: string;
         description?: string;
         testId?: string;
         contentId?: string;
+        testAssetId?: string;
         classId?: string;
         dueDate?: string;
         points?: number;
+        studentIds?: string[];
+        timeLimitMinutes?: number;
       };
 
-    if (!title || (!testId && !contentId) || !dueDate || points == null) {
+    if (!title || (!testId && !contentId && !testAssetId) || !dueDate || points == null) {
       return res.status(400).json({
         error:
-          'title, (testId veya contentId), dueDate ve points alanları zorunludur',
+          'title, (testId veya contentId veya testAssetId), dueDate ve points alanları zorunludur',
       });
     }
 
-    let studentIds: string[] = [];
-    if (classId) {
+    let targetStudentIds: string[] = [];
+    if (Array.isArray(requestedStudentIds) && requestedStudentIds.length > 0) {
+      targetStudentIds = requestedStudentIds.map((x) => String(x));
+    } else if (classId) {
       const classStudents = await prisma.classGroupStudent.findMany({
         where: { classGroupId: classId },
         select: { studentId: true },
       });
-      studentIds = classStudents.map((s) => s.studentId);
+      targetStudentIds = classStudents.map((s) => s.studentId);
     } else {
       const allStudents = await prisma.user.findMany({
         where: { role: 'student' },
         select: { id: true },
       });
-      studentIds = allStudents.map((s) => s.id);
+      targetStudentIds = allStudents.map((s) => s.id);
     }
 
     const assignment = await prisma.assignment.create({
@@ -836,11 +1330,17 @@ router.post(
         description,
         testId: testId ?? undefined,
         contentId: contentId ?? undefined,
+        testAssetId: testAssetId ?? undefined,
         classId: classId ?? undefined,
         dueDate: new Date(dueDate),
         points: points ?? 100,
+        timeLimitMinutes:
+          typeof timeLimitMinutes === 'number' && timeLimitMinutes > 0
+            ? Math.round(timeLimitMinutes)
+            : undefined,
+        createdByTeacherId: teacherId,
         students: {
-          create: studentIds.map((studentId) => ({ studentId })),
+          create: targetStudentIds.map((studentId) => ({ studentId })),
         },
       },
       include: { students: { select: { studentId: true } } },
@@ -851,10 +1351,12 @@ router.post(
       description: assignment.description ?? undefined,
       testId: assignment.testId ?? undefined,
       contentId: assignment.contentId ?? undefined,
+      testAssetId: (assignment as any).testAssetId ?? undefined,
       classId: assignment.classId ?? undefined,
       assignedStudentIds: assignment.students.map((s) => s.studentId),
       dueDate: assignment.dueDate.toISOString(),
       points: assignment.points,
+      timeLimitMinutes: (assignment as any).timeLimitMinutes ?? undefined,
     });
   },
 );
@@ -874,10 +1376,12 @@ router.get(
         description: a.description ?? undefined,
         testId: a.testId ?? undefined,
         contentId: a.contentId ?? undefined,
+        testAssetId: (a as any).testAssetId ?? undefined,
         classId: a.classId ?? undefined,
         assignedStudentIds: a.students.map((s) => s.studentId),
         dueDate: a.dueDate.toISOString(),
         points: a.points,
+        timeLimitMinutes: (a as any).timeLimitMinutes ?? undefined,
       })),
     );
   },
@@ -921,15 +1425,55 @@ router.get(
   },
 );
 
+// Mesajı okundu olarak işaretle (öğretmen)
+router.put(
+  '/messages/:id/read',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const messageId = String(req.params.id);
+    const teacherId = req.user!.id;
+
+    const message = await prisma.message.findUnique({ where: { id: messageId } });
+
+    if (!message) {
+      return res.status(404).json({ error: 'Mesaj bulunamadı' });
+    }
+
+    // Sadece kendisine gelen mesajı okundu yapabilsin
+    if (message.toUserId !== teacherId) {
+      return res.status(403).json({ error: 'Bu mesajı okuma yetkiniz yok' });
+    }
+
+    const updated = await prisma.message.update({
+      where: { id: messageId },
+      data: { read: true, readAt: new Date() },
+    });
+
+    return res.json({
+      id: updated.id,
+      fromUserId: updated.fromUserId,
+      toUserId: updated.toUserId,
+      studentId: updated.studentId ?? undefined,
+      subject: updated.subject ?? undefined,
+      text: updated.text,
+      read: updated.read,
+      readAt: updated.readAt?.toISOString(),
+      createdAt: updated.createdAt.toISOString(),
+    });
+  },
+);
+
 // Yeni mesaj gönderme
 router.post(
   '/messages',
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res) => {
     const fromUserId = req.user!.id;
-    const { toUserId, text } = req.body as {
+    const { toUserId, text, studentId, subject } = req.body as {
       toUserId?: string;
       text?: string;
+      studentId?: string;
+      subject?: string;
     };
 
     if (!toUserId || !text) {
@@ -939,7 +1483,14 @@ router.post(
     }
 
     const message = await prisma.message.create({
-      data: { fromUserId, toUserId, text, read: false },
+      data: {
+        fromUserId,
+        toUserId,
+        text,
+        studentId: studentId ?? null,
+        subject: subject ?? null,
+        read: false,
+      },
     });
 
     await prisma.notification.create({
@@ -947,7 +1498,9 @@ router.post(
         userId: toUserId,
         type: 'message_received',
         title: 'Yeni mesajınız var',
-        body: 'Öğretmenden yeni bir mesaj aldınız.',
+        body: subject
+          ? `Öğretmenden "${subject}" konusunda yeni bir mesaj aldınız.`
+          : 'Öğretmenden yeni bir mesaj aldınız.',
         read: false,
         relatedEntityType: 'message',
         relatedEntityId: message.id,

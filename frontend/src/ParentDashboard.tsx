@@ -4,6 +4,9 @@ import { useAuth } from './AuthContext';
 import {
   getParentCalendar,
   getParentChildSummary,
+  getParentChildFeedback,
+  getParentTeachers,
+  createParentComplaint,
   getParentConversations,
   getParentDashboard,
   getParentMeetings,
@@ -19,12 +22,14 @@ import {
   type ParentMeeting,
   type ParentNotification,
   type StudentDetailSummary,
+  type TeacherFeedbackItem,
+  type TeacherListItem,
 } from './api';
 import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import type { SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 
-type ParentTab = 'overview' | 'calendar' | 'messages';
+type ParentTab = 'overview' | 'calendar' | 'messages' | 'feedback' | 'complaints';
 
 const getWeekRange = () => {
   const now = new Date();
@@ -62,6 +67,7 @@ export const ParentDashboard: React.FC = () => {
   const meetingsState = useApiState<ParentMeeting[]>([]);
   const conversationsState = useApiState<Conversation[]>([]);
   const messagesState = useApiState<Message[]>([]);
+  const feedbackState = useApiState<TeacherFeedbackItem[]>([]);
 
   useEffect(() => {
     if (!token) return;
@@ -79,6 +85,12 @@ export const ParentDashboard: React.FC = () => {
     if (!token || !selectedStudentId) return;
     summaryState.run(() => getParentChildSummary(token, selectedStudentId)).catch(() => {});
   }, [token, selectedStudentId]);
+
+  useEffect(() => {
+    if (!token || !selectedStudentId) return;
+    if (activeTab !== 'feedback') return;
+    feedbackState.run(() => getParentChildFeedback(token, selectedStudentId)).catch(() => {});
+  }, [token, selectedStudentId, activeTab]);
 
   useEffect(() => {
     if (!token) return;
@@ -117,11 +129,20 @@ export const ParentDashboard: React.FC = () => {
   const activeConversation = conversationsState.data?.find((conv) => conv.userId === selectedConversationId);
 
   const handleReply = async () => {
-    if (!token || !activeConversation || !replyText.trim()) return;
+    if (!token || !activeConversation) return;
+
+    // Eğer yanıt metni boşsa, bu çağrı "Ara" isteği olarak yorumlanır
+    const text = replyText.trim() || 'Veli sizinle canlı görüşme talep ediyor.';
+    const subject = replyText.trim()
+      ? undefined
+      : 'Canlı görüşme talebi';
+
     const message = await sendParentMessage(token, {
       toUserId: activeConversation.userId,
       studentId: activeConversation.studentId,
-      text: replyText.trim(),
+      text,
+      // Öğretmene anlamlı bir başlık iletilsin
+      subject,
     });
     messagesState.setData([...(messagesState.data ?? []), message]);
     setReplyText('');
@@ -162,6 +183,22 @@ export const ParentDashboard: React.FC = () => {
         active: activeTab === 'messages',
         onClick: () => setActiveTab('messages'),
       },
+      {
+        id: 'feedback',
+        label: 'Değerlendirme',
+        icon: <BookOpen size={18} />,
+        description: 'Öğretmen notu',
+        active: activeTab === 'feedback',
+        onClick: () => setActiveTab('feedback'),
+      },
+      {
+        id: 'complaints',
+        label: 'Şikayet/Öneri',
+        icon: <ClipboardList size={18} />,
+        description: 'Admin',
+        active: activeTab === 'complaints',
+        onClick: () => setActiveTab('complaints'),
+      },
     ],
     [activeTab, conversationsState.data],
   );
@@ -170,8 +207,8 @@ export const ParentDashboard: React.FC = () => {
     <DashboardLayout
       accent="emerald"
       brand="SKYTECH"
-      tagline={selectedChild?.studentName ?? 'Veli Paneli'}
-      title="Veli Paneli"
+      tagline={selectedChild?.studentName ?? 'Veli Yönetim Paneli'}
+      title="Veli Yönetim Paneli"
       subtitle="Akademik performans, takvim ve mesajları gerçek zamanlı takip edin."
       status={{
         label: selectedChild?.status === 'active' ? 'Aktif - Okulda' : 'Pasif',
@@ -211,9 +248,128 @@ export const ParentDashboard: React.FC = () => {
           error={messagesState.error}
         />
       )}
+      {activeTab === 'feedback' && (
+        <ParentFeedback items={feedbackState.data ?? []} loading={feedbackState.loading} error={feedbackState.error} />
+      )}
+      {activeTab === 'complaints' && <ParentComplaints token={token} />}
     </DashboardLayout>
   );
 };
+
+const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
+  const [teachers, setTeachers] = useState<TeacherListItem[]>([]);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
+  const [form, setForm] = useState<{ aboutTeacherId: string; subject: string; body: string }>({
+    aboutTeacherId: '',
+    subject: '',
+    body: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    setLoadingTeachers(true);
+    getParentTeachers(token)
+      .then(setTeachers)
+      .catch(() => {})
+      .finally(() => setLoadingTeachers(false));
+  }, [token]);
+
+  const handleSubmit = async () => {
+    if (!token) return;
+    setError(null);
+    setSuccess(null);
+    const subject = form.subject.trim();
+    const body = form.body.trim();
+    if (!subject || !body) {
+      setError('Lütfen konu ve açıklama girin.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await createParentComplaint(token, {
+        subject,
+        body,
+        aboutTeacherId: form.aboutTeacherId || undefined,
+      });
+      setForm({ aboutTeacherId: '', subject: '', body: '' });
+      setSuccess('Gönderildi. Admin paneline iletildi.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Gönderilemedi.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <GlassCard title="Şikayet / Öneri" subtitle="Admin’e iletilir (isteğe bağlı öğretmen seçimi)">
+      <div style={{ display: 'grid', gap: '0.75rem' }}>
+        <select
+          value={form.aboutTeacherId}
+          onChange={(e) => setForm((p) => ({ ...p, aboutTeacherId: e.target.value }))}
+          disabled={loadingTeachers}
+        >
+          <option value="">{loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}</option>
+          {teachers.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Konu"
+          value={form.subject}
+          onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
+        />
+        <textarea
+          placeholder="Açıklama"
+          value={form.body}
+          onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
+          rows={6}
+          style={{ resize: 'vertical' }}
+        />
+        {error && <div className="error">{error}</div>}
+        {success && <div style={{ color: '#10b981', fontSize: '0.9rem' }}>{success}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" className="primary-btn" onClick={() => handleSubmit().catch(() => {})} disabled={saving}>
+            {saving ? 'Gönderiliyor...' : 'Gönder'}
+          </button>
+        </div>
+      </div>
+    </GlassCard>
+  );
+};
+
+const ParentFeedback: React.FC<{
+  items: TeacherFeedbackItem[];
+  loading: boolean;
+  error: string | null;
+}> = ({ items, loading, error }) => (
+  <GlassCard title="Öğretmen Değerlendirmeleri" subtitle="Sadece veli görebilir">
+    {loading && <div className="empty-state">Yükleniyor...</div>}
+    {error && <div className="error">{error}</div>}
+    {!loading && items.length === 0 && <div className="empty-state">Henüz değerlendirme yok.</div>}
+    <div className="list-stack">
+      {items.map((f) => (
+        <div key={f.id} className="list-row" style={{ alignItems: 'flex-start' }}>
+          <div style={{ flex: 1 }}>
+            <strong style={{ display: 'block' }}>{f.title}</strong>
+            <small style={{ display: 'block', marginTop: '0.15rem' }}>
+              {f.teacherName} · {new Date(f.createdAt).toLocaleString('tr-TR')}
+            </small>
+            <div style={{ marginTop: '0.45rem', whiteSpace: 'pre-wrap', fontSize: '0.9rem', lineHeight: 1.5 }}>
+              {f.content}
+            </div>
+          </div>
+          <TagChip label={f.type} tone="info" />
+        </div>
+      ))}
+    </div>
+  </GlassCard>
+);
 
 const ParentOverview: React.FC<{
   summary: StudentDetailSummary | null;
@@ -392,6 +548,7 @@ const ParentMessages: React.FC<{
   error,
 }) => {
   const activeConversation = conversations.find((conv) => conv.userId === selectedConversationId);
+  const latestMessage = messages[messages.length - 1];
 
   return (
     <div className="dual-grid">
@@ -421,10 +578,18 @@ const ParentMessages: React.FC<{
 
       <GlassCard
         title={activeConversation?.userName ?? 'Mesaj Detayı'}
-        subtitle="Son mesajlar"
+        subtitle={
+          activeConversation?.studentName
+            ? `İlgili öğrenci: ${activeConversation.studentName}`
+            : 'Son mesajlar'
+        }
         actions={
           <>
-            <button type="button" className="ghost-btn">
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onReply}
+            >
               <PhoneCall size={16} /> Ara
             </button>
             <button type="button" className="primary-btn" onClick={onReply}>
@@ -436,6 +601,26 @@ const ParentMessages: React.FC<{
         {loading && <div className="empty-state">Mesajlar yükleniyor...</div>}
         {error && <div className="error">{error}</div>}
         {!loading && messages.length === 0 && <div className="empty-state">Mesaj bulunamadı.</div>}
+        {latestMessage && (
+          <div
+            className="list-row"
+            style={{
+              marginBottom: '0.75rem',
+              border: '1px solid var(--color-border-subtle)',
+              background: 'var(--color-surface)',
+            }}
+          >
+            <div>
+              <strong style={{ display: 'block' }}>
+                {latestMessage.subject || 'Son mesaj'}
+              </strong>
+              <small style={{ display: 'block', marginTop: '0.25rem' }}>
+                {latestMessage.text}
+              </small>
+            </div>
+            <span>{formatTime(latestMessage.createdAt)}</span>
+          </div>
+        )}
         <div className="list-stack">
           {messages.map((message) => (
             <div className="list-row" key={message.id}>

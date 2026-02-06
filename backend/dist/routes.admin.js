@@ -224,5 +224,70 @@ router.post('/parents/:id/unassign-student', (0, auth_1.authenticate)('admin'), 
     });
     return res.json(toParent(updated, updated.parentStudents.map((ps) => ps.studentId)));
 });
+// Şikayet / öneriler (öğrenci + veli)
+router.get('/complaints', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const list = await db_1.prisma.complaint.findMany({
+        where: status ? { status: status } : undefined,
+        include: {
+            fromUser: { select: { id: true, name: true, email: true, role: true } },
+            aboutTeacher: { select: { id: true, name: true, email: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+    });
+    return res.json(list.map((c) => {
+        var _a, _b, _c;
+        return ({
+            id: c.id,
+            fromRole: c.fromRole,
+            fromUser: c.fromUser,
+            aboutTeacher: (_a = c.aboutTeacher) !== null && _a !== void 0 ? _a : undefined,
+            subject: c.subject,
+            body: c.body,
+            status: c.status,
+            createdAt: c.createdAt.toISOString(),
+            reviewedAt: (_b = c.reviewedAt) === null || _b === void 0 ? void 0 : _b.toISOString(),
+            closedAt: (_c = c.closedAt) === null || _c === void 0 ? void 0 : _c.toISOString(),
+        });
+    }));
+});
+router.put('/complaints/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    var _a, _b, _c, _d, _e;
+    const id = String(req.params.id);
+    const { status } = req.body;
+    if (!status) {
+        return res.status(400).json({ error: 'status zorunludur (open|reviewed|closed)' });
+    }
+    const existing = await db_1.prisma.complaint.findUnique({ where: { id } });
+    if (!existing) {
+        return res.status(404).json({ error: 'Kayıt bulunamadı' });
+    }
+    const now = new Date();
+    const updated = await db_1.prisma.complaint.update({
+        where: { id },
+        data: {
+            status: status,
+            reviewedAt: status === 'reviewed' ? ((_a = existing.reviewedAt) !== null && _a !== void 0 ? _a : now) : existing.reviewedAt,
+            closedAt: status === 'closed' ? ((_b = existing.closedAt) !== null && _b !== void 0 ? _b : now) : existing.closedAt,
+        },
+        include: {
+            fromUser: { select: { id: true, name: true, email: true, role: true } },
+            aboutTeacher: { select: { id: true, name: true, email: true, role: true } },
+        },
+    });
+    return res.json({
+        id: updated.id,
+        fromRole: updated.fromRole,
+        fromUser: updated.fromUser,
+        aboutTeacher: (_c = updated.aboutTeacher) !== null && _c !== void 0 ? _c : undefined,
+        subject: updated.subject,
+        body: updated.body,
+        status: updated.status,
+        createdAt: updated.createdAt.toISOString(),
+        reviewedAt: (_d = updated.reviewedAt) === null || _d === void 0 ? void 0 : _d.toISOString(),
+        closedAt: (_e = updated.closedAt) === null || _e === void 0 ? void 0 : _e.toISOString(),
+    });
+});
 exports.default = router;
 //# sourceMappingURL=routes.admin.js.map

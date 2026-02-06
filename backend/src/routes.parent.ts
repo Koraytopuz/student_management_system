@@ -747,6 +747,19 @@ router.get(
   },
 );
 
+// Velinin iletişim kurabileceği öğretmen listesi (şikayet/öneri seçimi için de kullanılabilir)
+router.get(
+  '/teachers',
+  authenticate('parent'),
+  async (_req: AuthenticatedRequest, res) => {
+    const teachersData = await prisma.user.findMany({
+      where: { role: 'teacher' },
+      select: { id: true, name: true, email: true },
+    });
+    return res.json(teachersData);
+  },
+);
+
 // Mesaj gönder
 router.post('/messages', authenticate('parent'), async (req, res) => {
   const parentId = (req as AuthenticatedRequest).user!.id;
@@ -1632,6 +1645,68 @@ router.get(
       startDate: startDate.toISOString(),
       endDate: endDate.toISOString(),
       viewType: req.query.viewType || 'month',
+    });
+  },
+);
+
+// Şikayet / öneri (admin'e)
+router.post(
+  '/complaints',
+  authenticate('parent'),
+  async (req: AuthenticatedRequest, res) => {
+    const parentId = req.user!.id;
+    const { subject, body, aboutTeacherId } = req.body as {
+      subject?: string;
+      body?: string;
+      aboutTeacherId?: string;
+    };
+
+    if (!subject || !body) {
+      return res.status(400).json({ error: 'subject ve body alanları zorunludur' });
+    }
+
+    if (aboutTeacherId) {
+      const teacher = await prisma.user.findFirst({ where: { id: aboutTeacherId, role: 'teacher' } });
+      if (!teacher) {
+        return res.status(404).json({ error: 'Öğretmen bulunamadı' });
+      }
+    }
+
+    const created = await prisma.complaint.create({
+      data: {
+        fromRole: 'parent',
+        fromUserId: parentId,
+        aboutTeacherId: aboutTeacherId ?? undefined,
+        subject: subject.trim(),
+        body: body.trim(),
+        status: 'open',
+      },
+    });
+
+    const admins = await prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
+    if (admins.length > 0) {
+      await prisma.notification.createMany({
+        data: admins.map((a) => ({
+          userId: a.id,
+          type: 'complaint_created' as any,
+          title: 'Yeni şikayet/öneri',
+          body: 'Veliden yeni bir şikayet/öneri gönderildi.',
+          read: false,
+          relatedEntityType: 'complaint' as any,
+          relatedEntityId: created.id,
+        })),
+      });
+    }
+
+    return res.status(201).json({
+      id: created.id,
+      fromRole: created.fromRole,
+      fromUserId: created.fromUserId,
+      aboutTeacherId: created.aboutTeacherId ?? undefined,
+      subject: created.subject,
+      body: created.body,
+      status: created.status,
+      createdAt: created.createdAt.toISOString(),
     });
   },
 );

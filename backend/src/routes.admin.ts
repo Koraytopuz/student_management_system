@@ -299,4 +299,69 @@ router.post(
   },
 );
 
+// Şikayet / öneriler (öğrenci + veli)
+router.get('/complaints', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const status = req.query.status ? String(req.query.status) : undefined;
+  const list = await prisma.complaint.findMany({
+    where: status ? { status: status as any } : undefined,
+    include: {
+      fromUser: { select: { id: true, name: true, email: true, role: true } },
+      aboutTeacher: { select: { id: true, name: true, email: true, role: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+  return res.json(
+    list.map((c) => ({
+      id: c.id,
+      fromRole: c.fromRole,
+      fromUser: c.fromUser,
+      aboutTeacher: c.aboutTeacher ?? undefined,
+      subject: c.subject,
+      body: c.body,
+      status: c.status,
+      createdAt: c.createdAt.toISOString(),
+      reviewedAt: c.reviewedAt?.toISOString(),
+      closedAt: c.closedAt?.toISOString(),
+    })),
+  );
+});
+
+router.put('/complaints/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const id = String(req.params.id);
+  const { status } = req.body as { status?: 'open' | 'reviewed' | 'closed' };
+  if (!status) {
+    return res.status(400).json({ error: 'status zorunludur (open|reviewed|closed)' });
+  }
+  const existing = await prisma.complaint.findUnique({ where: { id } });
+  if (!existing) {
+    return res.status(404).json({ error: 'Kayıt bulunamadı' });
+  }
+  const now = new Date();
+  const updated = await prisma.complaint.update({
+    where: { id },
+    data: {
+      status: status as any,
+      reviewedAt: status === 'reviewed' ? (existing.reviewedAt ?? now) : existing.reviewedAt,
+      closedAt: status === 'closed' ? (existing.closedAt ?? now) : existing.closedAt,
+    },
+    include: {
+      fromUser: { select: { id: true, name: true, email: true, role: true } },
+      aboutTeacher: { select: { id: true, name: true, email: true, role: true } },
+    },
+  });
+  return res.json({
+    id: updated.id,
+    fromRole: updated.fromRole,
+    fromUser: updated.fromUser,
+    aboutTeacher: updated.aboutTeacher ?? undefined,
+    subject: updated.subject,
+    body: updated.body,
+    status: updated.status,
+    createdAt: updated.createdAt.toISOString(),
+    reviewedAt: updated.reviewedAt?.toISOString(),
+    closedAt: updated.closedAt?.toISOString(),
+  });
+});
+
 export default router;
