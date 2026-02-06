@@ -20,7 +20,7 @@ import { buildRoomName, createLiveKitToken, getLiveKitUrl } from './livekit';
 const router = express.Router();
 
 const USER_CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim();
-const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 const TEACHER_SYSTEM_PROMPT =
   "Rolün: 20 yıllık deneyime sahip, soru bankası yazarlığı yapmış bir başöğretmen asistanı. Görevin: Kullanıcı (Öğretmen) sana 'Sınıf Seviyesi', 'Konu', 'Soru Sayısı' ve 'Zorluk Derecesi' (Kolay/Orta/Zor) verecek. Sen bu verilere göre hatasız bir test hazırlayacaksın.\n\n" +
   'Kurallar:\n\n' +
@@ -115,6 +115,16 @@ function toGeminiContents(history: AiChatMessage[], latest: AiChatMessage) {
 async function generatePdfFromText(text: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
+    const fontPath = path.join(__dirname, 'assets', 'fonts', 'arial.ttf');
+
+    // Check if font exists, otherwise fallback (though we expect it to exist now)
+    const fs = require('fs');
+    if (fs.existsSync(fontPath)) {
+      doc.font(fontPath);
+    } else {
+      console.warn('Custom font not found at', fontPath, 'falling back to default');
+    }
+
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -188,8 +198,8 @@ router.get(
       recentResults.length === 0
         ? 0
         : Math.round(
-            recentResults.reduce((sum, r) => sum + r.scorePercent, 0) / recentResults.length,
-          );
+          recentResults.reduce((sum, r) => sum + r.scorePercent, 0) / recentResults.length,
+        );
 
     const testsAssignedThisWeek = await prisma.assignment.count({
       where: {
@@ -272,14 +282,33 @@ router.post(
 
       for (const model of modelCandidates) {
         try {
-          const response = await genAi.models.generateContent({
-            model,
-            contents: [...systemInstruction, ...contents],
-            generationConfig: {
-              temperature: 0.4,
-              maxOutputTokens: 768,
-            },
-          } as Parameters<typeof genAi.models.generateContent>[0]);
+          // Retry logic wrapper
+          const generateContentWithRetry = async (
+            modelName: string,
+            contents: any[],
+            retries = 3,
+            delay = 1000
+          ): Promise<any> => {
+            try {
+              return await genAi.models.generateContent({
+                model: modelName,
+                contents,
+                generationConfig: {
+                  temperature: 0.4,
+                  maxOutputTokens: 768,
+                },
+              } as Parameters<typeof genAi.models.generateContent>[0]);
+            } catch (err: any) {
+              if (retries > 0 && (err.status === 503 || err.message?.includes('503'))) {
+                console.warn(`Model ${modelName} overloaded (503). Retrying in ${delay}ms...`);
+                await new Promise((resolve) => setTimeout(resolve, delay));
+                return generateContentWithRetry(modelName, contents, retries - 1, delay * 2);
+              }
+              throw err;
+            }
+          };
+
+          const response = await generateContentWithRetry(model, [...systemInstruction, ...contents]);
 
           const reply = extractResponseText(response);
           if (!reply) {
@@ -308,10 +337,10 @@ router.post(
             model,
             attachment: attachment
               ? {
-                  filename: attachment.filename,
-                  mimeType: attachment.mimeType,
-                  data: attachment.buffer.toString('base64'),
-                }
+                filename: attachment.filename,
+                mimeType: attachment.mimeType,
+                data: attachment.buffer.toString('base64'),
+              }
               : undefined,
           });
         } catch (error) {
@@ -498,6 +527,9 @@ router.get(
       points: a.points,
     }));
 
+
+
+
     const resultsForApi = studentResults.map((r) => ({
       id: r.id,
       assignmentId: r.assignmentId,
@@ -540,28 +572,33 @@ router.get(
   '/contents',
   authenticate('teacher'),
   async (_req: AuthenticatedRequest, res) => {
-    const list = await prisma.contentItem.findMany({
-      include: {
-        classGroups: { select: { classGroupId: true } },
-        students: { select: { studentId: true } },
-      },
-    });
-    return res.json(
-      list.map((c) => ({
-        id: c.id,
-        title: c.title,
-        description: c.description ?? undefined,
-        type: c.type,
-        subjectId: c.subjectId,
-        topic: c.topic,
-        gradeLevel: c.gradeLevel,
-        durationMinutes: c.durationMinutes ?? undefined,
-        tags: c.tags,
-        url: c.url,
-        assignedToClassIds: c.classGroups.map((g) => g.classGroupId),
-        assignedToStudentIds: c.students.map((s) => s.studentId),
-      })),
-    );
+    try {
+      const list = await prisma.contentItem.findMany({
+        include: {
+          classGroups: { select: { classGroupId: true } },
+          students: { select: { studentId: true } },
+        },
+      });
+      return res.json(
+        list.map((c) => ({
+          id: c.id,
+          title: c.title,
+          description: c.description ?? undefined,
+          type: c.type,
+          subjectId: c.subjectId,
+          topic: c.topic,
+          gradeLevel: c.gradeLevel,
+          durationMinutes: c.durationMinutes ?? undefined,
+          tags: c.tags,
+          url: c.url,
+          assignedToClassIds: c.classGroups.map((g) => g.classGroupId),
+          assignedToStudentIds: c.students.map((s) => s.studentId),
+        })),
+      );
+    } catch (error) {
+      console.error('İçerik listesi alınırken hata:', error);
+      return res.status(500).json({ error: 'İçerik listesi alınamadı' });
+    }
   },
 );
 
@@ -613,70 +650,78 @@ router.post(
   '/contents',
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res) => {
-    const {
-      title,
-      description,
-      type,
-      subjectId,
-      topic,
-      gradeLevel,
-      durationMinutes,
-      tags,
-      url,
-    } = req.body as {
-      title?: string;
-      description?: string;
-      type?: string;
-      subjectId?: string;
-      topic?: string;
-      gradeLevel?: string;
-      durationMinutes?: number;
-      tags?: string[] | string;
-      url?: string;
-    };
-
-    if (!title || !type || !subjectId || !topic || !gradeLevel || !url) {
-      return res.status(400).json({
-        error:
-          'title, type, subjectId, topic, gradeLevel ve url alanları zorunludur',
-      });
-    }
-
-    const tagArray: string[] =
-      typeof tags === 'string'
-        ? tags
-            .split(',')
-            .map((t) => t.trim())
-            .filter(Boolean)
-        : tags ?? [];
-
-    const content = await prisma.contentItem.create({
-      data: {
+    try {
+      const {
         title,
         description,
-        type: type as 'video' | 'audio' | 'document',
+        type,
         subjectId,
         topic,
         gradeLevel,
         durationMinutes,
-        tags: tagArray,
+        tags,
         url,
-      },
-    });
-    return res.status(201).json({
-      id: content.id,
-      title: content.title,
-      description: content.description ?? undefined,
-      type: content.type,
-      subjectId: content.subjectId,
-      topic: content.topic,
-      gradeLevel: content.gradeLevel,
-      durationMinutes: content.durationMinutes ?? undefined,
-      tags: content.tags,
-      url: content.url,
-      assignedToClassIds: [],
-      assignedToStudentIds: [],
-    });
+      } = req.body as {
+        title?: string;
+        description?: string;
+        type?: string;
+        subjectId?: string;
+        topic?: string;
+        gradeLevel?: string;
+        durationMinutes?: number;
+        tags?: string[] | string;
+        url?: string;
+      };
+
+      if (!title || !type || !subjectId || !topic || !gradeLevel || !url) {
+        return res.status(400).json({
+          error:
+            'title, type, subjectId, topic, gradeLevel ve url alanları zorunludur',
+        });
+      }
+
+      const tagArray: string[] =
+        typeof tags === 'string'
+          ? tags
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean)
+          : tags ?? [];
+
+      const content = await prisma.contentItem.create({
+        data: {
+          title,
+          description,
+          type: type as 'video' | 'audio' | 'document',
+          subjectId,
+          topic,
+          gradeLevel,
+          durationMinutes,
+          tags: tagArray,
+          url,
+        },
+      });
+      return res.status(201).json({
+        id: content.id,
+        title: content.title,
+        description: content.description ?? undefined,
+        type: content.type,
+        subjectId: content.subjectId,
+        topic: content.topic,
+        gradeLevel: content.gradeLevel,
+        durationMinutes: content.durationMinutes ?? undefined,
+        tags: content.tags,
+        url: content.url,
+        assignedToClassIds: [],
+        assignedToStudentIds: [],
+      });
+    } catch (error) {
+      console.error('İçerik oluşturma hatası:', error);
+      return res.status(500).json({
+        error: 'İçerik oluşturulurken hata oluştu',
+        details: error instanceof Error ? error.message : String(error)
+      });
+    }
   },
 );
 
@@ -690,14 +735,23 @@ router.post(
     if (!uploadedFile) {
       return res.status(400).json({ error: 'Video dosyası gereklidir' });
     }
-    // Dosyayı anlamlı bir isimle yeniden adlandır ve frontend/public/videos altına taşı
-    const original = uploadedFile.originalname || 'video.mp4';
-    const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const targetPath = path.join(publicVideosDir, `${Date.now()}-${safeName}`);
-    fs.renameSync(uploadedFile.path, targetPath);
 
-    const relativeUrl = `/videos/${path.basename(targetPath)}`;
-    return res.status(201).json({ url: relativeUrl });
+    try {
+      // Dosyayı anlamlı bir isimle yeniden adlandır ve frontend/public/videos altına taşı
+      const original = uploadedFile.originalname || 'video.mp4';
+      const safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const targetPath = path.join(publicVideosDir, `${Date.now()}-${safeName}`);
+
+      // fs.renameSync yerine copy ve unlink kullanarak olası EXDEV (cross-device) hatalarını önle
+      fs.copyFileSync(uploadedFile.path, targetPath);
+      fs.unlinkSync(uploadedFile.path);
+
+      const relativeUrl = `/videos/${path.basename(targetPath)}`;
+      return res.status(201).json({ url: relativeUrl });
+    } catch (error) {
+      console.error('Video yükleme hatası:', error);
+      return res.status(500).json({ error: 'Video yüklenirken sunucu hatası oluştu' });
+    }
   },
 );
 
@@ -1346,6 +1400,43 @@ router.get(
       endDate: endDate.toISOString(),
       viewType: req.query.viewType || 'month',
     });
+  },
+);
+
+
+// Canlı ders için ödev durumları
+router.get(
+  '/assignments/live-status',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+
+    // Aktif ödevleri bul
+    const assignments = await prisma.assignmentStudent.findMany({
+      where: {
+        assignment: {
+          dueDate: { gte: new Date() }
+        }
+      },
+      select: {
+        assignmentId: true,
+        studentId: true,
+        // @ts-ignore: Prisma types sync issue
+        status: true,
+        completedAt: true,
+        assignment: {
+          select: { title: true, dueDate: true }
+        }
+      }
+    });
+
+    return res.json((assignments as any[]).map(a => ({
+      assignmentId: a.assignmentId,
+      studentId: a.studentId,
+      status: a.status,
+      completedAt: a.completedAt,
+      title: a.assignment.title
+    })));
   },
 );
 

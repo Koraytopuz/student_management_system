@@ -13,6 +13,7 @@ const fs_1 = __importDefault(require("fs"));
 const multer_1 = __importDefault(require("multer"));
 const auth_1 = require("./auth");
 const db_1 = require("./db");
+const livekit_1 = require("./livekit");
 const router = express_1.default.Router();
 const USER_CONFIGURED_GEMINI_MODEL = (_a = process.env.GEMINI_MODEL) === null || _a === void 0 ? void 0 : _a.trim();
 const DEFAULT_MODEL = 'gemini-3-flash-preview';
@@ -146,6 +147,7 @@ router.get('/dashboard', (0, auth_1.authenticate)('teacher'), async (req, res) =
             studentId: { in: teacherStudentIds },
             completedAt: { gte: last7Days },
         },
+        orderBy: { completedAt: 'asc' },
     });
     const averageScoreLast7Days = recentResults.length === 0
         ? 0
@@ -156,9 +158,29 @@ router.get('/dashboard', (0, auth_1.authenticate)('teacher'), async (req, res) =
             testId: { not: null },
         },
     });
+    // Son aktivitelerde öğrenci id ve test id yerine insan okunur isimler göster
+    const studentIdsForNames = [...new Set(recentResults.map((r) => r.studentId))];
+    const testIdsForTitles = [...new Set(recentResults.map((r) => r.testId))];
+    const [studentsForNames, testsForTitles] = await Promise.all([
+        db_1.prisma.user.findMany({
+            where: { id: { in: studentIdsForNames } },
+            select: { id: true, name: true },
+        }),
+        db_1.prisma.test.findMany({
+            where: { id: { in: testIdsForTitles } },
+            select: { id: true, title: true },
+        }),
+    ]);
+    const studentNameMap = new Map(studentsForNames.map((s) => [s.id, s.name]));
+    const testTitleMap = new Map(testsForTitles.map((t) => [t.id, t.title]));
     const recentActivity = recentResults
         .slice(-5)
-        .map((r) => `Öğrenci ${r.studentId} ${r.scorePercent}% skorla ${r.testId} testini tamamladı`);
+        .map((r) => {
+        var _a, _b;
+        const studentName = (_a = studentNameMap.get(r.studentId)) !== null && _a !== void 0 ? _a : 'Bilinmeyen Öğrenci';
+        const testTitle = (_b = testTitleMap.get(r.testId)) !== null && _b !== void 0 ? _b : 'Bilinmeyen Test';
+        return `Öğrenci ${studentName} ${r.scorePercent}% skorla "${testTitle}" testini tamamladı`;
+    });
     const summary = {
         totalStudents: teacherStudentIds.length,
         testsAssignedThisWeek,
@@ -714,13 +736,74 @@ router.get('/meetings', (0, auth_1.authenticate)('teacher'), async (req, res) =>
         meetingUrl: m.meetingUrl,
     })));
 });
+// Toplantı güncelleme
+router.put('/meetings/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const meetingId = String(req.params.id);
+    const existing = await db_1.prisma.meeting.findUnique({
+        where: { id: meetingId },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (existing.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu toplantıyı düzenleme yetkiniz yok' });
+    }
+    const { title, scheduledAt, durationMinutes, } = req.body;
+    if (!title && !scheduledAt && durationMinutes == null) {
+        return res.status(400).json({ error: 'Güncellenecek en az bir alan gönderilmelidir' });
+    }
+    const updateData = {};
+    if (title !== undefined)
+        updateData.title = title;
+    if (scheduledAt !== undefined)
+        updateData.scheduledAt = new Date(scheduledAt);
+    if (durationMinutes != null)
+        updateData.durationMinutes = durationMinutes;
+    const meeting = await db_1.prisma.meeting.update({
+        where: { id: meetingId },
+        data: updateData,
+        include: {
+            students: { select: { studentId: true } },
+            parents: { select: { parentId: true } },
+        },
+    });
+    return res.json({
+        id: meeting.id,
+        type: meeting.type,
+        title: meeting.title,
+        teacherId: meeting.teacherId,
+        studentIds: meeting.students.map((s) => s.studentId),
+        parentIds: meeting.parents.map((p) => p.parentId),
+        scheduledAt: meeting.scheduledAt.toISOString(),
+        durationMinutes: meeting.durationMinutes,
+        meetingUrl: meeting.meetingUrl,
+    });
+});
+// Toplantı silme
+router.delete('/meetings/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const meetingId = String(req.params.id);
+    const existing = await db_1.prisma.meeting.findUnique({
+        where: { id: meetingId },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (existing.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu toplantıyı silme yetkiniz yok' });
+    }
+    await db_1.prisma.meeting.delete({ where: { id: meetingId } });
+    // Frontend tarafında JSON bekleniyor, bu yüzden 200 + body döndürüyoruz
+    return res.json({ success: true });
+});
 // Yeni toplantı planlama
 router.post('/meetings', (0, auth_1.authenticate)('teacher'), async (req, res) => {
     const teacherId = req.user.id;
     const { type, title, studentIds, parentIds, scheduledAt, durationMinutes, meetingUrl, } = req.body;
-    if (!type || !title || !scheduledAt || !durationMinutes || !meetingUrl) {
+    if (!type || !title || !scheduledAt || !durationMinutes) {
         return res.status(400).json({
-            error: 'type, title, scheduledAt, durationMinutes ve meetingUrl alanları zorunludur',
+            error: 'type, title, scheduledAt ve durationMinutes alanları zorunludur',
         });
     }
     const meeting = await db_1.prisma.meeting.create({
@@ -730,7 +813,8 @@ router.post('/meetings', (0, auth_1.authenticate)('teacher'), async (req, res) =
             teacherId,
             scheduledAt: new Date(scheduledAt),
             durationMinutes,
-            meetingUrl,
+            // Harici link desteği ileride tekrar eklenecekse meetingUrl kullanılabilir.
+            meetingUrl: meetingUrl !== null && meetingUrl !== void 0 ? meetingUrl : '',
             students: {
                 create: (studentIds !== null && studentIds !== void 0 ? studentIds : []).map((studentId) => ({ studentId })),
             },
@@ -753,6 +837,47 @@ router.post('/meetings', (0, auth_1.authenticate)('teacher'), async (req, res) =
         scheduledAt: meeting.scheduledAt.toISOString(),
         durationMinutes: meeting.durationMinutes,
         meetingUrl: meeting.meetingUrl,
+    });
+});
+// Canlı dersi başlat (öğretmen)
+router.post('/meetings/:id/start-live', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const meetingId = String(req.params.id);
+    const meeting = await db_1.prisma.meeting.findUnique({
+        where: { id: meetingId },
+    });
+    if (!meeting) {
+        return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (meeting.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu toplantıyı başlatma yetkiniz yok' });
+    }
+    const roomId = (0, livekit_1.buildRoomName)(meeting.id);
+    // Öğretmenin başlattığı canlı ders için oda bilgisini kaydet
+    // Not: Prisma Client tipleri henüz roomId alanını içermiyor olabilir,
+    // bu nedenle tip hatasını önlemek için any ile daraltıyoruz.
+    const existingRoomId = meeting.roomId;
+    if (!existingRoomId) {
+        await db_1.prisma.meeting.update({
+            where: { id: meetingId },
+            data: { roomId },
+        });
+    }
+    const token = await (0, livekit_1.createLiveKitToken)({
+        roomName: roomId,
+        identity: teacherId,
+        name: req.user.name,
+        isTeacher: true,
+    });
+    // GEÇİCİ: LiveKit token inceleme
+    // eslint-disable-next-line no-console
+    console.log('[LIVEKIT_TOKEN]', token);
+    return res.json({
+        mode: 'internal',
+        provider: 'internal_webrtc',
+        url: (0, livekit_1.getLiveKitUrl)(),
+        roomId,
+        token,
     });
 });
 // Bildirimler
@@ -911,6 +1036,34 @@ router.get('/calendar', (0, auth_1.authenticate)('teacher'), async (req, res) =>
         endDate: endDate.toISOString(),
         viewType: req.query.viewType || 'month',
     });
+});
+// Canlı ders için ödev durumları
+router.get('/assignments/live-status', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    // Aktif ödevleri bul
+    const assignments = await db_1.prisma.assignmentStudent.findMany({
+        where: {
+            assignment: {
+                dueDate: { gte: new Date() }
+            }
+        },
+        select: {
+            assignmentId: true,
+            studentId: true,
+            status: true,
+            completedAt: true,
+            assignment: {
+                select: { title: true, dueDate: true }
+            }
+        }
+    });
+    return res.json(assignments.map(a => ({
+        assignmentId: a.assignmentId,
+        studentId: a.studentId,
+        status: a.status,
+        completedAt: a.completedAt,
+        title: a.assignment.title
+    })));
 });
 exports.default = router;
 //# sourceMappingURL=routes.teacher.js.map

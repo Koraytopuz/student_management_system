@@ -8,6 +8,7 @@ const express_1 = __importDefault(require("express"));
 const genai_1 = require("@google/genai");
 const auth_1 = require("./auth");
 const db_1 = require("./db");
+const livekit_1 = require("./livekit");
 const router = express_1.default.Router();
 const USER_CONFIGURED_GEMINI_MODEL = (_a = process.env.GEMINI_MODEL) === null || _a === void 0 ? void 0 : _a.trim();
 const DEFAULT_MODEL = 'gemini-3-flash-preview';
@@ -282,6 +283,88 @@ router.get('/assignments', (0, auth_1.authenticate)('student'), async (req, res)
             points: a.points,
         });
     }));
+});
+// Bekleyen ödevler (canlı ders için)
+router.get('/assignments/pending', (0, auth_1.authenticate)('student'), async (req, res) => {
+    const studentId = req.user.id;
+    const now = new Date();
+    const pendingAssignments = await db_1.prisma.assignmentStudent.findMany({
+        where: {
+            studentId,
+            status: 'pending',
+            assignment: {
+                dueDate: { gte: now }
+            }
+        },
+        include: {
+            assignment: {
+                select: {
+                    id: true,
+                    title: true,
+                    description: true,
+                    dueDate: true,
+                    points: true,
+                    testId: true,
+                    contentId: true
+                }
+            }
+        },
+        orderBy: {
+            assignment: {
+                dueDate: 'asc'
+            }
+        }
+    });
+    return res.json(pendingAssignments.map((as) => {
+        var _a, _b, _c;
+        return ({
+            id: as.assignment.id,
+            title: as.assignment.title,
+            description: (_a = as.assignment.description) !== null && _a !== void 0 ? _a : undefined,
+            dueDate: as.assignment.dueDate.toISOString(),
+            points: as.assignment.points,
+            testId: (_b = as.assignment.testId) !== null && _b !== void 0 ? _b : undefined,
+            contentId: (_c = as.assignment.contentId) !== null && _c !== void 0 ? _c : undefined,
+        });
+    }));
+});
+// Ödevi tamamla
+router.post('/assignments/:id/complete', (0, auth_1.authenticate)('student'), async (req, res) => {
+    var _a;
+    const studentId = req.user.id;
+    const assignmentId = String(req.params.id);
+    const { submittedInLiveClass } = req.body;
+    const assignmentStudent = await db_1.prisma.assignmentStudent.findUnique({
+        where: {
+            assignmentId_studentId: {
+                assignmentId,
+                studentId
+            }
+        }
+    });
+    if (!assignmentStudent) {
+        return res.status(404).json({ error: 'Ödev bulunamadı' });
+    }
+    const updated = await db_1.prisma.assignmentStudent.update({
+        where: {
+            assignmentId_studentId: {
+                assignmentId,
+                studentId
+            }
+        },
+        data: {
+            status: 'completed',
+            completedAt: new Date(),
+            submittedInLiveClass: submittedInLiveClass !== null && submittedInLiveClass !== void 0 ? submittedInLiveClass : false
+        }
+    });
+    return res.json({
+        success: true,
+        assignmentId: updated.assignmentId,
+        studentId: updated.studentId,
+        status: updated.status,
+        completedAt: (_a = updated.completedAt) === null || _a === void 0 ? void 0 : _a.toISOString()
+    });
 });
 // Görev detayı
 router.get('/assignments/:id', (0, auth_1.authenticate)('student'), async (req, res) => {
@@ -738,6 +821,43 @@ router.get('/meetings', (0, auth_1.authenticate)('student'), async (req, res) =>
         durationMinutes: m.durationMinutes,
         meetingUrl: m.meetingUrl,
     })));
+});
+// Canlı derse katıl (öğrenci)
+router.post('/meetings/:id/join-live', (0, auth_1.authenticate)('student'), async (req, res) => {
+    const studentId = req.user.id;
+    const meetingId = String(req.params.id);
+    const meeting = await db_1.prisma.meeting.findUnique({
+        where: { id: meetingId },
+        include: { students: { select: { studentId: true } } },
+    });
+    if (!meeting) {
+        return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    const isParticipant = meeting.students.some((s) => s.studentId === studentId);
+    if (!isParticipant) {
+        return res.status(403).json({ error: 'Bu toplantıya katılma yetkiniz yok' });
+    }
+    // Canlı dersin açılması sadece öğretmen tarafından yapılabilsin.
+    // Öğretmen yayını başlatmadıysa (roomId henüz yoksa) hata döndür.
+    if (!meeting.roomId) {
+        return res
+            .status(409)
+            .json({ error: 'Bu canlı ders henüz öğretmen tarafından başlatılmadı.' });
+    }
+    const roomId = meeting.roomId;
+    const token = await (0, livekit_1.createLiveKitToken)({
+        roomName: roomId,
+        identity: studentId,
+        name: req.user.name,
+        isTeacher: false,
+    });
+    return res.json({
+        mode: 'internal',
+        provider: 'internal_webrtc',
+        url: (0, livekit_1.getLiveKitUrl)(),
+        roomId,
+        token,
+    });
 });
 // Bildirimler
 router.get('/notifications', (0, auth_1.authenticate)('student'), async (req, res) => {

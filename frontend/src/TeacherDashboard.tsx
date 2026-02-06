@@ -459,6 +459,8 @@ export const TeacherDashboard: React.FC = () => {
       topic: contentDraft.topic,
       gradeLevel: contentDraft.gradeLevel,
       url,
+      description: contentDraft.topic || '', // Konu detayı açıklama olarak kullanılıyor
+      durationMinutes: 0, // Video süresi opsiyonel, varsayılan 0
     });
     setContents((prev) => [created, ...prev]);
     setContentDraft({ title: '', type: 'video', topic: '', gradeLevel: '', url: '' });

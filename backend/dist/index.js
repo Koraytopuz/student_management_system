@@ -13,6 +13,7 @@ const routes_teacher_1 = __importDefault(require("./routes.teacher"));
 const routes_student_1 = __importDefault(require("./routes.student"));
 const routes_parent_1 = __importDefault(require("./routes.parent"));
 const routes_admin_1 = __importDefault(require("./routes.admin"));
+// Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = 4000;

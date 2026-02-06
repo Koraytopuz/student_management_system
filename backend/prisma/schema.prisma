@@ -103,6 +103,12 @@ enum AlertStatus {
   dismissed
 }
 
+enum AssignmentStatus {
+  pending
+  completed
+  overdue
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
@@ -273,8 +279,12 @@ model Assignment {
 }
 
 model AssignmentStudent {
-  assignmentId String
-  studentId    String
+  assignmentId         String
+  studentId            String
+  status               AssignmentStatus @default(pending)
+  completedAt          DateTime?        @map("completed_at")
+  submittedInLiveClass Boolean          @default(false) @map("submitted_in_live_class")
+  
   assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   student      User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
