@@ -31,6 +31,14 @@ app.use((0, cors_1.default)({
         if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
             return callback(null, true);
         }
+        // Localtunnel ve ngrok demo tünelleri (URL her seferinde değişse bile)
+        if (origin.endsWith('.loca.lt') || origin.includes('ngrok-free.app') || origin.includes('ngrok-free.dev')) {
+            return callback(null, true);
+        }
+        // Vercel deployment'ları
+        if (origin.endsWith('.vercel.app')) {
+            return callback(null, true);
+        }
         if (allowedOrigins.length > 0 && allowedOrigins.includes(origin)) {
             return callback(null, true);
         }

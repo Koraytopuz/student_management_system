@@ -270,7 +270,7 @@ router.post('/ai/chat', (0, auth_1.authenticate)('teacher'), async (req, res) =>
     }
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        return res.status(500).json({ error: 'GEMINI_API_KEY ayarlı değil' });
+        return res.status(503).json({ error: 'Yapay zeka servisi şu an kullanılamıyor. Lütfen yönetici ile iletişime geçin.' });
     }
     const contents = toGeminiContents(history !== null && history !== void 0 ? history : [], { role: 'user', content: trimmed });
     const systemInstruction = [

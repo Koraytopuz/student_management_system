@@ -3,6 +3,7 @@ import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle
 import { useAuth } from './AuthContext';
 import {
   apiRequest,
+  getApiBaseUrl,
   getStudentAssignments,
   getStudentAssignmentDetail,
   getStudentCalendar,
@@ -83,11 +84,11 @@ const deriveStatus = (assignment: StudentAssignment): AssignmentStatus => {
 
 const resolveContentUrl = (url: string): string => {
   if (!url) return url;
-  // Backend yüklemeleri
+  // Backend yüklemeleri (uploads, solutions vb.) - API base kullan
   if (url.startsWith('/uploads')) {
-    return `http://localhost:4000${url}`;
+    return `${getApiBaseUrl()}${url}`;
   }
-  // Frontend public (pdfs vs.) veya mutlak URL
+  // Mutlak URL veya frontend public (/pdfs, /tests vb.)
   return url;
 };
 

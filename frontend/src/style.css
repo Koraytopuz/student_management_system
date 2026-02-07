@@ -234,11 +234,13 @@ a {
   align-items: center;
   justify-content: center;
   padding: 2rem 1rem;
+  box-sizing: border-box;
 }
 
 .login-card {
   width: 100%;
   max-width: 420px;
+  min-width: 0;
   background: rgba(255, 255, 255, 0.96);
   border-radius: 1.5rem;
   padding: 2rem 2.25rem 2.5rem;
@@ -246,18 +248,33 @@ a {
     0 22px 45px rgba(15, 23, 42, 0.22),
     0 0 0 1px rgba(148, 163, 184, 0.35);
   backdrop-filter: blur(18px);
+  box-sizing: border-box;
+}
+
+:root[data-theme='dark'] .login-card {
+  background: rgba(15, 23, 42, 0.96);
 }
 
 .login-card h1 {
   margin: 0 0 0.3rem;
-  font-size: 1.6rem;
+  font-size: clamp(1.25rem, 4.5vw, 1.6rem);
   color: #0f172a;
+  word-wrap: break-word;
+}
+
+:root[data-theme='dark'] .login-card h1 {
+  color: #f1f5f9;
 }
 
 .subtitle {
   margin: 0 0 1.5rem;
-  font-size: 0.95rem;
+  font-size: clamp(0.85rem, 2.5vw, 0.95rem);
   color: #6b7280;
+  line-height: 1.5;
+}
+
+:root[data-theme='dark'] .subtitle {
+  color: #94a3b8;
 }
 
 .role-selector {
@@ -1927,21 +1944,52 @@ button:disabled {
     padding-inline: 1rem;
   }
 
+  .login-layout {
+    padding: 1rem 0.75rem;
+    align-items: flex-start;
+    padding-top: 2rem;
+  }
+
   .login-card {
-    padding-inline: 1.5rem;
+    padding: 1.5rem 1.25rem 2rem;
+    border-radius: 1.25rem;
+  }
+
+  .login-card h1 {
+    font-size: 1.35rem;
+  }
+
+  .subtitle {
+    font-size: 0.9rem;
+    margin-bottom: 1.25rem;
   }
 
   .role-selector {
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(120px, 1fr);
-    overflow-x: auto;
-    padding: 0.25rem;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.4rem;
+    margin-bottom: 1.25rem;
   }
 
   .role-btn {
     white-space: nowrap;
     min-height: 44px;
-    padding: 0.6rem 1rem;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .form .field input,
+  .form .field input::placeholder {
+    font-size: 16px; /* iOS zoom önleme */
+  }
+
+  .form button {
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  .hint {
+    font-size: 0.75rem;
+    margin-top: 0.75rem;
   }
 
   .tabs {

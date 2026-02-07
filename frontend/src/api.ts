@@ -472,6 +472,11 @@ export interface TeacherHelpRequestItem {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
+
+/** Backend URL - uploads vb. relative yollar için kullanılır */
+export function getApiBaseUrl(): string {
+  return API_BASE_URL.replace(/\/$/, '');
+}
 const AUTH_STORAGE_KEY = 'student_mgmt_auth';
 const BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '') || '';
 

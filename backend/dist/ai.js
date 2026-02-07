@@ -58,7 +58,7 @@ function extractResponseText(response) {
 async function callGemini(userPrompt, options = {}) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        throw new Error('GEMINI_API_KEY ayarlı değil');
+        throw new Error('Yapay zeka servisi şu an kullanılamıyor. Lütfen yönetici ile iletişime geçin.');
     }
     const genAi = new genai_1.GoogleGenAI({ apiKey });
     const models = getModelCandidates();
