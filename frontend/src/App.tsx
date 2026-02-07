@@ -200,7 +200,7 @@ const AppRoutes: React.FC = () => {
 export const App: React.FC = () => {
   return (
     <AuthProvider>
-      <BrowserRouter basename="/demo">
+      <BrowserRouter basename={(import.meta.env.BASE_URL || '/').replace(/\/$/, '') || ''}>
         <AppRoutes />
       </BrowserRouter>
     </AuthProvider>
