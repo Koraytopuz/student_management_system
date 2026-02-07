@@ -14,15 +14,16 @@ const multer_1 = __importDefault(require("multer"));
 const auth_1 = require("./auth");
 const db_1 = require("./db");
 const livekit_1 = require("./livekit");
+const ai_1 = require("./ai");
 const router = express_1.default.Router();
 const USER_CONFIGURED_GEMINI_MODEL = (_a = process.env.GEMINI_MODEL) === null || _a === void 0 ? void 0 : _a.trim();
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const TEACHER_SYSTEM_PROMPT = "Rolün: 20 yıllık deneyime sahip, soru bankası yazarlığı yapmış bir başöğretmen asistanı. Görevin: Kullanıcı (Öğretmen) sana 'Sınıf Seviyesi', 'Konu', 'Soru Sayısı' ve 'Zorluk Derecesi' (Kolay/Orta/Zor) verecek. Sen bu verilere göre hatasız bir test hazırlayacaksın.\n\n" +
     'Kurallar:\n\n' +
-    '• Sorular Bloom Taksonomisi\'ne göre belirtilen zorluk seviyesine uygun tasarlanmalıdır (örneğin zor seviye analiz/sentez içermeli).\n' +
-    '• Soru köklerini **kalın** yaz.\n' +
-    '• Şıkları A), B), C), D) biçiminde alt alta yaz; lise seviyesi belirtildiyse E) şıkkını ekle.\n' +
-    '• Tüm sorular tamamlandıktan sonra `---` çizgisi çek ve "Cevap Anahtarı ve Öğretmen Notları" başlığı altında hem doğru şıkları hem de soruların ölçtüğü kazanımları yaz.\n' +
+    '• Her sorudan ÖNCE (ilk soru hariç) "---SAYFA---" yaz; böylece her soru ayrı sayfada görünecek.\n' +
+    '• Sorular Bloom Taksonomisi\'ne göre belirtilen zorluk seviyesine uygun tasarlanmalıdır.\n' +
+    '• Soru köklerini **kalın** yaz. Şıkları A), B), C), D) biçiminde alt alta yaz; lise seviyesi belirtildiyse E) ekle.\n' +
+    '• Tüm sorulardan sonra `---` çizgisi ve "Cevap Anahtarı: 1-A, 2-B, 3-C" formatında doğru cevapları yaz.\n' +
     '• Daima Türkçe konuş.';
 function resolveTeacherModelCandidates() {
     if (USER_CONFIGURED_GEMINI_MODEL) {
@@ -92,13 +93,47 @@ function toGeminiContents(history, latest) {
     }));
     return sanitized;
 }
+/** Parse "Cevap Anahtarı: 1-A, 2-B, 3-C" or "1-A, 2-B" format into { "1":"A", "2":"B", ... } */
+function parseAnswerKey(text) {
+    var _a, _b;
+    const key = {};
+    const match = text.match(/Cevap\s*Anahtar[ıi]:?\s*([\d\s\-A-Ea-e,]+)/i) ||
+        text.match(/(?:^|\n)([\d\s\-A-Ea-e,]+)\s*$/m);
+    const raw = (_a = match === null || match === void 0 ? void 0 : match[1]) !== null && _a !== void 0 ? _a : text;
+    const pairs = (_b = raw.match(/\d+\s*[-–]\s*[A-Ea-e]/g)) !== null && _b !== void 0 ? _b : raw.match(/(\d+)\s*[:\-]\s*([A-Ea-e])/g);
+    if (pairs) {
+        for (const p of pairs) {
+            const m = p.match(/(\d+)\s*[-–:\s]*([A-Ea-e])/i);
+            if (m && m[1] != null && m[2] != null)
+                key[m[1]] = m[2].toUpperCase();
+        }
+    }
+    return key;
+}
+/** Generate PDF with one question per page, return buffer and parsed answer key */
 async function generatePdfFromText(text) {
+    var _a, _b, _c;
+    const fsRequire = require('fs');
+    const fontPath = path_1.default.join(__dirname, 'assets', 'fonts', 'arial.ttf');
+    const parts = text.split(/(?:---SAYFA---|^---$)/m).map((s) => s.trim()).filter(Boolean);
+    const answerKeyBlock = parts.find((p) => /Cevap\s*Anahtar/i.test(p));
+    let questionBlocks = parts.filter((p) => !/Cevap\s*Anahtar/i.test(p));
+    const answerKey = answerKeyBlock ? parseAnswerKey(answerKeyBlock) : {};
+    // Fallback: when AI omits ---SAYFA---, split by **N. Soru:** pattern
+    const firstBlock = questionBlocks[0];
+    const singleBlockHasMultipleQuestions = questionBlocks.length === 1 && firstBlock && ((_b = (_a = firstBlock.match(/\*\*\d+\.\s*Soru:\*\*/gi)) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0) > 1;
+    if (questionBlocks.length === 0 || singleBlockHasMultipleQuestions) {
+        const mainContent = answerKeyBlock ? ((_c = text.split(/---\s*\n?Cevap\s*Anahtar/i)[0]) !== null && _c !== void 0 ? _c : text) : text;
+        const splitParts = mainContent.split(/(?=\*\*\d+\.\s*Soru:\*\*)/i);
+        questionBlocks = splitParts
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0 && /\*\*\d+\.\s*Soru:\*\*/i.test(s));
+    }
+    const stripMarkdown = (t) => t.replace(/\*\*/g, '').trim();
     return new Promise((resolve, reject) => {
+        var _a;
         const doc = new pdfkit_1.default({ margin: 50 });
-        const fontPath = path_1.default.join(__dirname, 'assets', 'fonts', 'arial.ttf');
-        // Check if font exists, otherwise fallback (though we expect it to exist now)
-        const fs = require('fs');
-        if (fs.existsSync(fontPath)) {
+        if (fsRequire.existsSync(fontPath)) {
             doc.font(fontPath);
         }
         else {
@@ -106,9 +141,24 @@ async function generatePdfFromText(text) {
         }
         const chunks = [];
         doc.on('data', (chunk) => chunks.push(chunk));
-        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), answerKey }));
         doc.on('error', reject);
-        doc.fontSize(12).text(text, { align: 'left' });
+        if (questionBlocks.length > 0) {
+            for (let i = 0; i < questionBlocks.length; i++) {
+                const raw = questionBlocks[i];
+                if (!raw)
+                    continue;
+                if (i > 0)
+                    doc.addPage();
+                const block = stripMarkdown(raw);
+                doc.fontSize(18).text(block, { align: 'left', lineGap: 6 });
+            }
+        }
+        else {
+            const firstPart = text.split(/---\s*\n?Cevap\s*Anahtar/i)[0];
+            const mainText = answerKeyBlock ? ((_a = firstPart === null || firstPart === void 0 ? void 0 : firstPart.trim()) !== null && _a !== void 0 ? _a : text) : text;
+            doc.fontSize(18).text(stripMarkdown(mainText), { align: 'left', lineGap: 6 });
+        }
         doc.end();
     });
 }
@@ -265,7 +315,7 @@ router.post('/ai/chat', (0, auth_1.authenticate)('teacher'), async (req, res) =>
                 }
                 let attachment = null;
                 if (requestedFormat === 'pdf') {
-                    const buffer = await generatePdfFromText(reply);
+                    const { buffer } = await generatePdfFromText(reply);
                     attachment = {
                         filename: `soru-paketi-${Date.now()}.pdf`,
                         mimeType: 'application/pdf',
@@ -313,6 +363,132 @@ router.post('/ai/chat', (0, auth_1.authenticate)('teacher'), async (req, res) =>
         // eslint-disable-next-line no-console
         console.error('[TEACHER_AI] Gemini API request failed', error);
         return res.status(500).json({ error: 'Yapay zeka servisine bağlanılamadı' });
+    }
+});
+// Otomatik soru üretimi (format: metin | pdf | xlsx)
+router.post('/ai/generate-questions', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const { gradeLevel, topic, count = 5, difficulty = 'orta', format } = req.body;
+    if (!topic || !topic.trim()) {
+        return res.status(400).json({ error: 'Konu alanı zorunludur' });
+    }
+    try {
+        const prompt = `Lütfen aşağıdaki kriterlere uygun test soruları üret:
+
+- Sınıf seviyesi: ${gradeLevel || '9-12 (Lise)'}
+- Konu: ${topic.trim()}
+- Soru sayısı: ${Math.min(Math.max(Number(count) || 5, 1), 20)}
+- Zorluk: ${difficulty || 'orta'} (kolay/orta/zor)
+
+ZORUNLU FORMAT KURALLARI (bu formata tam uy):
+1. Her soru mutlaka A) B) C) D) E) şıklı olsun (5 şık).
+2. Her sorudan hemen önce (ilk soru hariç) ayrı satırda sadece "---SAYFA---" yaz. Böylece her soru ayrı sayfada görünecek.
+3. Her soruyu "**1. Soru:**" "**2. Soru:**" şeklinde numaralandır.
+4. Soru köklerini **kalın** yap. Matematik için x², x³, 4x³ gibi net metin kullan (LaTeX yok). Şekilli sorularda şekli açıkça tarif et, köşe/kenar bilgilerini belirt.
+5. Tüm sorulardan sonra "---" ve "Cevap Anahtarı: 1-A, 2-B, 3-C, ..." formatında doğru cevapları listele.
+6. Daima Türkçe yaz.
+
+Örnek format:
+**1. Soru:** f(x)=x² fonksiyonunun x=2 noktasındaki türevi kaçtır?
+A) 2  B) 4  C) 6  D) 8  E) 10
+---SAYFA---
+**2. Soru:** ...
+A) ...  B) ...  C) ...  D) ...  E) ...
+---SAYFA---
+...
+---
+Cevap Anahtarı: 1-B, 2-C, 3-A, ...`;
+        const result = await (0, ai_1.callGemini)(prompt, {
+            systemInstruction: 'Sen deneyimli bir soru bankası yazarısın. Bloom taksonomisine uygun, net ve ölçülebilir sorular üretirsin.',
+            temperature: 0.6,
+            maxOutputTokens: 4096,
+        });
+        const response = { questions: result };
+        if (format === 'pdf') {
+            const { buffer, answerKey } = await generatePdfFromText(result);
+            response.attachment = {
+                filename: `sorular-${Date.now()}.pdf`,
+                mimeType: 'application/pdf',
+                data: buffer.toString('base64'),
+            };
+            if (Object.keys(answerKey).length > 0)
+                response.answerKey = answerKey;
+        }
+        else if (format === 'xlsx') {
+            const buffer = await generateExcelFromText(result);
+            response.attachment = {
+                filename: `sorular-${Date.now()}.xlsx`,
+                mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                data: buffer.toString('base64'),
+            };
+        }
+        return res.json(response);
+    }
+    catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[AI_GENERATE_QUESTIONS]', error);
+        return res.status(502).json({
+            error: error instanceof Error ? error.message : 'Soru üretilemedi',
+        });
+    }
+});
+// Ödev/cevap değerlendirme
+router.post('/ai/evaluate-answer', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const { questionText, correctAnswer, studentAnswer, questionType = 'open' } = req.body;
+    if (!questionText || !correctAnswer || studentAnswer === undefined) {
+        return res.status(400).json({ error: 'questionText, correctAnswer ve studentAnswer zorunludur' });
+    }
+    try {
+        const prompt = `Aşağıdaki soru ve öğrenci cevabını değerlendir:
+
+**Soru:** ${questionText}
+
+**Doğru / Beklenen cevap:** ${correctAnswer}
+
+**Öğrenci cevabı:** ${String(studentAnswer).trim() || '(boş)'}
+
+Soru tipi: ${questionType}
+
+Değerlendirmeni şu formatta ver (Türkçe):
+1. Puan (0-100 arası sayı)
+2. Kısa özet (1-2 cümle)
+3. İyileştirme önerisi (varsa)`;
+        const result = await (0, ai_1.callGemini)(prompt, {
+            systemInstruction: 'Sen deneyimli bir öğretmensin. Öğrenci cevaplarını adil ve yapıcı şekilde değerlendirirsin. Küçük doğruları da takdir et.',
+            temperature: 0.3,
+            maxOutputTokens: 1024,
+        });
+        return res.json({ evaluation: result });
+    }
+    catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[AI_EVALUATE_ANSWER]', error);
+        return res.status(502).json({
+            error: error instanceof Error ? error.message : 'Değerlendirme yapılamadı',
+        });
+    }
+});
+// Metin özetleme
+router.post('/ai/summarize', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const { text, maxLength = 'orta' } = req.body;
+    if (!text || !String(text).trim()) {
+        return res.status(400).json({ error: 'Metin alanı zorunludur' });
+    }
+    try {
+        const lengthHint = maxLength === 'kısa' ? '2-3 cümle' : maxLength === 'uzun' ? '1 paragraf' : '4-6 cümle';
+        const prompt = `Aşağıdaki metni Türkçe olarak özetle. Özet yaklaşık ${lengthHint} uzunluğunda olsun. Ana fikirleri koru:\n\n${String(text).trim()}`;
+        const result = await (0, ai_1.callGemini)(prompt, {
+            systemInstruction: 'Sen metin özetleme uzmanısın. Özetlerde objektif kalır, ana fikirleri korursun.',
+            temperature: 0.3,
+            maxOutputTokens: 1024,
+        });
+        return res.json({ summary: result });
+    }
+    catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[AI_SUMMARIZE]', error);
+        return res.status(502).json({
+            error: error instanceof Error ? error.message : 'Özet oluşturulamadı',
+        });
     }
 });
 router.get('/announcements', (0, auth_1.authenticate)('teacher'), async (req, res) => {
@@ -671,37 +847,63 @@ router.get('/test-assets', (0, auth_1.authenticate)('teacher'), async (req, res)
     })));
 });
 router.post('/test-assets', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    var _a;
     const teacherId = req.user.id;
-    const { title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType } = req.body;
+    const { title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType, answerKeyJson } = req.body;
     if (!title || !subjectId || !topic || !gradeLevel || !fileUrl || !fileName || !mimeType) {
         return res.status(400).json({
             error: 'title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType zorunludur',
         });
     }
-    const created = await db_1.prisma.testAsset.create({
-        data: {
-            teacherId,
-            title: title.trim(),
-            subjectId,
-            topic: topic.trim(),
-            gradeLevel: gradeLevel.trim(),
-            fileUrl: fileUrl.trim(),
-            fileName: fileName.trim(),
-            mimeType: mimeType.trim(),
-        },
-    });
-    return res.status(201).json({
-        id: created.id,
-        teacherId: created.teacherId,
-        title: created.title,
-        subjectId: created.subjectId,
-        topic: created.topic,
-        gradeLevel: created.gradeLevel,
-        fileUrl: created.fileUrl,
-        fileName: created.fileName,
-        mimeType: created.mimeType,
-        createdAt: created.createdAt.toISOString(),
-    });
+    try {
+        const subject = await db_1.prisma.subject.findUnique({ where: { id: subjectId } });
+        if (!subject) {
+            return res.status(400).json({ error: 'Geçersiz subjectId: ilgili ders bulunamadı' });
+        }
+        let parsedAnswerKey;
+        if (answerKeyJson != null && String(answerKeyJson).trim()) {
+            try {
+                const parsed = JSON.parse(String(answerKeyJson));
+                if (parsed && typeof parsed === 'object')
+                    parsedAnswerKey = JSON.stringify(parsed);
+            }
+            catch {
+                return res.status(400).json({ error: 'answerKeyJson geçerli JSON olmalı (örn. {"1":"A","2":"B"})' });
+            }
+        }
+        const created = await db_1.prisma.testAsset.create({
+            data: {
+                teacherId,
+                title: title.trim(),
+                subjectId,
+                topic: topic.trim(),
+                gradeLevel: gradeLevel.trim(),
+                fileUrl: fileUrl.trim(),
+                fileName: fileName.trim(),
+                mimeType: mimeType.trim(),
+                answerKeyJson: parsedAnswerKey !== null && parsedAnswerKey !== void 0 ? parsedAnswerKey : undefined,
+            },
+        });
+        return res.status(201).json({
+            id: created.id,
+            teacherId: created.teacherId,
+            title: created.title,
+            subjectId: created.subjectId,
+            topic: created.topic,
+            gradeLevel: created.gradeLevel,
+            fileUrl: created.fileUrl,
+            fileName: created.fileName,
+            mimeType: created.mimeType,
+            answerKeyJson: (_a = created.answerKeyJson) !== null && _a !== void 0 ? _a : undefined,
+            createdAt: created.createdAt.toISOString(),
+        });
+    }
+    catch (error) {
+        console.error('TestAsset create error:', error);
+        return res
+            .status(500)
+            .json({ error: 'Test dosyası kaydedilemedi, lütfen daha sonra tekrar deneyin.' });
+    }
 });
 router.delete('/test-assets/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
     const teacherId = req.user.id;
@@ -718,49 +920,90 @@ router.delete('/test-assets/:id', (0, auth_1.authenticate)('teacher'), async (re
 });
 // Yardım talepleri (öğrenciden gelen "öğretmene sor" istekleri)
 router.get('/help-requests', (0, auth_1.authenticate)('teacher'), async (req, res) => {
-    const teacherId = req.user.id;
-    const status = req.query.status ? String(req.query.status) : undefined;
-    const list = await db_1.prisma.helpRequest.findMany({
-        where: {
-            teacherId,
-            ...(status ? { status: status } : {}),
-        },
-        include: {
-            student: { select: { id: true, name: true } },
-            assignment: { select: { id: true, title: true, testId: true } },
-            question: { select: { id: true, orderIndex: true, text: true } },
-            response: true,
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-    });
-    return res.json(list.map((r) => {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
-        return ({
-            id: r.id,
-            studentId: r.studentId,
-            studentName: (_b = (_a = r.student) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : 'Öğrenci',
-            teacherId: r.teacherId,
-            assignmentId: r.assignmentId,
-            assignmentTitle: (_d = (_c = r.assignment) === null || _c === void 0 ? void 0 : _c.title) !== null && _d !== void 0 ? _d : '',
-            questionId: (_e = r.questionId) !== null && _e !== void 0 ? _e : undefined,
-            questionNumber: r.question ? ((_f = r.question.orderIndex) !== null && _f !== void 0 ? _f : 0) + 1 : undefined,
-            questionText: (_h = (_g = r.question) === null || _g === void 0 ? void 0 : _g.text) !== null && _h !== void 0 ? _h : undefined,
-            message: (_j = r.message) !== null && _j !== void 0 ? _j : undefined,
-            status: r.status,
-            createdAt: r.createdAt.toISOString(),
-            resolvedAt: (_k = r.resolvedAt) === null || _k === void 0 ? void 0 : _k.toISOString(),
-            response: r.response
-                ? {
-                    id: r.response.id,
-                    mode: r.response.mode,
-                    url: r.response.url,
-                    mimeType: (_l = r.response.mimeType) !== null && _l !== void 0 ? _l : undefined,
-                    createdAt: r.response.createdAt.toISOString(),
-                }
-                : undefined,
+    try {
+        const teacherId = req.user.id;
+        const status = req.query.status ? String(req.query.status) : undefined;
+        const list = await db_1.prisma.helpRequest.findMany({
+            where: {
+                teacherId,
+                ...(status ? { status: status } : {}),
+            },
+            include: {
+                student: { select: { id: true, name: true } },
+                assignment: {
+                    select: {
+                        id: true,
+                        title: true,
+                        testId: true,
+                        testAssetId: true,
+                        testAsset: { select: { answerKeyJson: true, fileUrl: true } },
+                    },
+                },
+                question: { select: { id: true, orderIndex: true, text: true, correctAnswer: true } },
+                response: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
         });
-    }));
+        return res.json(list.map((r) => {
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
+            let correctAnswer;
+            const pdfMatch = (_a = r.questionId) === null || _a === void 0 ? void 0 : _a.match(/^pdf-page-(\d+)$/);
+            if (pdfMatch && pdfMatch[1]) {
+                const pageNum = pdfMatch[1];
+                const answerKeyJson = (_c = (_b = r.assignment) === null || _b === void 0 ? void 0 : _b.testAsset) === null || _c === void 0 ? void 0 : _c.answerKeyJson;
+                if (answerKeyJson) {
+                    try {
+                        const key = JSON.parse(answerKeyJson);
+                        correctAnswer = key[pageNum];
+                    }
+                    catch {
+                        // ignore parse error
+                    }
+                }
+            }
+            else if ((_d = r.question) === null || _d === void 0 ? void 0 : _d.correctAnswer) {
+                correctAnswer = r.question.correctAnswer;
+            }
+            const testAsset = (_e = r.assignment) === null || _e === void 0 ? void 0 : _e.testAsset;
+            return {
+                id: r.id,
+                studentId: r.studentId,
+                studentName: (_g = (_f = r.student) === null || _f === void 0 ? void 0 : _f.name) !== null && _g !== void 0 ? _g : 'Öğrenci',
+                teacherId: r.teacherId,
+                assignmentId: r.assignmentId,
+                assignmentTitle: (_j = (_h = r.assignment) === null || _h === void 0 ? void 0 : _h.title) !== null && _j !== void 0 ? _j : '',
+                questionId: (_k = r.questionId) !== null && _k !== void 0 ? _k : undefined,
+                questionNumber: r.question ? ((_l = r.question.orderIndex) !== null && _l !== void 0 ? _l : 0) + 1 : ((pdfMatch === null || pdfMatch === void 0 ? void 0 : pdfMatch[1]) ? parseInt(pdfMatch[1], 10) : undefined),
+                questionText: (_o = (_m = r.question) === null || _m === void 0 ? void 0 : _m.text) !== null && _o !== void 0 ? _o : undefined,
+                correctAnswer,
+                studentAnswer: (_p = r.studentAnswer) !== null && _p !== void 0 ? _p : undefined,
+                testAssetFileUrl: pdfMatch ? (_q = testAsset === null || testAsset === void 0 ? void 0 : testAsset.fileUrl) !== null && _q !== void 0 ? _q : undefined : undefined,
+                testAssetId: pdfMatch ? (_s = (_r = r.assignment) === null || _r === void 0 ? void 0 : _r.testAssetId) !== null && _s !== void 0 ? _s : undefined : undefined,
+                message: (_t = r.message) !== null && _t !== void 0 ? _t : undefined,
+                status: r.status,
+                createdAt: r.createdAt.toISOString(),
+                resolvedAt: (_u = r.resolvedAt) === null || _u === void 0 ? void 0 : _u.toISOString(),
+                response: r.response
+                    ? {
+                        id: r.response.id,
+                        mode: r.response.mode,
+                        url: r.response.url,
+                        mimeType: (_v = r.response.mimeType) !== null && _v !== void 0 ? _v : undefined,
+                        createdAt: r.response.createdAt.toISOString(),
+                        playedAt: (_w = r.response.playedAt) !== null && _w !== void 0 ? _w : undefined,
+                    }
+                    : undefined,
+            };
+        }));
+    }
+    catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[HELP_REQUESTS]', err);
+        return res.status(500).json({
+            error: err instanceof Error ? err.message : 'Yardım talepleri yüklenemedi',
+        });
+    }
 });
 // Öğretmen çözüm gönder (ses / ses+video)
 router.post('/help-requests/:id/respond', (0, auth_1.authenticate)('teacher'), helpSolutionUpload.single('file'), async (req, res) => {
@@ -849,6 +1092,42 @@ router.post('/help-requests/:id/respond', (0, auth_1.authenticate)('teacher'), h
         console.error('HelpResponse upload error:', error);
         return res.status(500).json({ error: 'Çözüm yüklenemedi' });
     }
+});
+// Öğretmen gönderdiği çözümü geri alabilir / silebilir
+router.delete('/help-requests/:id/response', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const helpRequestId = String(req.params.id);
+    const existing = await db_1.prisma.helpResponse.findUnique({
+        where: { helpRequestId },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Bu talep için kayıtlı bir çözüm bulunamadı' });
+    }
+    if (existing.teacherId !== teacherId) {
+        return res
+            .status(403)
+            .json({ error: 'Bu çözümü silme yetkiniz yok. Sadece kendi yanıtlarınızı silebilirsiniz.' });
+    }
+    // Çözüm dosyasını diskten silmeye çalış
+    try {
+        if (existing.url && existing.url.startsWith('/uploads/solutions/')) {
+            const filePath = path_1.default.join(uploadsSolutionsDir, path_1.default.basename(existing.url));
+            if (fs_1.default.existsSync(filePath)) {
+                fs_1.default.unlinkSync(filePath);
+            }
+        }
+    }
+    catch (e) {
+        console.warn('HelpResponse file delete error:', e);
+    }
+    await db_1.prisma.helpResponse.delete({
+        where: { helpRequestId },
+    });
+    await db_1.prisma.helpRequest.update({
+        where: { id: helpRequestId },
+        data: { status: 'open', resolvedAt: null },
+    });
+    return res.json({ success: true });
 });
 // Soru bankası listesi
 router.get('/questions', (0, auth_1.authenticate)('teacher'), async (_req, res) => {
@@ -1084,24 +1363,62 @@ router.get('/messages', (0, auth_1.authenticate)('teacher'), async (req, res) =>
         });
     }));
 });
+// Mesajı okundu olarak işaretle (öğretmen)
+router.put('/messages/:id/read', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    var _a, _b, _c;
+    const messageId = String(req.params.id);
+    const teacherId = req.user.id;
+    const message = await db_1.prisma.message.findUnique({ where: { id: messageId } });
+    if (!message) {
+        return res.status(404).json({ error: 'Mesaj bulunamadı' });
+    }
+    // Sadece kendisine gelen mesajı okundu yapabilsin
+    if (message.toUserId !== teacherId) {
+        return res.status(403).json({ error: 'Bu mesajı okuma yetkiniz yok' });
+    }
+    const updated = await db_1.prisma.message.update({
+        where: { id: messageId },
+        data: { read: true, readAt: new Date() },
+    });
+    return res.json({
+        id: updated.id,
+        fromUserId: updated.fromUserId,
+        toUserId: updated.toUserId,
+        studentId: (_a = updated.studentId) !== null && _a !== void 0 ? _a : undefined,
+        subject: (_b = updated.subject) !== null && _b !== void 0 ? _b : undefined,
+        text: updated.text,
+        read: updated.read,
+        readAt: (_c = updated.readAt) === null || _c === void 0 ? void 0 : _c.toISOString(),
+        createdAt: updated.createdAt.toISOString(),
+    });
+});
 // Yeni mesaj gönderme
 router.post('/messages', (0, auth_1.authenticate)('teacher'), async (req, res) => {
     const fromUserId = req.user.id;
-    const { toUserId, text } = req.body;
+    const { toUserId, text, studentId, subject } = req.body;
     if (!toUserId || !text) {
         return res
             .status(400)
             .json({ error: 'toUserId ve text alanları zorunludur' });
     }
     const message = await db_1.prisma.message.create({
-        data: { fromUserId, toUserId, text, read: false },
+        data: {
+            fromUserId,
+            toUserId,
+            text,
+            studentId: studentId !== null && studentId !== void 0 ? studentId : null,
+            subject: subject !== null && subject !== void 0 ? subject : null,
+            read: false,
+        },
     });
     await db_1.prisma.notification.create({
         data: {
             userId: toUserId,
             type: 'message_received',
             title: 'Yeni mesajınız var',
-            body: 'Öğretmenden yeni bir mesaj aldınız.',
+            body: subject
+                ? `Öğretmenden "${subject}" konusunda yeni bir mesaj aldınız.`
+                : 'Öğretmenden yeni bir mesaj aldınız.',
             read: false,
             relatedEntityType: 'message',
             relatedEntityId: message.id,
@@ -1280,6 +1597,68 @@ router.post('/meetings/:id/start-live', (0, auth_1.authenticate)('teacher'), asy
         url: (0, livekit_1.getLiveKitUrl)(),
         roomId,
         token,
+    });
+});
+// Tüm katılımcıların sesini kapat (öğretmen)
+router.post('/meetings/:id/mute-all', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const meetingId = String(req.params.id);
+    const meeting = await db_1.prisma.meeting.findUnique({
+        where: { id: meetingId },
+    });
+    if (!meeting) {
+        return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (meeting.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+    const roomName = (0, livekit_1.buildRoomName)(meeting.id);
+    try {
+        const { muted } = await (0, livekit_1.muteAllParticipantsInRoom)(roomName);
+        return res.json({ success: true, muted });
+    }
+    catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[mute-all]', err);
+        return res.status(500).json({
+            error: 'Ses kapatma işlemi başarısız oldu. Odada canlı ders devam ediyor mu kontrol edin.',
+        });
+    }
+});
+// Kayıt başlat (placeholder – LiveKit Egress için S3/GCP depolama gerekir)
+router.post('/meetings/:id/start-recording', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const meetingId = String(req.params.id);
+    const meeting = await db_1.prisma.meeting.findUnique({
+        where: { id: meetingId },
+    });
+    if (!meeting) {
+        return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (meeting.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+    // LiveKit Egress için S3/GCP/Azure depolama konfigürasyonu gerekir.
+    // Şimdilik kayıt bilgisini güncellemeden bilgilendirme dönüyoruz.
+    return res.status(501).json({
+        error: 'Kayıt özelliği henüz yapılandırılmadı. LiveKit Egress ve depolama (S3/GCP) kurulumu gereklidir.',
+    });
+});
+// Kayıt durdur (placeholder)
+router.post('/meetings/:id/stop-recording', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const meetingId = String(req.params.id);
+    const meeting = await db_1.prisma.meeting.findUnique({
+        where: { id: meetingId },
+    });
+    if (!meeting) {
+        return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (meeting.teacherId !== teacherId) {
+        return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+    return res.status(501).json({
+        error: 'Kayıt özelliği henüz yapılandırılmadı.',
     });
 });
 // Bildirimler

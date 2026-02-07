@@ -9,21 +9,23 @@ import {
 } from '@livekit/components-react';
 import '@livekit/components-styles';
 import type { Participant } from 'livekit-client';
-import { 
-  Mic, 
-  MicOff, 
-  Video, 
-  VideoOff, 
-  MonitorUp, 
-  Users, 
-  MessageSquare, 
-  PhoneOff, 
-  MessageCircle, 
-  VolumeX, 
-  Hand, 
-  Maximize, 
-  Minimize 
+import {
+  BarChart2,
+  Hand,
+  Maximize,
+  MessageCircle,
+  MessageSquare,
+  Mic,
+  MicOff,
+  Minimize,
+  MonitorUp,
+  PhoneOff,
+  Users,
+  Video,
+  VideoOff,
+  VolumeX,
 } from 'lucide-react';
+import { muteAllInMeeting } from './api';
 
 // (İkon tanımları kaldırıldı, lucide-react kullanılacak)
 
@@ -32,6 +34,7 @@ type LiveClassOverlayProps = {
   token: string;
   title?: string;
   role?: 'teacher' | 'student';
+  meetingId?: string;
   onClose: () => void;
 };
 
@@ -49,7 +52,10 @@ type ControlMessageType =
   | 'chat'
   | 'private_message'
   | 'session_ended'
-  | 'assignment_completed';
+  | 'assignment_completed'
+  | 'poll_create'
+  | 'poll_vote'
+  | 'poll_result';
 
 type ControlMessage = {
   type: ControlMessageType;
@@ -73,6 +79,23 @@ type ParticipantData = {
   id: string;
   name: string;
   isLocal?: boolean;
+  joinedAt?: number;
+};
+
+type PollOption = { id: string; text: string };
+type Poll = {
+  id: string;
+  question: string;
+  options: PollOption[];
+  ts: number;
+};
+
+const formatDuration = (joinedAt: number) => {
+  const sec = Math.floor((Date.now() - joinedAt) / 1000);
+  if (sec < 60) return `${sec} sn`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} dk`;
+  return `${Math.floor(min / 60)} sa ${min % 60} dk`;
 };
 
 // Timer Hook
@@ -97,6 +120,7 @@ export const LiveClassOverlay: React.FC<LiveClassOverlayProps> = ({
   token,
   title,
   role,
+  meetingId,
   onClose,
 }) => {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -119,17 +143,25 @@ export const LiveClassOverlay: React.FC<LiveClassOverlayProps> = ({
         connect={true}
         style={{ width: '100%', height: '100%' }}
       >
-        <LiveClassInner role={role} title={title} onClose={onClose} />
+        <LiveClassInner
+          role={role}
+          title={title}
+          meetingId={meetingId}
+          token={token}
+          onClose={onClose}
+        />
       </LiveKitRoom>
     </div>
   );
 };
 
-const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; onClose: () => void }> = ({
-  role,
-  title,
-  onClose,
-}) => {
+const LiveClassInner: React.FC<{
+  role?: 'teacher' | 'student';
+  title?: string;
+  meetingId?: string;
+  token?: string;
+  onClose: () => void;
+}> = ({ role, title, meetingId, token, onClose }) => {
   // Room context available if needed
   useRoomContext();
   const { localParticipant } = useLocalParticipant();
@@ -176,23 +208,38 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
   // Teacher view state
   const [studentStats, setStudentStats] = useState<Record<string, { completed: number; total: number }>>({});
 
+  // Poll state
+  const [activePoll, setActivePoll] = useState<Poll | null>(null);
+  const [pollVotes, setPollVotes] = useState<Record<string, number>>({}); // optionId -> count
+  const [myPollVote, setMyPollVote] = useState<string | null>(null);
+  const [pollPanelOpen, setPollPanelOpen] = useState(false);
+  const [pollCreateQuestion, setPollCreateQuestion] = useState('');
+  const [pollCreateOptions, setPollCreateOptions] = useState(['', '']);
+  const [participantJoinTimes, setParticipantJoinTimes] = useState<Record<string, number>>({});
+
   // Participant data
   const remoteParticipants = useMemo(
     () =>
       (participants as Participant[])
         .filter((p) => !p.isLocal && (p.identity || p.name))
-        .map((p) => ({
-          id: p.identity || p.sid,
-          name: p.name || p.identity || 'Katılımcı',
-          isLocal: false,
-        })),
-    [participants],
+        .map((p) => {
+          const id = p.identity || p.sid;
+          return {
+            id,
+            name: p.name || p.identity || 'Katılımcı',
+            isLocal: false,
+            joinedAt: participantJoinTimes[id] ?? Date.now(),
+          };
+        }),
+    [participants, participantJoinTimes],
   );
 
+  const sessionStartRef = useRef(Date.now());
   const localParticipantData: ParticipantData = {
     id: identity,
     name: displayName + ' (Siz)',
     isLocal: true,
+    joinedAt: sessionStartRef.current,
   };
 
   const allParticipants = [localParticipantData, ...remoteParticipants];
@@ -283,6 +330,18 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
       fetchStudentStats();
     }
   }, [role, fetchStudentStats]);
+
+  const knownParticipantIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const now = Date.now();
+    (participants as Participant[]).forEach((p) => {
+      const id = p.identity || p.sid;
+      if (id && !knownParticipantIds.current.has(id)) {
+        knownParticipantIds.current.add(id);
+        setParticipantJoinTimes((prev) => (prev[id] ? prev : { ...prev, [id]: now }));
+      }
+    });
+  }, [participants]);
 
   // Message handling
   const handleIncomingMessage = useCallback(
@@ -398,22 +457,43 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
       }
 
       if (data.type === 'assignment_completed' && role === 'teacher') {
-        // const payload = (data.payload ?? {}) as { assignmentId?: string };
         const studentId = fromId;
-        
         if (studentId) {
           setStudentStats(prev => {
             const current = prev[studentId] || { completed: 0, total: 0 };
             return {
               ...prev,
-              [studentId]: {
-                ...current,
-                completed: current.completed + 1
-              }
+              [studentId]: { ...current, completed: current.completed + 1 },
             };
           });
           pushInfoToast(`${fromName} bir ödevi tamamladı!`);
         }
+      }
+
+      if (data.type === 'poll_create') {
+        const payload = (data.payload ?? {}) as { poll?: Poll };
+        if (payload.poll) {
+          setActivePoll(payload.poll);
+          setPollVotes({});
+          setMyPollVote(null);
+          setPollPanelOpen(true);
+          pushInfoToast('Yeni anket başladı');
+        }
+      }
+
+      if (data.type === 'poll_vote') {
+        const payload = (data.payload ?? {}) as { optionId?: string };
+        if (payload.optionId) {
+          setPollVotes((prev) => ({
+            ...prev,
+            [payload.optionId!]: (prev[payload.optionId!] ?? 0) + 1,
+          }));
+        }
+      }
+
+      if (data.type === 'poll_result') {
+        const payload = (data.payload ?? {}) as { votes?: Record<string, number> };
+        if (payload.votes) setPollVotes(payload.votes);
       }
     },
     [chatOpen, identity, pushInfoToast, role],
@@ -551,6 +631,55 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
     });
   };
 
+  // Poll (teacher)
+  const createPoll = () => {
+    const question = pollCreateQuestion.trim();
+    const options = pollCreateOptions.filter((o) => o.trim()).map((t, i) => ({ id: `opt-${Date.now()}-${i}`, text: t.trim() }));
+    if (!question || options.length < 2) {
+      pushInfoToast('Soru ve en az 2 seçenek girin');
+      return;
+    }
+    const poll: Poll = { id: `poll-${Date.now()}`, question, options, ts: Date.now() };
+    setActivePoll(poll);
+    setPollVotes({});
+    setPollCreateQuestion('');
+    setPollCreateOptions(['', '']);
+    setPollPanelOpen(true);
+    sendControlMessage({
+      type: 'poll_create',
+      fromId: identity,
+      payload: { poll },
+      ts: poll.ts,
+    });
+  };
+
+  const votePoll = (optionId: string) => {
+    if (!activePoll || myPollVote) return;
+    setMyPollVote(optionId);
+    setPollVotes((prev) => ({ ...prev, [optionId]: (prev[optionId] ?? 0) + 1 }));
+    sendControlMessage({
+      type: 'poll_vote',
+      fromId: identity,
+      payload: { optionId },
+      ts: Date.now(),
+    });
+  };
+
+  const endPoll = () => {
+    if (role === 'teacher' && activePoll) {
+      sendControlMessage({
+        type: 'poll_result',
+        fromId: identity,
+        payload: { votes: pollVotes },
+        ts: Date.now(),
+      });
+    }
+    setActivePoll(null);
+    setPollVotes({});
+    setMyPollVote(null);
+    setPollPanelOpen(false);
+  };
+
   // Hand raise (student)
   const handleRequestHand = () => {
     if (role !== 'student' || !identity || pendingHandRaise) return;
@@ -641,9 +770,22 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
     setPrivateMessageTarget(null);
   };
 
-  // Mute all (teacher)
-  const muteAll = () => {
-    pushInfoToast('Tüm katılımcıların sesi kapatıldı');
+  // Mute all (teacher) – LiveKit RoomService ile gerçek muting
+  const muteAll = async () => {
+    if (!meetingId || !token || role !== 'teacher') {
+      pushInfoToast('Ses kapatma işlemi yapılamadı');
+      return;
+    }
+    try {
+      const res = await muteAllInMeeting(token, meetingId);
+      pushInfoToast(
+        res.muted > 0
+          ? `${res.muted} katılımcının sesi kapatıldı`
+          : 'Tüm katılımcıların sesi zaten kapalı',
+      );
+    } catch {
+      pushInfoToast('Ses kapatma işlemi başarısız oldu');
+    }
   };
 
   // Meeting code
@@ -818,6 +960,11 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
                     <div className="participant-name">{p.name}</div>
                     <div className="participant-role">
                       {p.isLocal ? 'Toplantıyı düzenleyen' : 'Katılımcı'}
+                      {p.joinedAt && (
+                        <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', opacity: 0.8 }}>
+                          • {formatDuration(p.joinedAt)}
+                        </span>
+                      )}
                     </div>
                     {role === 'teacher' && !p.isLocal && studentStats[p.id] && studentStats[p.id].total > 0 && (
                       <div style={{ marginTop: '4px' }}>
@@ -905,6 +1052,137 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
               >
                 <span style={{ fontSize: '16px' }}>▶</span>
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Anket (Poll) Panel */}
+        {pollPanelOpen && (
+          <div className="live-chat-panel" style={{ right: chatOpen ? 340 : 0 }}>
+            <div className="live-chat-header">
+              <span className="live-chat-title">Anket</span>
+              <button className="participants-close" onClick={() => setPollPanelOpen(false)}>
+                <span style={{ fontSize: '18px', fontWeight: 'bold' }}>✕</span>
+              </button>
+            </div>
+            <div style={{ padding: '1rem', overflowY: 'auto' }}>
+              {role === 'teacher' && !activePoll && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Anket sorusu"
+                    value={pollCreateQuestion}
+                    onChange={(e) => setPollCreateQuestion(e.target.value)}
+                    style={{
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: 10,
+                      border: '1px solid rgba(51,65,85,0.9)',
+                      background: 'rgba(15,23,42,0.9)',
+                      color: '#e2e8f0',
+                    }}
+                  />
+                  {pollCreateOptions.map((opt, i) => (
+                    <input
+                      key={i}
+                      type="text"
+                      placeholder={`Seçenek ${i + 1}`}
+                      value={opt}
+                      onChange={(e) => setPollCreateOptions((prev) => {
+                        const next = [...prev];
+                        next[i] = e.target.value;
+                        return next;
+                      })}
+                      style={{
+                        padding: '0.5rem 0.75rem',
+                        borderRadius: 10,
+                        border: '1px solid rgba(51,65,85,0.9)',
+                        background: 'rgba(15,23,42,0.9)',
+                        color: '#e2e8f0',
+                      }}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => setPollCreateOptions((prev) => [...prev, ''])}
+                    style={{ alignSelf: 'flex-start', fontSize: '0.85rem' }}
+                  >
+                    + Seçenek ekle
+                  </button>
+                  <button type="button" className="primary-btn" onClick={createPoll}>
+                    Anketi Başlat
+                  </button>
+                </div>
+              )}
+              {(activePoll || (role === 'student' && pollPanelOpen)) && activePoll && (
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#e2e8f0' }}>{activePoll.question}</div>
+                  {!myPollVote ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {activePoll.options.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() => votePoll(opt.id)}
+                          style={{
+                            padding: '0.6rem 1rem',
+                            textAlign: 'left',
+                            border: '1px solid rgba(51,65,85,0.9)',
+                            borderRadius: 10,
+                            color: '#e2e8f0',
+                          }}
+                        >
+                          {opt.text}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      {activePoll.options.map((opt) => {
+                        const count = pollVotes[opt.id] ?? 0;
+                        const total = Object.values(pollVotes).reduce((s, v) => s + v, 0);
+                        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                        return (
+                          <div key={opt.id}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.85rem' }}>
+                              <span>{opt.text}</span>
+                              <span>{count} oy (%{pct})</span>
+                            </div>
+                            <div
+                              style={{
+                                height: 8,
+                                background: 'rgba(51,65,85,0.6)',
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${pct}%`,
+                                  height: '100%',
+                                  background: 'rgba(59,130,246,0.8)',
+                                  transition: 'width 0.3s',
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {role === 'teacher' && (
+                        <button type="button" className="ghost-btn" onClick={endPoll} style={{ marginTop: '0.75rem' }}>
+                          Anketi Kapat
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {role === 'student' && !activePoll && pollPanelOpen && (
+                <div style={{ color: '#94a3b8', fontSize: '0.9rem', textAlign: 'center', padding: '1rem' }}>
+                  Henüz aktif anket yok
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1085,11 +1363,26 @@ const LiveClassInner: React.FC<{ role?: 'teacher' | 'student'; title?: string; o
             setChatOpen(!chatOpen);
             if (participantsOpen) setParticipantsOpen(false);
             if (assignmentsOpen) setAssignmentsOpen(false);
+            if (pollPanelOpen) setPollPanelOpen(false);
           }}
           title="Sohbet"
         >
           <MessageSquare size={24} strokeWidth={2} />
         </button>
+
+        {role === 'teacher' && (
+          <button
+            className={`control-btn ${pollPanelOpen ? 'control-btn--active' : ''}`}
+            onClick={() => {
+              setPollPanelOpen(!pollPanelOpen);
+              if (chatOpen) setChatOpen(false);
+              if (participantsOpen) setParticipantsOpen(false);
+            }}
+            title="Anket"
+          >
+            <BarChart2 size={24} strokeWidth={2} />
+          </button>
+        )}
 
         {role === 'student' && (
           <button

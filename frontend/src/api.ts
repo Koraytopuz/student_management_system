@@ -74,6 +74,8 @@ export interface Message {
   id: string;
   fromUserId: string;
   toUserId: string;
+  fromUserName?: string;
+  toUserName?: string;
   studentId?: string;
   subject?: string;
   text: string;
@@ -118,6 +120,22 @@ export interface ParentNotification {
   body: string;
   createdAt: string;
   read: boolean;
+  type?: string;
+  relatedEntityType?: string;
+  relatedEntityId?: string;
+}
+
+export interface AdminNotification {
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  body: string;
+  read: boolean;
+  relatedEntityType?: string;
+  relatedEntityId?: string;
+  readAt?: string;
+  createdAt: string;
 }
 
 export interface TeacherNotification {
@@ -127,7 +145,7 @@ export interface TeacherNotification {
   type: string;
   title: string;
   body: string;
-  relatedEntityType?: 'assignment' | 'test' | 'meeting' | 'message' | 'content' | 'feedback';
+  relatedEntityType?: 'assignment' | 'test' | 'meeting' | 'message' | 'content' | 'feedback' | 'help_request';
   relatedEntityId?: string;
   createdAt: string;
   read: boolean;
@@ -175,6 +193,7 @@ export interface StudentAssignment {
     fileUrl: string;
     fileName: string;
     mimeType: string;
+    answerKeyJson?: string;
   };
 }
 
@@ -206,6 +225,12 @@ export interface StudentAssignmentDetail {
   questions: Question[];
 }
 
+export interface StudentContentWatchRecord {
+  watchedSeconds: number;
+  completed: boolean;
+  lastWatchedAt?: string;
+}
+
 export interface StudentContent {
   id: string;
   title: string;
@@ -214,7 +239,8 @@ export interface StudentContent {
   url?: string;
   subjectId?: string;
   topic?: string;
-   gradeLevel?: string;
+  gradeLevel?: string;
+  watchRecord?: StudentContentWatchRecord;
 }
 
 export interface ProgressOverview {
@@ -434,6 +460,10 @@ export interface TeacherHelpRequestItem {
   questionId?: string;
   questionNumber?: number;
   questionText?: string;
+  correctAnswer?: string;
+  studentAnswer?: string;
+  testAssetFileUrl?: string;
+  testAssetId?: string;
   message?: string;
   status: 'open' | 'in_progress' | 'resolved' | 'cancelled';
   createdAt: string;
@@ -443,6 +473,7 @@ export interface TeacherHelpRequestItem {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
 const AUTH_STORAGE_KEY = 'student_mgmt_auth';
+const BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '') || '';
 
 function clearAuthAndRedirectToLogin() {
   try {
@@ -450,8 +481,13 @@ function clearAuthAndRedirectToLogin() {
   } catch {
     // ignore
   }
-  if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-    window.location.href = '/login';
+  if (typeof window !== 'undefined') {
+    const loginPath = BASE_PATH ? `${BASE_PATH}/login` : '/login';
+    const path = window.location.pathname.replace(/\/$/, '');
+    const isLoginPage = path === '/login' || path.endsWith('/login');
+    if (!isLoginPage) {
+      window.location.href = loginPath;
+    }
   }
 }
 
@@ -566,6 +602,14 @@ export function deleteTeacherNotification(token: string, notificationId: string)
   return apiRequest(`/teacher/notifications/${notificationId}`, { method: 'DELETE' }, token);
 }
 
+export function getAdminNotifications(token: string, limit = 50) {
+  return apiRequest<AdminNotification[]>(`/admin/notifications?limit=${limit}`, {}, token);
+}
+
+export function markAdminNotificationRead(token: string, notificationId: string) {
+  return apiRequest(`/admin/notifications/${notificationId}/read`, { method: 'PUT' }, token);
+}
+
 export function getParentMeetings(token: string) {
   return apiRequest<ParentMeeting[]>('/parent/meetings', {}, token);
 }
@@ -630,14 +674,16 @@ export function completeStudentAssignment(
   token: string,
   assignmentId: string,
   submittedInLiveClass?: boolean,
+  answers?: Record<string, string>,
 ) {
+  const body: { submittedInLiveClass?: boolean; answers?: Record<string, string> } = {};
+  if (submittedInLiveClass) body.submittedInLiveClass = submittedInLiveClass;
+  if (answers && Object.keys(answers).length > 0) body.answers = answers;
   return apiRequest(
     `/student/assignments/${assignmentId}/complete`,
     {
       method: 'POST',
-      body: JSON.stringify(
-        submittedInLiveClass ? { submittedInLiveClass } : {},
-      ),
+      body: JSON.stringify(body),
     },
     token,
   );
@@ -645,7 +691,7 @@ export function completeStudentAssignment(
 
 export function createStudentHelpRequest(
   token: string,
-  payload: { assignmentId: string; questionId: string; message?: string },
+  payload: { assignmentId: string; questionId: string; message?: string; studentAnswer?: string },
 ) {
   return apiRequest<StudentHelpRequest>(
     '/student/help-requests',
@@ -774,7 +820,7 @@ export function getStudentTodos(token: string) {
 export function uploadTeacherVideo(token: string, file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  return fetch('http://localhost:4000/teacher/contents/upload-video', {
+  return fetch(`${API_BASE_URL}/teacher/contents/upload-video`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1021,6 +1067,14 @@ export function startTeacherLiveMeeting(token: string, meetingId: string) {
   );
 }
 
+export function muteAllInMeeting(token: string, meetingId: string) {
+  return apiRequest<{ success: boolean; muted: number }>(
+    `/teacher/meetings/${meetingId}/mute-all`,
+    { method: 'POST' },
+    token,
+  );
+}
+
 export function joinStudentLiveMeeting(token: string, meetingId: string) {
   return apiRequest<LiveClassSession>(
     `/student/meetings/${meetingId}/join-live`,
@@ -1119,6 +1173,7 @@ export function createTeacherTestAsset(
     fileUrl: string;
     fileName: string;
     mimeType: string;
+    answerKeyJson?: string;
   },
 ) {
   return apiRequest<TeacherTestAsset>(
@@ -1162,7 +1217,6 @@ export function sendTeacherAiMessage(
     format?: 'pdf' | 'xlsx' | null;
   },
 ) {
-  // Öğretmen paneli için ayrı endpoint
   return apiRequest<StudentAiChatResponse>(
     '/teacher/ai/chat',
     {
@@ -1171,5 +1225,69 @@ export function sendTeacherAiMessage(
     },
     token,
   );
+}
+
+/** Otomatik soru üretimi */
+export function generateTeacherQuestions(
+  token: string,
+  payload: { gradeLevel?: string; topic: string; count?: number; difficulty?: string; format?: 'metin' | 'pdf' | 'xlsx' },
+) {
+  return apiRequest<{
+    questions: string;
+    attachment?: { filename: string; mimeType: string; data: string };
+    answerKey?: Record<string, string>;
+  }>('/teacher/ai/generate-questions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, token);
+}
+
+/** Ödev/cevap değerlendirme */
+export function evaluateTeacherAnswer(
+  token: string,
+  payload: {
+    questionText: string;
+    correctAnswer: string;
+    studentAnswer: string;
+    questionType?: string;
+  },
+) {
+  return apiRequest<{ evaluation: string }>('/teacher/ai/evaluate-answer', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, token);
+}
+
+/** Metin özetleme (öğretmen) */
+export function summarizeTeacherText(
+  token: string,
+  payload: { text: string; maxLength?: 'kısa' | 'orta' | 'uzun' },
+) {
+  return apiRequest<{ summary: string }>('/teacher/ai/summarize', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, token);
+}
+
+/** Öğrenciye özel çalışma planı */
+export function getStudentStudyPlan(
+  token: string,
+  payload?: { focusTopic?: string; weeklyHours?: number },
+) {
+  return apiRequest<{ studyPlan: string }>('/student/ai/study-plan', {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }, token);
+}
+
+/** Metin özetleme (öğrenci) */
+export function summarizeStudentText(
+  token: string,
+  payload: { text: string; maxLength?: 'kısa' | 'orta' | 'uzun' },
+) {
+  return apiRequest<{ summary: string }>('/student/ai/summarize', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, token);
 }
 

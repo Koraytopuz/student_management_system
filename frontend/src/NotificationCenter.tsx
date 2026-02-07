@@ -15,6 +15,8 @@ interface Notification {
 
 interface NotificationCenterProps {
   role: UserRole;
+  /** Tam bildirim sayfasına yönlendirme; "Tümünü Gör" tıklandığında çağrılır */
+  onViewAll?: () => void;
 }
 
 const getNotificationIcon = (type: Notification['type']): string => {
@@ -36,7 +38,7 @@ const getNotificationIcon = (type: Notification['type']): string => {
   }
 };
 
-export const NotificationCenter: React.FC<NotificationCenterProps> = ({ role }) => {
+export const NotificationCenter: React.FC<NotificationCenterProps> = ({ role, onViewAll }) => {
   const { token } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -75,7 +77,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ role }) 
     if (!token) return;
     try {
       setLoading(true);
-      const data = await apiRequest<Notification[]>(`/${role}/notifications?limit=10`, {}, token);
+      const data = await apiRequest<Notification[]>(`/${role}/notifications?limit=50`, {}, token);
       setNotifications(data);
     } catch (error) {
       console.error('Failed to load notifications:', error);
@@ -324,7 +326,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ role }) 
                 type="button"
                 onClick={() => {
                   setIsOpen(false);
-                  // TODO: Navigate to full notifications page
+                  onViewAll?.();
                 }}
                 style={{
                   background: 'none',

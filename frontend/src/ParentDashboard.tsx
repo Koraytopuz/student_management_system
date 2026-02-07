@@ -26,10 +26,11 @@ import {
   type TeacherListItem,
 } from './api';
 import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
-import type { SidebarItem } from './components/DashboardPrimitives';
+import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
+import { useSearchParams } from 'react-router-dom';
 
-type ParentTab = 'overview' | 'calendar' | 'messages' | 'feedback' | 'complaints';
+type ParentTab = 'overview' | 'calendar' | 'messages' | 'notifications' | 'feedback' | 'complaints';
 
 const getWeekRange = () => {
   const now = new Date();
@@ -56,7 +57,16 @@ const formatTime = (iso?: string) => {
 export const ParentDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<ParentTab>('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'overview' || tab === 'notifications') {
+      setActiveTab(tab === 'notifications' ? 'notifications' : 'overview');
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
 
@@ -95,7 +105,7 @@ export const ParentDashboard: React.FC = () => {
   useEffect(() => {
     if (!token) return;
     const { start, end } = getWeekRange();
-    notificationsState.run(() => getParentNotifications(token)).catch(() => {});
+    notificationsState.run(() => getParentNotifications(token, 50)).catch(() => {});
     calendarState
       .run(async () => {
         const payload = await getParentCalendar(token, start.toISOString(), end.toISOString());
@@ -184,6 +194,18 @@ export const ParentDashboard: React.FC = () => {
         onClick: () => setActiveTab('messages'),
       },
       {
+        id: 'notifications',
+        label: 'Bildirimler',
+        icon: <Bell size={18} />,
+        description: 'Kurum bildirimleri',
+        badge:
+          (notificationsState.data ?? []).filter((n) => !n.read).length > 0
+            ? (notificationsState.data ?? []).filter((n) => !n.read).length
+            : undefined,
+        active: activeTab === 'notifications',
+        onClick: () => setActiveTab('notifications'),
+      },
+      {
         id: 'feedback',
         label: 'Değerlendirme',
         icon: <BookOpen size={18} />,
@@ -200,8 +222,24 @@ export const ParentDashboard: React.FC = () => {
         onClick: () => setActiveTab('complaints'),
       },
     ],
-    [activeTab, conversationsState.data],
+    [activeTab, conversationsState.data, notificationsState.data],
   );
+
+  const parentBreadcrumbs = useMemo<BreadcrumbItem[]>(() => {
+    const tabLabels: Record<string, string> = {
+      overview: 'Akademik Durum',
+      calendar: 'Devamsızlık',
+      messages: 'İletişim',
+      notifications: 'Bildirimler',
+      feedback: 'Değerlendirme',
+      complaints: 'Şikayet/Öneri',
+    };
+    const items: BreadcrumbItem[] = [
+      { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
+    ];
+    if (tabLabels[activeTab]) items.push({ label: tabLabels[activeTab] });
+    return items;
+  }, [activeTab]);
 
   return (
     <DashboardLayout
@@ -214,10 +252,16 @@ export const ParentDashboard: React.FC = () => {
         label: selectedChild?.status === 'active' ? 'Aktif - Okulda' : 'Pasif',
         tone: selectedChild?.status === 'active' ? 'success' : 'warning',
       }}
+      breadcrumbs={parentBreadcrumbs}
       sidebarItems={sidebarItems}
       user={{ initials: user?.name?.slice(0, 2).toUpperCase() ?? 'VP', name: user?.name ?? 'Veli', subtitle: 'Veli' }}
       headerActions={
-        <button type="button" className="ghost-btn" aria-label="Bildirimler">
+        <button
+          type="button"
+          className="ghost-btn"
+          aria-label="Bildirimler"
+          onClick={() => setActiveTab('notifications')}
+        >
           <Bell size={16} />
         </button>
       }
@@ -234,6 +278,30 @@ export const ParentDashboard: React.FC = () => {
       )}
       {activeTab === 'calendar' && (
         <ParentCalendar events={calendarState.data ?? []} loading={calendarState.loading} />
+      )}
+      {activeTab === 'notifications' && (
+        <GlassCard title="Bildirimler" subtitle="Kurum ve öğretmen bildirimleri">
+          <div className="list-stack">
+            {notificationsState.loading && (notificationsState.data ?? []).length === 0 && (
+              <div className="empty-state">Yükleniyor...</div>
+            )}
+            {!notificationsState.loading && (notificationsState.data ?? []).length === 0 && (
+              <div className="empty-state">Henüz bildirim yok.</div>
+            )}
+            {(notificationsState.data ?? []).map((item) => (
+              <div className="list-row" key={item.id}>
+                <div>
+                  <strong>{item.title}</strong>
+                  <small>{item.body}</small>
+                  <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.75 }}>
+                    {new Date(item.createdAt).toLocaleDateString('tr-TR')}
+                  </small>
+                </div>
+                <TagChip label={item.read ? 'Okundu' : 'Yeni'} tone={item.read ? 'success' : 'warning'} />
+              </div>
+            ))}
+          </div>
+        </GlassCard>
       )}
       {activeTab === 'messages' && (
         <ParentMessages

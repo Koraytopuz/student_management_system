@@ -852,6 +852,15 @@ button:disabled {
   color: #1d4ed8;
 }
 
+.breadcrumb button {
+  text-decoration: none;
+}
+.breadcrumb button:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .dashboard-user {
   display: flex;
   align-items: center;
@@ -1769,6 +1778,51 @@ button:disabled {
   color: #991b1b;
 }
 
+/* Mobil hamburger butonu – sadece küçük ekranda (topbar altında) */
+.sidebar-hamburger {
+  display: none;
+  position: fixed;
+  top: 4.25rem;
+  left: 1rem;
+  z-index: 100;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--panel-surface);
+  color: var(--color-text-main);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-soft);
+  transition: background 0.2s, transform 0.15s;
+}
+.sidebar-hamburger:hover {
+  background: var(--color-surface-soft);
+}
+.sidebar-hamburger:active {
+  transform: scale(0.96);
+}
+
+/* Sidebar overlay – mobilde drawer arka planı */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 98;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s, visibility 0.25s;
+}
+.sidebar-overlay--open {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Tablet: grid tek kolon, sidebar üstte */
 @media (max-width: 1100px) {
   .dashboard-shell {
     grid-template-columns: 1fr;
@@ -1785,10 +1839,56 @@ button:disabled {
   }
 }
 
+/* Mobil: hamburger + slide-in drawer */
+@media (max-width: 768px) {
+  .sidebar-hamburger {
+    display: flex;
+  }
+
+  .sidebar-overlay {
+    display: block;
+  }
+
+  .dashboard-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(300px, 85vw);
+    max-width: 300px;
+    z-index: 99;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .dashboard-sidebar--open {
+    transform: translateX(0);
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5);
+  }
+
+  .sidebar-menu {
+    flex-direction: column;
+  }
+
+  .menu-item {
+    flex: none;
+    min-height: 48px;
+    padding: 0.85rem 1rem;
+  }
+
+  .dashboard-main {
+    padding: 1rem;
+    padding-top: 4.5rem;
+  }
+}
+
 @media (max-width: 720px) {
   .dashboard-header {
     flex-direction: column;
     align-items: flex-start;
+    gap: 1rem;
   }
 
   .dashboard-user {
@@ -1796,19 +1896,31 @@ button:disabled {
     justify-content: space-between;
   }
 
-  .sidebar-menu {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
   .menu-item {
-    flex: 1 1 calc(50% - 0.5rem);
+    min-height: 48px;
   }
 }
 
 @media (max-width: 640px) {
   .topbar {
     padding-inline: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .topbar-left .logo-text {
+    font-size: 0.9rem;
+  }
+
+  .topbar-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .user-pill,
+  .panel-pill {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.6rem;
   }
 
   .main {
@@ -1828,6 +1940,8 @@ button:disabled {
 
   .role-btn {
     white-space: nowrap;
+    min-height: 44px;
+    padding: 0.6rem 1rem;
   }
 
   .tabs {
@@ -1837,10 +1951,48 @@ button:disabled {
   .tabs button {
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
+    min-height: 44px;
   }
 
   body {
     font-family: 'Inter', 'Space Grotesk', sans-serif;
+  }
+
+  /* Tablolar mobilde yatay kaydırma */
+  .glass-card table,
+  table.data-table,
+  .list-container table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Modal/dialog mobilde tam genişlik */
+  .modal-overlay .modal,
+  .glass-card[role='dialog'],
+  [role='dialog'] {
+    max-width: 95vw;
+    width: 100%;
+    margin: 0.5rem;
+  }
+
+  /* Kart ve liste satırları mobilde daha geniş dokunma alanı */
+  .list-row,
+  .menu-item,
+  button.primary,
+  button.secondary {
+    min-height: 44px;
+  }
+
+  .card-actions button,
+  .card-actions a {
+    min-height: 44px;
+    padding: 0.5rem 1rem;
+  }
+
+  /* Metrik kartları mobilde tek sütun */
+  .metrics-grid {
+    grid-template-columns: 1fr !important;
   }
 }
 

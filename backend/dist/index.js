@@ -2,6 +2,7 @@
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 const dotenv_1 = __importDefault(require("dotenv"));
 const express_1 = __importDefault(require("express"));
@@ -16,16 +17,25 @@ const routes_admin_1 = __importDefault(require("./routes.admin"));
 // Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
 dotenv_1.default.config();
 const app = (0, express_1.default)();
-const PORT = 4000;
+const PORT = Number(process.env.PORT) || 4000;
+// Production'da ALLOWED_ORIGINS ile izin verilen domain'ler (virgülle ayrılmış)
+// Örnek: https://www.skytechyazilim.com.tr,https://skytechyazilim.com.tr
+const allowedOriginsStr = (_a = process.env.ALLOWED_ORIGINS) !== null && _a !== void 0 ? _a : '';
+const allowedOrigins = allowedOriginsStr
+    ? allowedOriginsStr.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
 app.use((0, cors_1.default)({
-    // Geliştirme için herhangi bir localhost portundan (5173, 5174, vs.) gelen istekleri kabul et
     origin: (origin, callback) => {
-        if (!origin) {
-            // curl gibi origin göndermeyen istekler
+        if (!origin)
+            return callback(null, true);
+        if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
             return callback(null, true);
         }
-        if (origin.startsWith('http://localhost:')) {
+        if (allowedOrigins.length > 0 && allowedOrigins.includes(origin)) {
             return callback(null, true);
+        }
+        if (allowedOrigins.length === 0) {
+            return callback(new Error('CORS: İzin verilmeyen origin'), false);
         }
         return callback(new Error('CORS: İzin verilmeyen origin'), false);
     },

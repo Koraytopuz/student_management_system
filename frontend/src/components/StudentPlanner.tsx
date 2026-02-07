@@ -8,9 +8,11 @@ import {
   PenSquare,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
+import { getStudentStudyPlan } from '../api';
 import type {
   StudentAssignment,
   StudentContent,
@@ -43,6 +45,7 @@ type StudentPlannerProps = {
   onCreate: (payload: PlannerCreatePayload) => Promise<void>;
   onUpdate: (id: string, updates: Partial<StudentTodo>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  token?: string | null;
 };
 
 const COLUMN_CONFIG: Array<{
@@ -96,6 +99,7 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
   onCreate,
   onUpdate,
   onDelete,
+  token,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TodoPriority>('all');
@@ -103,6 +107,11 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [studyPlanOpen, setStudyPlanOpen] = useState(false);
+  const [studyPlanLoading, setStudyPlanLoading] = useState(false);
+  const [studyPlanResult, setStudyPlanResult] = useState<string | null>(null);
+  const [studyPlanFocusTopic, setStudyPlanFocusTopic] = useState('');
+  const [studyPlanWeeklyHours, setStudyPlanWeeklyHours] = useState(5);
 
   const [createDraft, setCreateDraft] = useState<{
     title: string;
@@ -283,6 +292,25 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
     await handleStatusChange(todo, status);
   };
 
+  const handleGetStudyPlan = async () => {
+    if (!token) return;
+    setStudyPlanLoading(true);
+    setStudyPlanResult(null);
+    try {
+      const res = await getStudentStudyPlan(token, {
+        focusTopic: studyPlanFocusTopic.trim() || undefined,
+        weeklyHours: studyPlanWeeklyHours,
+      });
+      setStudyPlanResult(res.studyPlan);
+    } catch (err) {
+      setStudyPlanResult(
+        err instanceof Error ? err.message : 'Çalışma planı oluşturulamadı.',
+      );
+    } finally {
+      setStudyPlanLoading(false);
+    }
+  };
+
   return (
     <div className="planner-layout">
       <div className="planner-main">
@@ -328,6 +356,23 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
             <option value="low">Düşük Öncelik</option>
           </select>
 
+          {token && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setStudyPlanOpen(true);
+                setStudyPlanResult(null);
+              }}
+              style={{
+                border: '1px solid rgba(99,102,241,0.6)',
+                color: '#a5b4fc',
+                background: 'rgba(99,102,241,0.1)',
+              }}
+            >
+              <Sparkles size={16} /> AI Çalışma Planı
+            </button>
+          )}
           {!isCreateOpen ? (
             <button
               type="button"
@@ -701,6 +746,131 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
 
         {feedback && <div className="planner-feedback">{feedback}</div>}
       </aside>
+
+      {studyPlanOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.8)',
+            zIndex: 50,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1.5rem',
+          }}
+          onClick={() => setStudyPlanOpen(false)}
+        >
+          <div
+            style={{
+              width: 'min(560px, 100%)',
+              maxHeight: '85vh',
+              background: '#0f172a',
+              borderRadius: 18,
+              border: '1px solid rgba(99,102,241,0.5)',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                padding: '1rem 1.2rem',
+                borderBottom: '1px solid rgba(51,65,85,0.9)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a5b4fc' }}>
+                <Sparkles size={18} />
+                <strong>AI Çalışma Planı Önerisi</strong>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setStudyPlanOpen(false)}
+                style={{ padding: '0.35rem' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '1rem 1.2rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <label style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+                Odak konu (isteğe bağlı)
+                <input
+                  type="text"
+                  value={studyPlanFocusTopic}
+                  onChange={(e) => setStudyPlanFocusTopic(e.target.value)}
+                  placeholder="Örn: Üslü Sayılar"
+                  style={{
+                    display: 'block',
+                    marginTop: '0.25rem',
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: 10,
+                    border: '1px solid rgba(51,65,85,0.9)',
+                    background: 'rgba(15,23,42,0.9)',
+                    color: '#e2e8f0',
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+                Haftalık hedef saat
+                <select
+                  value={studyPlanWeeklyHours}
+                  onChange={(e) => setStudyPlanWeeklyHours(Number(e.target.value))}
+                  style={{
+                    display: 'block',
+                    marginTop: '0.25rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: 10,
+                    border: '1px solid rgba(51,65,85,0.9)',
+                    background: 'rgba(15,23,42,0.9)',
+                    color: '#e2e8f0',
+                  }}
+                >
+                  {[3, 5, 7, 10, 14].map((h) => (
+                    <option key={h} value={h}>{h} saat</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={handleGetStudyPlan}
+                disabled={studyPlanLoading}
+                style={{ alignSelf: 'flex-start' }}
+              >
+                {studyPlanLoading ? (
+                  <><Loader2 size={16} className="spinner" /> Oluşturuluyor...</>
+                ) : (
+                  <><Sparkles size={16} /> Plan Oluştur</>
+                )}
+              </button>
+            </div>
+            {studyPlanResult && (
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  padding: '1rem 1.2rem',
+                  borderTop: '1px solid rgba(51,65,85,0.9)',
+                  background: 'rgba(2,6,23,0.95)',
+                  whiteSpace: 'pre-wrap',
+                  fontSize: '0.9rem',
+                  lineHeight: 1.6,
+                  color: '#e2e8f0',
+                }}
+              >
+                {studyPlanResult}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

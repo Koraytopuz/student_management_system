@@ -252,6 +252,48 @@ router.get('/complaints', (0, auth_1.authenticate)('admin'), async (req, res) =>
         });
     }));
 });
+// Bildirimler (şikayet/öneri vb.)
+router.get('/notifications', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const userId = req.user.id;
+    const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
+    const list = await db_1.prisma.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: limit > 0 ? limit : 50,
+    });
+    return res.json(list.map((n) => {
+        var _a, _b, _c;
+        return ({
+            id: n.id,
+            userId: n.userId,
+            type: n.type,
+            title: n.title,
+            body: n.body,
+            read: n.read,
+            relatedEntityType: (_a = n.relatedEntityType) !== null && _a !== void 0 ? _a : undefined,
+            relatedEntityId: (_b = n.relatedEntityId) !== null && _b !== void 0 ? _b : undefined,
+            readAt: (_c = n.readAt) === null || _c === void 0 ? void 0 : _c.toISOString(),
+            createdAt: n.createdAt.toISOString(),
+        });
+    }));
+});
+router.put('/notifications/:id/read', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    var _a;
+    const userId = req.user.id;
+    const id = String(req.params.id);
+    const n = await db_1.prisma.notification.findFirst({ where: { id, userId } });
+    if (!n)
+        return res.status(404).json({ error: 'Bildirim bulunamadı' });
+    const updated = await db_1.prisma.notification.update({
+        where: { id },
+        data: { read: true, readAt: new Date() },
+    });
+    return res.json({
+        id: updated.id,
+        read: updated.read,
+        readAt: (_a = updated.readAt) === null || _a === void 0 ? void 0 : _a.toISOString(),
+    });
+});
 router.put('/complaints/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
     var _a, _b, _c, _d, _e;
     const id = String(req.params.id);

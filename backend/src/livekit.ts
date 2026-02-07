@@ -1,12 +1,15 @@
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
 // Not: Bu örnek projede basitlik için LiveKit
 // yapılandırmasını doğrudan kod içine yazıyoruz.
 // Üretim ortamında bunları .env üzerinden okumak gerekir.
 
 const livekitUrl = 'wss://studentmanagementsystem-lxfvpk7h.livekit.cloud';
+const livekitApiUrl = 'https://studentmanagementsystem-lxfvpk7h.livekit.cloud';
 const livekitApiKey = 'APIJiNyCodMYzVC';
 const livekitApiSecret = 'zOd5eaXndMOGgjNkHpHNaqyhxTiIxQSSEUIdJWU32sa';
+
+const roomService = new RoomServiceClient(livekitApiUrl, livekitApiKey, livekitApiSecret);
 
 export function buildRoomName(meetingId: string) {
   return `meeting-${meetingId}`;
@@ -38,6 +41,19 @@ export function getLiveKitUrl() {
   return livekitUrl;
 }
 
-
+/** Tüm katılımcıların mikrofonlarını kapat (öğretmen için). TrackType.AUDIO = 0 */
+export async function muteAllParticipantsInRoom(roomName: string): Promise<{ muted: number }> {
+  const participants = await roomService.listParticipants(roomName);
+  let muted = 0;
+  for (const p of participants) {
+    for (const track of p.tracks) {
+      if (track.type === 0) {
+        await roomService.mutePublishedTrack(roomName, p.identity, track.sid, true);
+        muted += 1;
+      }
+    }
+  }
+  return { muted };
+}
 
 

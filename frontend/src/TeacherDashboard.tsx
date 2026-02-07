@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import { useSearchParams } from 'react-router-dom';
 import {
   createTeacherContent,
   createTeacherAssignment,
@@ -41,7 +42,6 @@ import {
   sendTeacherMessage,
   uploadTeacherVideo,
   getTeacherTests,
-  createTeacherStructuredTest,
   uploadTeacherTestAssetFile,
   getTeacherTestAssets,
   createTeacherTestAsset,
@@ -57,11 +57,11 @@ import {
   type TeacherHelpRequestItem,
   type Message,
   sendTeacherAiMessage,
+  generateTeacherQuestions,
   type TeacherAnnouncement,
   createTeacherAnnouncement,
   type TeacherTest,
   type TeacherTestAsset,
-  type TeacherQuestionDraft,
   type TeacherNotification,
   getTeacherNotifications,
   getTeacherUnreadNotificationCount,
@@ -70,8 +70,14 @@ import {
   deleteTeacherNotification,
   markTeacherMessageRead,
 } from './api';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
-import type { SidebarItem } from './components/DashboardPrimitives';
+
+if (typeof pdfjsLib.GlobalWorkerOptions !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+}
+import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { LiveClassOverlay } from './LiveClassOverlay';
 
@@ -223,15 +229,31 @@ export const TeacherDashboard: React.FC = () => {
     audience: 'all',
     selectedStudentIds: [],
   });
-  const [liveClass, setLiveClass] = useState<{ url: string; token: string; title?: string } | null>(null);
+  const [liveClass, setLiveClass] = useState<{
+    url: string;
+    token: string;
+    title?: string;
+    meetingId?: string;
+  } | null>(null);
 
   // Bildirimler (öğretmen)
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<TeacherNotification[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
+  const [focusHelpRequestId, setFocusHelpRequestId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const notificationId = searchParams.get('notificationId');
+    if (tab === 'notifications') {
+      setActiveTab('notifications');
+      if (notificationId) setActiveNotificationId(notificationId);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const handleReloadNotifications = async () => {
     if (!token) return;
@@ -706,7 +728,12 @@ export const TeacherDashboard: React.FC = () => {
       }
       if (session.mode === 'internal' && session.url && session.token) {
         const title = meetings.find((m) => m.id === meetingId)?.title;
-        setLiveClass({ url: session.url, token: session.token, title });
+        setLiveClass({
+          url: session.url,
+          token: session.token,
+          title,
+          meetingId,
+        });
       }
     } catch (error) {
       // eslint-disable-next-line no-alert
@@ -854,6 +881,24 @@ export const TeacherDashboard: React.FC = () => {
     [activeTab],
   );
 
+  const teacherBreadcrumbs = useMemo<BreadcrumbItem[]>(() => {
+    const tabLabels: Record<string, string> = {
+      overview: 'Genel Bakış',
+      content: 'Ders İçeriği',
+      live: 'Canlı Ders',
+      tests: 'Test & Sorular',
+      support: 'Yardım Talepleri',
+      notifications: 'Bildirimler',
+      calendar: 'Takvim & Etüt',
+      students: 'Öğrenciler',
+    };
+    const items: BreadcrumbItem[] = [
+      { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
+    ];
+    if (tabLabels[activeTab]) items.push({ label: tabLabels[activeTab] });
+    return items;
+  }, [activeTab]);
+
   return (
     <DashboardLayout
       accent="slate"
@@ -862,6 +907,7 @@ export const TeacherDashboard: React.FC = () => {
       title="Öğretmen Yönetim Paneli"
       subtitle="Gerçek zamanlı içerik, takvim ve öğrenci verileri."
       status={{ label: `${dashboardState.data?.recentActivity?.length ?? 0} aktivite`, tone: 'warning' }}
+      breadcrumbs={teacherBreadcrumbs}
       sidebarItems={sidebarItems}
       user={{
         initials: user?.name?.slice(0, 2).toUpperCase() ?? 'ÖĞ',
@@ -887,11 +933,9 @@ export const TeacherDashboard: React.FC = () => {
             className="ghost-btn"
             aria-label="Bildirimler"
             onClick={() => {
-              setNotificationsOpen((open) => !open);
-              if (!notificationsOpen) {
-                handleReloadNotifications().catch(() => {});
-                handleReloadUnreadCount().catch(() => {});
-              }
+              setActiveTab('notifications');
+              handleReloadNotifications().catch(() => {});
+              handleReloadUnreadCount().catch(() => {});
             }}
             style={{ position: 'relative' }}
           >
@@ -922,284 +966,23 @@ export const TeacherDashboard: React.FC = () => {
       }
       onLogout={logout}
     >
-      {notificationsOpen && activeTab !== 'notifications' && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 80,
-            right: 24,
-            width: 320,
-            maxHeight: '70vh',
-            background: 'var(--color-surface)',
-            borderRadius: 16,
-            boxShadow: '0 18px 45px rgba(15,23,42,0.45)',
-            border: '1px solid var(--color-border-subtle)',
-            padding: '0.85rem 0.9rem',
-            zIndex: 40,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.5rem',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '0.25rem',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>Bildirimler</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                {unreadNotificationCount > 0
-                  ? `${unreadNotificationCount} okunmamış bildirim`
-                  : 'Tüm bildirimler okundu'}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '0.25rem' }}>
+      {activeTab === 'notifications' && (
+        <GlassCard
+          title="Bildirimler"
+          subtitle="Mesaj ve sistem uyarıları"
+          actions={
+            unreadNotificationCount > 0 ? (
               <button
                 type="button"
                 className="ghost-btn"
-                style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }}
-                onClick={() => {
-                  handleMarkAllNotificationsRead().catch(() => {});
-                }}
+                onClick={handleMarkAllNotificationsRead}
+                style={{ fontSize: '0.8rem' }}
               >
-                Tümünü okundu
+                Tümünü okundu işaretle
               </button>
-            </div>
-          </div>
-
-          {(() => {
-            const active = notifications.find((n) => n.id === activeNotificationId) ?? null;
-            if (!active) return null;
-            return (
-              <div
-                className="card"
-                style={{
-                  padding: '0.6rem 0.7rem',
-                  borderRadius: 12,
-                  border: '1px solid var(--color-border-subtle)',
-                  background: 'var(--color-surface-strong, rgba(15,23,42,0.04))',
-                  marginBottom: '0.25rem',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: '0.5rem',
-                    marginBottom: '0.3rem',
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontSize: '0.9rem',
-                        fontWeight: 600,
-                        marginBottom: '0.15rem',
-                      }}
-                    >
-                      {active.title}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: '0.78rem',
-                        color: 'var(--color-text-muted)',
-                      }}
-                    >
-                      {active.type === 'message_received'
-                        ? 'Veli / öğrenci mesajı'
-                        : active.type === 'help_response_played'
-                          ? 'Çözüm oynatıldı bildirimi'
-                          : 'Sistem bildirimi'}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div
-                      style={{
-                        fontSize: '0.72rem',
-                        color: 'var(--color-text-muted)',
-                      }}
-                    >
-                      {new Date(active.createdAt).toLocaleString('tr-TR')}
-                    </div>
-                    <div style={{ marginTop: '0.25rem' }}>
-                      {!active.read ? (
-                        <button
-                          type="button"
-                          className="ghost-btn"
-                          style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-                          onClick={() => {
-                            handleMarkNotificationRead(active.id).catch(() => {});
-                          }}
-                        >
-                          Okundu
-                        </button>
-                      ) : (
-                        <span
-                          style={{
-                            fontSize: '0.7rem',
-                            color: 'var(--color-text-muted)',
-                          }}
-                        >
-                          Okundu
-                          {active.readAt
-                            ? ` · ${new Date(active.readAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`
-                            : ''}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div
-                  style={{
-                    fontSize: '0.82rem',
-                    color: 'var(--color-text-main)',
-                  }}
-                >
-                  {active.body}
-                </div>
-              </div>
-            );
-          })()}
-
-          {notificationsError && (
-            <div
-              style={{
-                fontSize: '0.75rem',
-                color: 'var(--color-danger, #ef4444)',
-                marginBottom: '0.25rem',
-              }}
-            >
-              {notificationsError}
-            </div>
-          )}
-
-          {notificationsLoading && (
-            <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Yükleniyor…</div>
-          )}
-
-          {!notificationsLoading && notifications.length === 0 && (
-            <div
-              style={{
-                fontSize: '0.8rem',
-                color: 'var(--color-text-muted)',
-                padding: '0.5rem 0.25rem 0.25rem',
-              }}
-            >
-              Henüz bildirim yok.
-            </div>
-          )}
-
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.4rem',
-              marginTop: '0.2rem',
-              overflowY: 'auto',
-            }}
-          >
-            {notifications.map((n) => (
-              <button
-                key={n.id}
-                type="button"
-                onClick={() => {
-                  handleNotificationClick(n);
-                  setActiveTab('notifications');
-                  setNotificationsOpen(false);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: '0.5rem',
-                  padding: '0.45rem 0.5rem',
-                  borderRadius: 10,
-                  border: n.read
-                    ? '1px solid rgba(148,163,184,0.25)'
-                    : '1px solid rgba(59,130,246,0.55)',
-                  background:
-                    activeNotificationId === n.id
-                      ? 'rgba(59,130,246,0.12)'
-                      : n.read
-                        ? 'var(--color-elevated, rgba(15,23,42,0.03))'
-                        : 'rgba(59,130,246,0.06)',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                }}
-              >
-                <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 999,
-                    background: 'rgba(59,130,246,0.12)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  {n.type === 'message_received' ? (
-                    <MessageCircle size={14} />
-                  ) : n.type === 'help_response_played' ? (
-                    <TrendingUp size={14} />
-                  ) : (
-                    <Bell size={14} />
-                  )}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      gap: '0.25rem',
-                      marginBottom: '0.15rem',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: '0.85rem',
-                        fontWeight: n.read ? 500 : 600,
-                        color: 'var(--color-text-main)',
-                      }}
-                    >
-                      {n.title}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: '0.7rem',
-                        color: 'var(--color-text-muted)',
-                      }}
-                    >
-                      {new Date(n.createdAt).toLocaleTimeString('tr-TR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: '0.78rem',
-                      color: 'var(--color-text-muted)',
-                      marginBottom: '0.1rem',
-                      wordBreak: 'break-word',
-                    }}
-                  >
-                    {n.body}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      {activeTab === 'notifications' && (
-        <GlassCard title="Bildirimler" subtitle="Mesaj ve sistem uyarıları">
+            ) : undefined
+          }
+        >
           {notificationsLoading && <div className="empty-state">Yükleniyor...</div>}
           {notificationsError && (
             <div className="error" style={{ marginBottom: '0.75rem' }}>
@@ -1339,6 +1122,22 @@ export const TeacherDashboard: React.FC = () => {
                           )}
                           <div style={{ marginTop: '0.35rem' }}>{relatedMessage.text}</div>
                         </div>
+                      )}
+
+                      {current.type === 'help_request_created' &&
+                        current.relatedEntityType === 'help_request' &&
+                        current.relatedEntityId && (
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={() => {
+                            setFocusHelpRequestId(current.relatedEntityId!);
+                            setActiveTab('support');
+                          }}
+                          style={{ alignSelf: 'flex-start' }}
+                        >
+                          Soruyu gör ve çöz
+                        </button>
                       )}
 
                       <div
@@ -1571,7 +1370,11 @@ export const TeacherDashboard: React.FC = () => {
         />
       )}
       {activeTab === 'support' && (
-        <TeacherSupport token={token} />
+        <TeacherSupport
+          token={token}
+          focusHelpRequestId={focusHelpRequestId}
+          onFocusHandled={() => setFocusHelpRequestId(null)}
+        />
       )}
       {activeTab === 'students' && (
         <TeacherStudents
@@ -1629,6 +1432,7 @@ export const TeacherDashboard: React.FC = () => {
           token={liveClass.token}
           title={liveClass.title}
           role="teacher"
+          meetingId={liveClass.meetingId}
           onClose={() => setLiveClass(null)}
         />
       )}
@@ -1636,7 +1440,11 @@ export const TeacherDashboard: React.FC = () => {
   );
 };
 
-const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
+const TeacherSupport: React.FC<{
+  token: string | null;
+  focusHelpRequestId?: string | null;
+  onFocusHandled?: () => void;
+}> = ({ token, focusHelpRequestId, onFocusHandled }) => {
   const [items, setItems] = useState<TeacherHelpRequestItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1653,6 +1461,8 @@ const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [pdfPageImage, setPdfPageImage] = useState<string | null>(null);
+  const solutionRecordRef = useRef<HTMLDivElement>(null);
 
   const refresh = async () => {
     if (!token) return;
@@ -1673,6 +1483,25 @@ const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
   }, [token]);
 
   useEffect(() => {
+    if (!focusHelpRequestId || !onFocusHandled) return;
+    if (items.some((x) => x.id === focusHelpRequestId)) {
+      setActiveRequestId(focusHelpRequestId);
+      setMode('audio_only');
+      setUseScreenShare(false);
+      clearRecording();
+      onFocusHandled();
+    }
+  }, [focusHelpRequestId, items, onFocusHandled]);
+
+  useEffect(() => {
+    if (activeRequestId) {
+      setTimeout(() => {
+        solutionRecordRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+    }
+  }, [activeRequestId]);
+
+  useEffect(() => {
     return () => {
       try {
         mediaRecorderRef.current?.stop();
@@ -1688,6 +1517,50 @@ const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
       if (recordedUrl) URL.revokeObjectURL(recordedUrl);
     };
   }, [recordedUrl]);
+
+  const activeRequestForEffect = activeRequestId ? items.find((x) => x.id === activeRequestId) ?? null : null;
+  const pdfFileUrl = activeRequestForEffect?.testAssetFileUrl;
+  const pdfPageMatch = activeRequestForEffect?.questionId?.match(/^pdf-page-(\d+)$/);
+  const pdfPageNum = pdfPageMatch ? parseInt(pdfPageMatch[1], 10) : 0;
+
+  useEffect(() => {
+    if (!pdfFileUrl || !pdfPageNum) {
+      setPdfPageImage(null);
+      return;
+    }
+    let cancelled = false;
+    setPdfPageImage(null);
+    (async () => {
+      try {
+        const loadingTask = pdfjsLib.getDocument({ url: pdfFileUrl, withCredentials: false });
+        const pdfDoc = await loadingTask.promise;
+        if (cancelled) return;
+        const page = await pdfDoc.getPage(pdfPageNum);
+        const scale = 3;
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx || cancelled) return;
+        canvas.width = Math.min(viewport.width, 1000);
+        canvas.height = (viewport.height * canvas.width) / viewport.width;
+        const scaledViewport = page.getViewport({ scale: (scale * canvas.width) / viewport.width });
+        await page.render({
+          canvasContext: ctx,
+          viewport: scaledViewport,
+          intent: 'display',
+          background: 'rgb(255,255,255)',
+          canvas,
+        }).promise;
+        if (cancelled) return;
+        setPdfPageImage(canvas.toDataURL('image/png'));
+      } catch {
+        if (!cancelled) setPdfPageImage(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfFileUrl, pdfPageNum]);
 
   const stopStream = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -1874,6 +1747,13 @@ const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
                 <small style={{ display: 'block', marginTop: '0.15rem' }}>
                   {r.questionNumber ? `${r.questionNumber}. soru` : 'Soru'} {r.message ? `— ${r.message}` : ''}
                 </small>
+                {(r.correctAnswer != null || r.studentAnswer != null) && (
+                  <small style={{ display: 'block', marginTop: '0.2rem', opacity: 0.9 }}>
+                    Doğru cevap: <strong>{r.correctAnswer ?? '-'}</strong>
+                    {' · '}
+                    Öğrenci cevabı: <strong>{r.studentAnswer || 'boş'}</strong>
+                  </small>
+                )}
                 <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.75 }}>
                   {new Date(r.createdAt).toLocaleString('tr-TR')}
                 </small>
@@ -1935,11 +1815,47 @@ const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
       </GlassCard>
 
       {activeRequest && (
+        <div ref={solutionRecordRef}>
         <GlassCard
           title="Çözüm Kaydı"
-          subtitle={`${activeRequest.studentName} · ${activeRequest.assignmentTitle} · ${activeRequest.questionNumber ?? '-'} `}
+          subtitle={`${activeRequest.studentName} · ${activeRequest.assignmentTitle} · ${activeRequest.questionNumber ?? '-'}. soru${(activeRequest.correctAnswer != null || activeRequest.studentAnswer != null) ? ` · Doğru: ${activeRequest.correctAnswer ?? '-'} · Öğrenci: ${activeRequest.studentAnswer ?? 'boş'}` : ''}`}
         >
           <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {(pdfPageImage || activeRequest.questionText) && (
+              <div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
+                  Soru önizlemesi
+                </div>
+                {pdfPageImage ? (
+                  <img
+                    src={pdfPageImage}
+                    alt={`Soru ${activeRequest.questionNumber ?? ''}`}
+                    style={{
+                      maxWidth: '100%',
+                      maxHeight: 480,
+                      objectFit: 'contain',
+                      borderRadius: 12,
+                      border: '1px solid rgba(71,85,105,0.6)',
+                      background: '#fff',
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      padding: '1rem',
+                      borderRadius: 12,
+                      border: '1px solid rgba(71,85,105,0.6)',
+                      background: 'var(--color-surface-soft, rgba(248,250,252,0.5))',
+                      whiteSpace: 'pre-wrap',
+                      fontSize: '0.95rem',
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {activeRequest.questionText}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <button
                 type="button"
@@ -2067,6 +1983,7 @@ const TeacherSupport: React.FC<{ token: string | null }> = ({ token }) => {
             )}
           </div>
         </GlassCard>
+        </div>
       )}
     </div>
   );
@@ -2080,7 +1997,7 @@ const TeacherTests: React.FC<{
   onTestsChanged: () => void;
   onTestAssetsChanged: () => void;
   onAssignmentCreated: () => void;
-}> = ({ token, students, tests, testAssets, onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
+}> = ({ token, students, tests, testAssets, onTestsChanged: _onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
   // Yapılandırılmış test oluşturma UI'ı geçici olarak devre dışı (sadece dosya tabanlı testler kullanılıyor)
 
   const [assetDraft, setAssetDraft] = useState({
@@ -2115,7 +2032,17 @@ const TeacherTests: React.FC<{
   const [assignSaving, setAssignSaving] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
-  const [assignFileId, setAssignFileId] = useState<string>('');
+  const [_assignFileId, _setAssignFileId] = useState<string>('');
+  const [aiGenTopic, setAiGenTopic] = useState('');
+  const [aiGenGrade, setAiGenGrade] = useState('9');
+  const [aiGenCount, setAiGenCount] = useState(5);
+  const [aiGenDifficulty, setAiGenDifficulty] = useState('orta');
+  const [aiGenFormat, setAiGenFormat] = useState<'metin' | 'pdf' | 'xlsx'>('metin');
+  const [aiGenLoading, setAiGenLoading] = useState(false);
+  const [aiGenResult, setAiGenResult] = useState<string | null>(null);
+  const [aiGenAttachment, setAiGenAttachment] = useState<{ filename: string; mimeType: string; data: string } | null>(null);
+  const [aiGenAnswerKey, setAiGenAnswerKey] = useState<Record<string, string> | null>(null);
+  const [aiGenSavingAsTest, setAiGenSavingAsTest] = useState(false);
 
   useEffect(() => {
     if (!assignDraft.studentId && students[0]) {
@@ -2141,10 +2068,6 @@ const TeacherTests: React.FC<{
     const local = new Date(base.getTime() - base.getTimezoneOffset() * 60 * 1000);
     setAssignDraft((p) => ({ ...p, dueDate: local.toISOString().slice(0, 16) }));
   };
-
-  const handleAddQuestion = () => {};
-
-  const handleSaveStructured = async () => {};
 
   const handleUploadAsset = async () => {
     if (!token) return;
@@ -2251,9 +2174,159 @@ const TeacherTests: React.FC<{
     }
   };
 
+  const handleAiGenerateQuestions = async () => {
+    if (!token || !aiGenTopic.trim()) return;
+    setAiGenLoading(true);
+    setAiGenResult(null);
+    setAiGenAttachment(null);
+    setAiGenAnswerKey(null);
+    try {
+      const res = await generateTeacherQuestions(token, {
+        topic: aiGenTopic.trim(),
+        gradeLevel: `${aiGenGrade}. Sınıf`,
+        count: aiGenCount,
+        difficulty: aiGenDifficulty,
+        format: aiGenFormat,
+      });
+      setAiGenResult(res.questions);
+      if (res.attachment) {
+        setAiGenAttachment(res.attachment);
+      }
+      if (res.answerKey && Object.keys(res.answerKey).length > 0) {
+        setAiGenAnswerKey(res.answerKey);
+      }
+    } catch (e) {
+      setAiGenResult(e instanceof Error ? e.message : 'Soru üretilemedi.');
+    } finally {
+      setAiGenLoading(false);
+    }
+  };
+
+  const handleSaveAiAsTest = async () => {
+    if (!token || !aiGenAttachment || !aiGenAnswerKey) return;
+    setAiGenSavingAsTest(true);
+    try {
+      const blob = new Blob(
+        [Uint8Array.from(atob(aiGenAttachment.data), (c) => c.charCodeAt(0))],
+        { type: aiGenAttachment.mimeType },
+      );
+      const file = new File([blob], aiGenAttachment.filename, { type: aiGenAttachment.mimeType });
+      const uploaded = await uploadTeacherTestAssetFile(token, file);
+      await createTeacherTestAsset(token, {
+        title: `${aiGenTopic.trim()} - AI`,
+        subjectId: assetDraft.subjectId,
+        topic: aiGenTopic.trim(),
+        gradeLevel: assetDraft.gradeLevel,
+        fileUrl: uploaded.url,
+        fileName: uploaded.fileName,
+        mimeType: uploaded.mimeType,
+        answerKeyJson: JSON.stringify(aiGenAnswerKey),
+      });
+      onTestAssetsChanged();
+      setAiGenAttachment(null);
+      setAiGenAnswerKey(null);
+      // eslint-disable-next-line no-alert
+      alert('Test dosyası kaydedildi. Artık ödev olarak atayabilirsiniz.');
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert(e instanceof Error ? e.message : 'Kaydedilemedi.');
+    } finally {
+      setAiGenSavingAsTest(false);
+    }
+  };
+
+  const downloadAiGenAttachment = () => {
+    if (!aiGenAttachment) return;
+    const blob = new Blob(
+      [Uint8Array.from(atob(aiGenAttachment.data), (c) => c.charCodeAt(0))],
+      { type: aiGenAttachment.mimeType },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = aiGenAttachment.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="dual-grid">
       <div style={{ display: 'grid', gap: '1rem' }}>
+        <GlassCard title="AI ile Otomatik Soru Üretimi" subtitle="Konu ve kriterlere göre test soruları oluştur">
+          <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+            <input
+              type="text"
+              placeholder="Konu (örn: Üslü Sayılar)"
+              value={aiGenTopic}
+              onChange={(e) => setAiGenTopic(e.target.value)}
+            />
+            <select value={aiGenGrade} onChange={(e) => setAiGenGrade(e.target.value)}>
+              <option value="9">9. Sınıf</option>
+              <option value="10">10. Sınıf</option>
+              <option value="11">11. Sınıf</option>
+              <option value="12">12. Sınıf</option>
+            </select>
+            <select value={aiGenCount} onChange={(e) => setAiGenCount(Number(e.target.value))}>
+              {[3, 5, 10, 15, 20].map((n) => (
+                <option key={n} value={n}>{n} soru</option>
+              ))}
+            </select>
+            <select value={aiGenDifficulty} onChange={(e) => setAiGenDifficulty(e.target.value)}>
+              <option value="kolay">Kolay</option>
+              <option value="orta">Orta</option>
+              <option value="zor">Zor</option>
+            </select>
+            <select value={aiGenFormat} onChange={(e) => setAiGenFormat(e.target.value as 'metin' | 'pdf' | 'xlsx')}>
+              <option value="metin">Metin</option>
+              <option value="pdf">PDF İndir</option>
+              <option value="xlsx">Excel İndir</option>
+            </select>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={handleAiGenerateQuestions}
+              disabled={aiGenLoading || !aiGenTopic.trim()}
+            >
+              {aiGenLoading ? 'Üretiliyor...' : 'Soruları Üret'}
+            </button>
+          </div>
+          {aiGenResult && (
+            <div style={{ marginTop: '1rem' }}>
+              {aiGenAttachment && (
+                <div style={{ marginBottom: '0.6rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button type="button" className="primary-btn" onClick={downloadAiGenAttachment}>
+                    {aiGenAttachment.filename.endsWith('.pdf') ? 'PDF İndir' : 'Excel İndir'}
+                  </button>
+                  {aiGenAttachment.filename.endsWith('.pdf') && aiGenAnswerKey && Object.keys(aiGenAnswerKey).length > 0 && (
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={handleSaveAiAsTest}
+                      disabled={aiGenSavingAsTest}
+                      style={{ border: '1px solid rgba(34,197,94,0.9)', color: '#4ade80' }}
+                    >
+                      {aiGenSavingAsTest ? 'Kaydediliyor...' : 'Test Olarak Kaydet'}
+                    </button>
+                  )}
+                </div>
+              )}
+              <div
+                style={{
+                  padding: '1rem',
+                  borderRadius: 12,
+                  background: 'rgba(15,23,42,0.5)',
+                  border: '1px solid rgba(51,65,85,0.9)',
+                  whiteSpace: 'pre-wrap',
+                  fontSize: '0.9rem',
+                  maxHeight: 320,
+                  overflowY: 'auto',
+                }}
+              >
+                {aiGenResult}
+              </div>
+            </div>
+          )}
+        </GlassCard>
         <GlassCard title="Test Dosyası Yükle" subtitle="PDF gibi bir dosyayı test olarak ekleyin">
           <div style={{ display: 'grid', gap: '0.6rem' }}>
             <input
@@ -2801,7 +2874,7 @@ const TeacherCalendar: React.FC<{
   announcementError: string | null;
 }> = ({
   events,
-  onCreateMeeting,
+  onCreateMeeting: _onCreateMeeting,
   onEditMeeting,
   onDeleteMeeting,
   announcements,
@@ -3602,10 +3675,10 @@ const TeacherStudents: React.FC<{
   selectedStudentId,
   onSelectStudent,
   assignments,
-  messages,
+  messages: _messages,
   studentProfile,
   profileLoading,
-  onMarkMessageRead,
+  onMarkMessageRead: _onMarkMessageRead,
 }) => {
   type MessageMode = 'none' | 'student' | 'parent';
   const [messageMode, setMessageMode] = useState<MessageMode>('none');

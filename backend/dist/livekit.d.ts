@@ -6,4 +6,8 @@ export declare function createLiveKitToken(params: {
     isTeacher: boolean;
 }): Promise<string>;
 export declare function getLiveKitUrl(): string;
+/** Tüm katılımcıların mikrofonlarını kapat (öğretmen için). TrackType.AUDIO = 0 */
+export declare function muteAllParticipantsInRoom(roomName: string): Promise<{
+    muted: number;
+}>;
 //# sourceMappingURL=livekit.d.ts.map

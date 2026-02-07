@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { apiRequest } from './api';
+import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification } from './api';
 import { useAuth } from './AuthContext';
 import {
   DashboardLayout,
@@ -7,7 +7,7 @@ import {
   MetricCard,
   TagChip,
 } from './components/DashboardPrimitives';
-import type { SidebarItem } from './components/DashboardPrimitives';
+import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 
 interface AdminSummary {
   teacherCount: number;
@@ -76,8 +76,10 @@ export const AdminDashboard: React.FC = () => {
     studentId: '',
   });
 
-  type AdminTab = 'overview' | 'teachers' | 'students' | 'parents' | 'complaints';
+  type AdminTab = 'overview' | 'teachers' | 'students' | 'parents' | 'notifications' | 'complaints';
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>([]);
+  const [adminNotificationsLoading, setAdminNotificationsLoading] = useState(false);
   const [activeComplaintId, setActiveComplaintId] = useState<string | null>(null);
 
   const sidebarItems = useMemo<SidebarItem[]>(
@@ -115,6 +117,15 @@ export const AdminDashboard: React.FC = () => {
         onClick: () => setActiveTab('parents'),
       },
       {
+        id: 'notifications',
+        label: 'Bildirimler',
+        icon: <span>🔔</span>,
+        description: 'Sistem bildirimleri',
+        badge: adminNotifications.filter((n) => !n.read).length || undefined,
+        active: activeTab === 'notifications',
+        onClick: () => setActiveTab('notifications'),
+      },
+      {
         id: 'complaints',
         label: 'Şikayet / Öneri',
         icon: <span>💬</span>,
@@ -123,8 +134,24 @@ export const AdminDashboard: React.FC = () => {
         onClick: () => setActiveTab('complaints'),
       },
     ],
-    [activeTab],
+    [activeTab, adminNotifications],
   );
+
+  const adminBreadcrumbs = useMemo<BreadcrumbItem[]>(() => {
+    const tabLabels: Record<string, string> = {
+      overview: 'Genel Bakış',
+      teachers: 'Öğretmenler',
+      students: 'Öğrenciler',
+      parents: 'Veliler',
+      notifications: 'Bildirimler',
+      complaints: 'Şikayet / Öneri',
+    };
+    const items: BreadcrumbItem[] = [
+      { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
+    ];
+    if (tabLabels[activeTab]) items.push({ label: tabLabels[activeTab] });
+    return items;
+  }, [activeTab]);
 
   useEffect(() => {
     if (!token) return;
@@ -151,6 +178,15 @@ export const AdminDashboard: React.FC = () => {
 
     fetchAll();
   }, [token]);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'notifications') return;
+    setAdminNotificationsLoading(true);
+    getAdminNotifications(token)
+      .then(setAdminNotifications)
+      .catch(() => setAdminNotifications([]))
+      .finally(() => setAdminNotificationsLoading(false));
+  }, [token, activeTab]);
 
   async function handleAddTeacher(e: React.FormEvent) {
     e.preventDefault();
@@ -259,6 +295,7 @@ export const AdminDashboard: React.FC = () => {
             }
           : undefined
       }
+      breadcrumbs={adminBreadcrumbs}
       sidebarItems={sidebarItems}
       user={{
         initials: user?.name?.slice(0, 2).toUpperCase() ?? 'AD',
@@ -345,6 +382,68 @@ export const AdminDashboard: React.FC = () => {
             </GlassCard>
           </div>
         </>
+      )}
+
+      {activeTab === 'notifications' && (
+        <GlassCard title="Bildirimler" subtitle="Şikayet / öneri ve sistem bildirimleri">
+          {adminNotificationsLoading && adminNotifications.length === 0 && (
+            <div className="empty-state">Yükleniyor...</div>
+          )}
+          {!adminNotificationsLoading && adminNotifications.length === 0 && (
+            <div className="empty-state">Henüz bildirim yok.</div>
+          )}
+          {adminNotifications.length > 0 && (
+            <div className="list-stack">
+              {adminNotifications.map((n) => (
+                <div key={n.id} className="list-row" style={{ alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    <strong style={{ display: 'block' }}>{n.title}</strong>
+                    <small style={{ display: 'block', marginTop: '0.15rem' }}>{n.body}</small>
+                    <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.75 }}>
+                      {new Date(n.createdAt).toLocaleString('tr-TR')}
+                    </small>
+                    {n.relatedEntityType === 'complaint' && n.relatedEntityId && (
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}
+                        onClick={() => {
+                          setActiveComplaintId(n.relatedEntityId!);
+                          setActiveTab('complaints');
+                        }}
+                      >
+                        Şikayeti incele
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <TagChip label={n.read ? 'Okundu' : 'Yeni'} tone={n.read ? 'success' : 'warning'} />
+                    {!n.read && (
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}
+                        onClick={async () => {
+                          if (!token) return;
+                          try {
+                            await markAdminNotificationRead(token, n.id);
+                            setAdminNotifications((prev) =>
+                              prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)),
+                            );
+                          } catch {
+                            // ignore
+                          }
+                        }}
+                      >
+                        Okundu
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
       )}
 
       {activeTab === 'complaints' && (

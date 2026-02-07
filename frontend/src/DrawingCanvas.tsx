@@ -3,9 +3,14 @@ import React, { useEffect, useRef, useState } from 'react';
 interface DrawingCanvasProps {
   width?: number;
   height?: number;
+  /** When set, canvas displays at these dimensions (for high-DPI: width/height are pixel res, these are logical size) */
+  canvasDisplayWidth?: number;
+  canvasDisplayHeight?: number;
   backgroundImageUrl?: string;
   initialImageDataUrl?: string;
   onChange?: (dataUrl: string) => void;
+  /** When set, Temizle will call this instead of clearing to blank - lets parent restore background (e.g. PDF question) */
+  onClearToBackground?: () => void;
   tool?: 'pen' | 'line' | 'rect' | 'triangle' | 'eraser';
   color?: string;
   lineWidth?: number;
@@ -15,9 +20,12 @@ interface DrawingCanvasProps {
 export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   width = 800,
   height = 500,
+  canvasDisplayWidth,
+  canvasDisplayHeight,
   backgroundImageUrl,
   initialImageDataUrl,
   onChange,
+  onClearToBackground,
   tool = 'pen',
   color = '#111827',
   lineWidth,
@@ -176,8 +184,20 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const handleClear = () => {
     const canvas = canvasRef.current;
     if (!canvas || !ctx) return;
+    // When parent provides onClearToBackground, clear only drawings and restore PDF/question
+    if (onClearToBackground) {
+      onClearToBackground();
+      return;
+    }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (onChange) {
+    if (backgroundImageUrl) {
+      const img = new Image();
+      img.src = backgroundImageUrl;
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (onChange) onChange(canvas.toDataURL('image/png'));
+      };
+    } else if (onChange) {
       onChange(canvas.toDataURL('image/png'));
     }
   };
@@ -195,6 +215,9 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           background: '#ffffff',
           boxShadow: '0 18px 40px rgba(15,23,42,0.25)',
           maxWidth: '100%',
+          ...(canvasDisplayWidth != null && canvasDisplayHeight != null
+            ? { width: canvasDisplayWidth, height: canvasDisplayHeight }
+            : {}),
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

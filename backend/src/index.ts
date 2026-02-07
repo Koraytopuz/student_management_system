@@ -14,18 +14,35 @@ import adminRoutes from './routes.admin';
 dotenv.config();
 
 const app = express();
-const PORT = 4000;
+const PORT = Number(process.env.PORT) || 4000;
+
+// Production'da ALLOWED_ORIGINS ile izin verilen domain'ler (virgülle ayrılmış)
+// Örnek: https://www.skytechyazilim.com.tr,https://skytechyazilim.com.tr
+const allowedOriginsStr = process.env.ALLOWED_ORIGINS ?? '';
+const allowedOrigins = allowedOriginsStr
+  ? allowedOriginsStr.split(',').map((o) => o.trim()).filter(Boolean)
+  : [];
 
 app.use(
   cors({
-    // Geliştirme için herhangi bir localhost portundan (5173, 5174, vs.) gelen istekleri kabul et
     origin: (origin, callback) => {
-      if (!origin) {
-        // curl gibi origin göndermeyen istekler
+      if (!origin) return callback(null, true);
+      if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
         return callback(null, true);
       }
-      if (origin.startsWith('http://localhost:')) {
+      // Localtunnel ve ngrok demo tünelleri (URL her seferinde değişse bile)
+      if (origin.endsWith('.loca.lt') || origin.includes('ngrok-free.app') || origin.includes('ngrok-free.dev')) {
         return callback(null, true);
+      }
+      // Vercel deployment'ları
+      if (origin.endsWith('.vercel.app')) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.length > 0 && allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.length === 0) {
+        return callback(new Error('CORS: İzin verilmeyen origin'), false);
       }
       return callback(new Error('CORS: İzin verilmeyen origin'), false);
     },

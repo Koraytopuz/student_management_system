@@ -1,6 +1,6 @@
 import React from 'react';
-import { Moon, Sun } from 'lucide-react';
-import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import { Bell, Moon, Sun } from 'lucide-react';
+import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { LoginPage } from './LoginPage';
 import { TeacherDashboard } from './TeacherDashboard';
@@ -24,6 +24,17 @@ const ProtectedRoute: React.FC<{
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const handleGoToNotifications = (notificationId?: string) => {
+    const path = location.pathname;
+    const idParam = notificationId ? `&notificationId=${encodeURIComponent(notificationId)}` : '';
+    if (path.startsWith('/teacher')) navigate(`/teacher?tab=notifications${idParam}`);
+    else if (path.startsWith('/student')) navigate(`/student?notifications=1${idParam}`);
+    else if (path.startsWith('/parent')) navigate(`/parent?tab=notifications${idParam}`);
+    else if (path.startsWith('/admin')) navigate('/admin');
+  };
   const [isDark, setIsDark] = React.useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     const stored = window.localStorage.getItem('theme_mode');
@@ -73,6 +84,17 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
           {user ? (
             <>
+              {panelTitle && user.role !== 'admin' && /^\/(teacher|student|parent)/.test(location.pathname) && (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  aria-label="Bildirimler"
+                  onClick={() => handleGoToNotifications()}
+                  style={{ padding: '0.5rem' }}
+                >
+                  <Bell size={18} />
+                </button>
+              )}
               {panelTitle && <span className="panel-pill">{panelTitle}</span>}
               <span className="user-pill">
                 {user.name} ({user.role})
@@ -178,7 +200,7 @@ const AppRoutes: React.FC = () => {
 export const App: React.FC = () => {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename="/demo">
         <AppRoutes />
       </BrowserRouter>
     </AuthProvider>

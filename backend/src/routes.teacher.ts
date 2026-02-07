@@ -15,7 +15,8 @@ import {
   TestResult,
   Notification as AppNotification,
 } from './types';
-import { buildRoomName, createLiveKitToken, getLiveKitUrl } from './livekit';
+import { buildRoomName, createLiveKitToken, getLiveKitUrl, muteAllParticipantsInRoom } from './livekit';
+import { callGemini } from './ai';
 
 const router = express.Router();
 
@@ -24,10 +25,10 @@ const DEFAULT_MODEL = 'gemini-2.5-flash';
 const TEACHER_SYSTEM_PROMPT =
   "Rolün: 20 yıllık deneyime sahip, soru bankası yazarlığı yapmış bir başöğretmen asistanı. Görevin: Kullanıcı (Öğretmen) sana 'Sınıf Seviyesi', 'Konu', 'Soru Sayısı' ve 'Zorluk Derecesi' (Kolay/Orta/Zor) verecek. Sen bu verilere göre hatasız bir test hazırlayacaksın.\n\n" +
   'Kurallar:\n\n' +
-  '• Sorular Bloom Taksonomisi\'ne göre belirtilen zorluk seviyesine uygun tasarlanmalıdır (örneğin zor seviye analiz/sentez içermeli).\n' +
-  '• Soru köklerini **kalın** yaz.\n' +
-  '• Şıkları A), B), C), D) biçiminde alt alta yaz; lise seviyesi belirtildiyse E) şıkkını ekle.\n' +
-  '• Tüm sorular tamamlandıktan sonra `---` çizgisi çek ve "Cevap Anahtarı ve Öğretmen Notları" başlığı altında hem doğru şıkları hem de soruların ölçtüğü kazanımları yaz.\n' +
+  '• Her sorudan ÖNCE (ilk soru hariç) "---SAYFA---" yaz; böylece her soru ayrı sayfada görünecek.\n' +
+  '• Sorular Bloom Taksonomisi\'ne göre belirtilen zorluk seviyesine uygun tasarlanmalıdır.\n' +
+  '• Soru köklerini **kalın** yaz. Şıkları A), B), C), D) biçiminde alt alta yaz; lise seviyesi belirtildiyse E) ekle.\n' +
+  '• Tüm sorulardan sonra `---` çizgisi ve "Cevap Anahtarı: 1-A, 2-B, 3-C" formatında doğru cevapları yaz.\n' +
   '• Daima Türkçe konuş.';
 
 type AiChatMessage = {
@@ -112,14 +113,49 @@ function toGeminiContents(history: AiChatMessage[], latest: AiChatMessage) {
   return sanitized;
 }
 
-async function generatePdfFromText(text: string): Promise<Buffer> {
+/** Parse "Cevap Anahtarı: 1-A, 2-B, 3-C" or "1-A, 2-B" format into { "1":"A", "2":"B", ... } */
+function parseAnswerKey(text: string): Record<string, string> {
+  const key: Record<string, string> = {};
+  const match = text.match(/Cevap\s*Anahtar[ıi]:?\s*([\d\s\-A-Ea-e,]+)/i) ||
+    text.match(/(?:^|\n)([\d\s\-A-Ea-e,]+)\s*$/m);
+  const raw = match?.[1] ?? text;
+  const pairs = raw.match(/\d+\s*[-–]\s*[A-Ea-e]/g) ?? raw.match(/(\d+)\s*[:\-]\s*([A-Ea-e])/g);
+  if (pairs) {
+    for (const p of pairs) {
+      const m = p.match(/(\d+)\s*[-–:\s]*([A-Ea-e])/i);
+      if (m && m[1] != null && m[2] != null) key[m[1]] = m[2].toUpperCase();
+    }
+  }
+  return key;
+}
+
+/** Generate PDF with one question per page, return buffer and parsed answer key */
+async function generatePdfFromText(text: string): Promise<{ buffer: Buffer; answerKey: Record<string, string> }> {
+  const fsRequire = require('fs');
+  const fontPath = path.join(__dirname, 'assets', 'fonts', 'arial.ttf');
+
+  const parts = text.split(/(?:---SAYFA---|^---$)/m).map((s) => s.trim()).filter(Boolean);
+  const answerKeyBlock = parts.find((p) => /Cevap\s*Anahtar/i.test(p));
+  let questionBlocks = parts.filter((p) => !/Cevap\s*Anahtar/i.test(p));
+  const answerKey = answerKeyBlock ? parseAnswerKey(answerKeyBlock) : {};
+
+  // Fallback: when AI omits ---SAYFA---, split by **N. Soru:** pattern
+  const firstBlock = questionBlocks[0];
+  const singleBlockHasMultipleQuestions =
+    questionBlocks.length === 1 && firstBlock && (firstBlock.match(/\*\*\d+\.\s*Soru:\*\*/gi)?.length ?? 0) > 1;
+  if (questionBlocks.length === 0 || singleBlockHasMultipleQuestions) {
+    const mainContent = answerKeyBlock ? (text.split(/---\s*\n?Cevap\s*Anahtar/i)[0] ?? text) : text;
+    const splitParts = mainContent.split(/(?=\*\*\d+\.\s*Soru:\*\*)/i);
+    questionBlocks = splitParts
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && /\*\*\d+\.\s*Soru:\*\*/i.test(s));
+  }
+
+  const stripMarkdown = (t: string) => t.replace(/\*\*/g, '').trim();
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
-    const fontPath = path.join(__dirname, 'assets', 'fonts', 'arial.ttf');
-
-    // Check if font exists, otherwise fallback (though we expect it to exist now)
-    const fs = require('fs');
-    if (fs.existsSync(fontPath)) {
+    if (fsRequire.existsSync(fontPath)) {
       doc.font(fontPath);
     } else {
       console.warn('Custom font not found at', fontPath, 'falling back to default');
@@ -127,10 +163,22 @@ async function generatePdfFromText(text: string): Promise<Buffer> {
 
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), answerKey }));
     doc.on('error', reject);
 
-    doc.fontSize(12).text(text, { align: 'left' });
+    if (questionBlocks.length > 0) {
+      for (let i = 0; i < questionBlocks.length; i++) {
+        const raw = questionBlocks[i];
+        if (!raw) continue;
+        if (i > 0) doc.addPage();
+        const block = stripMarkdown(raw);
+        doc.fontSize(18).text(block, { align: 'left', lineGap: 6 });
+      }
+    } else {
+      const firstPart = text.split(/---\s*\n?Cevap\s*Anahtar/i)[0];
+      const mainText: string = answerKeyBlock ? (firstPart?.trim() ?? text) : text;
+      doc.fontSize(18).text(stripMarkdown(mainText), { align: 'left', lineGap: 6 });
+    }
     doc.end();
   });
 }
@@ -333,7 +381,7 @@ router.post(
 
           let attachment: AiAttachment | null = null;
           if (requestedFormat === 'pdf') {
-            const buffer = await generatePdfFromText(reply);
+            const { buffer } = await generatePdfFromText(reply);
             attachment = {
               filename: `soru-paketi-${Date.now()}.pdf`,
               mimeType: 'application/pdf',
@@ -381,6 +429,161 @@ router.post(
       // eslint-disable-next-line no-console
       console.error('[TEACHER_AI] Gemini API request failed', error);
       return res.status(500).json({ error: 'Yapay zeka servisine bağlanılamadı' });
+    }
+  },
+);
+
+// Otomatik soru üretimi (format: metin | pdf | xlsx)
+router.post(
+  '/ai/generate-questions',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const { gradeLevel, topic, count = 5, difficulty = 'orta', format } = req.body as {
+      gradeLevel?: string;
+      topic?: string;
+      count?: number;
+      difficulty?: string;
+      format?: 'metin' | 'pdf' | 'xlsx';
+    };
+    if (!topic || !topic.trim()) {
+      return res.status(400).json({ error: 'Konu alanı zorunludur' });
+    }
+    try {
+      const prompt = `Lütfen aşağıdaki kriterlere uygun test soruları üret:
+
+- Sınıf seviyesi: ${gradeLevel || '9-12 (Lise)'}
+- Konu: ${topic.trim()}
+- Soru sayısı: ${Math.min(Math.max(Number(count) || 5, 1), 20)}
+- Zorluk: ${difficulty || 'orta'} (kolay/orta/zor)
+
+ZORUNLU FORMAT KURALLARI (bu formata tam uy):
+1. Her soru mutlaka A) B) C) D) E) şıklı olsun (5 şık).
+2. Her sorudan hemen önce (ilk soru hariç) ayrı satırda sadece "---SAYFA---" yaz. Böylece her soru ayrı sayfada görünecek.
+3. Her soruyu "**1. Soru:**" "**2. Soru:**" şeklinde numaralandır.
+4. Soru köklerini **kalın** yap. Matematik için x², x³, 4x³ gibi net metin kullan (LaTeX yok). Şekilli sorularda şekli açıkça tarif et, köşe/kenar bilgilerini belirt.
+5. Tüm sorulardan sonra "---" ve "Cevap Anahtarı: 1-A, 2-B, 3-C, ..." formatında doğru cevapları listele.
+6. Daima Türkçe yaz.
+
+Örnek format:
+**1. Soru:** f(x)=x² fonksiyonunun x=2 noktasındaki türevi kaçtır?
+A) 2  B) 4  C) 6  D) 8  E) 10
+---SAYFA---
+**2. Soru:** ...
+A) ...  B) ...  C) ...  D) ...  E) ...
+---SAYFA---
+...
+---
+Cevap Anahtarı: 1-B, 2-C, 3-A, ...`;
+      const result = await callGemini(prompt, {
+        systemInstruction: 'Sen deneyimli bir soru bankası yazarısın. Bloom taksonomisine uygun, net ve ölçülebilir sorular üretirsin.',
+        temperature: 0.6,
+        maxOutputTokens: 4096,
+      });
+
+      const response: {
+        questions: string;
+        attachment?: { filename: string; mimeType: string; data: string };
+        answerKey?: Record<string, string>;
+      } = { questions: result };
+
+      if (format === 'pdf') {
+        const { buffer, answerKey } = await generatePdfFromText(result);
+        response.attachment = {
+          filename: `sorular-${Date.now()}.pdf`,
+          mimeType: 'application/pdf',
+          data: buffer.toString('base64'),
+        };
+        if (Object.keys(answerKey).length > 0) response.answerKey = answerKey;
+      } else if (format === 'xlsx') {
+        const buffer = await generateExcelFromText(result);
+        response.attachment = {
+          filename: `sorular-${Date.now()}.xlsx`,
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          data: buffer.toString('base64'),
+        };
+      }
+
+      return res.json(response);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[AI_GENERATE_QUESTIONS]', error);
+      return res.status(502).json({
+        error: error instanceof Error ? error.message : 'Soru üretilemedi',
+      });
+    }
+  },
+);
+
+// Ödev/cevap değerlendirme
+router.post(
+  '/ai/evaluate-answer',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const { questionText, correctAnswer, studentAnswer, questionType = 'open' } = req.body as {
+      questionText?: string;
+      correctAnswer?: string;
+      studentAnswer?: string;
+      questionType?: string;
+    };
+    if (!questionText || !correctAnswer || studentAnswer === undefined) {
+      return res.status(400).json({ error: 'questionText, correctAnswer ve studentAnswer zorunludur' });
+    }
+    try {
+      const prompt = `Aşağıdaki soru ve öğrenci cevabını değerlendir:
+
+**Soru:** ${questionText}
+
+**Doğru / Beklenen cevap:** ${correctAnswer}
+
+**Öğrenci cevabı:** ${String(studentAnswer).trim() || '(boş)'}
+
+Soru tipi: ${questionType}
+
+Değerlendirmeni şu formatta ver (Türkçe):
+1. Puan (0-100 arası sayı)
+2. Kısa özet (1-2 cümle)
+3. İyileştirme önerisi (varsa)`;
+      const result = await callGemini(prompt, {
+        systemInstruction: 'Sen deneyimli bir öğretmensin. Öğrenci cevaplarını adil ve yapıcı şekilde değerlendirirsin. Küçük doğruları da takdir et.',
+        temperature: 0.3,
+        maxOutputTokens: 1024,
+      });
+      return res.json({ evaluation: result });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[AI_EVALUATE_ANSWER]', error);
+      return res.status(502).json({
+        error: error instanceof Error ? error.message : 'Değerlendirme yapılamadı',
+      });
+    }
+  },
+);
+
+// Metin özetleme
+router.post(
+  '/ai/summarize',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const { text, maxLength = 'orta' } = req.body as { text?: string; maxLength?: string };
+    if (!text || !String(text).trim()) {
+      return res.status(400).json({ error: 'Metin alanı zorunludur' });
+    }
+    try {
+      const lengthHint =
+        maxLength === 'kısa' ? '2-3 cümle' : maxLength === 'uzun' ? '1 paragraf' : '4-6 cümle';
+      const prompt = `Aşağıdaki metni Türkçe olarak özetle. Özet yaklaşık ${lengthHint} uzunluğunda olsun. Ana fikirleri koru:\n\n${String(text).trim()}`;
+      const result = await callGemini(prompt, {
+        systemInstruction: 'Sen metin özetleme uzmanısın. Özetlerde objektif kalır, ana fikirleri korursun.',
+        temperature: 0.3,
+        maxOutputTokens: 1024,
+      });
+      return res.json({ summary: result });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[AI_SUMMARIZE]', error);
+      return res.status(502).json({
+        error: error instanceof Error ? error.message : 'Özet oluşturulamadı',
+      });
     }
   },
 );
@@ -837,7 +1040,7 @@ router.post(
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res) => {
     const teacherId = req.user!.id;
-    const { title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType } = req.body as {
+    const { title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType, answerKeyJson } = req.body as {
       title?: string;
       subjectId?: string;
       topic?: string;
@@ -845,6 +1048,7 @@ router.post(
       fileUrl?: string;
       fileName?: string;
       mimeType?: string;
+      answerKeyJson?: string;
     };
 
     if (!title || !subjectId || !topic || !gradeLevel || !fileUrl || !fileName || !mimeType) {
@@ -859,6 +1063,16 @@ router.post(
         return res.status(400).json({ error: 'Geçersiz subjectId: ilgili ders bulunamadı' });
       }
 
+      let parsedAnswerKey: string | undefined;
+      if (answerKeyJson != null && String(answerKeyJson).trim()) {
+        try {
+          const parsed = JSON.parse(String(answerKeyJson));
+          if (parsed && typeof parsed === 'object') parsedAnswerKey = JSON.stringify(parsed);
+        } catch {
+          return res.status(400).json({ error: 'answerKeyJson geçerli JSON olmalı (örn. {"1":"A","2":"B"})' });
+        }
+      }
+
       const created = await prisma.testAsset.create({
         data: {
           teacherId,
@@ -869,6 +1083,7 @@ router.post(
           fileUrl: fileUrl.trim(),
           fileName: fileName.trim(),
           mimeType: mimeType.trim(),
+          answerKeyJson: parsedAnswerKey ?? undefined,
         },
       });
 
@@ -882,6 +1097,7 @@ router.post(
         fileUrl: created.fileUrl,
         fileName: created.fileName,
         mimeType: created.mimeType,
+        answerKeyJson: created.answerKeyJson ?? undefined,
         createdAt: created.createdAt.toISOString(),
       });
     } catch (error) {
@@ -916,25 +1132,52 @@ router.get(
   '/help-requests',
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res) => {
-    const teacherId = req.user!.id;
-    const status = req.query.status ? String(req.query.status) : undefined;
-    const list = await prisma.helpRequest.findMany({
-      where: {
-        teacherId,
-        ...(status ? { status: status as any } : {}),
-      },
-      include: {
-        student: { select: { id: true, name: true } },
-        assignment: { select: { id: true, title: true, testId: true } },
-        question: { select: { id: true, orderIndex: true, text: true } },
-        response: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
+    try {
+      const teacherId = req.user!.id;
+      const status = req.query.status ? String(req.query.status) : undefined;
+      const list = await prisma.helpRequest.findMany({
+        where: {
+          teacherId,
+          ...(status ? { status: status as any } : {}),
+        },
+        include: {
+          student: { select: { id: true, name: true } },
+          assignment: {
+            select: {
+              id: true,
+              title: true,
+              testId: true,
+              testAssetId: true,
+              testAsset: { select: { answerKeyJson: true, fileUrl: true } },
+            },
+          },
+          question: { select: { id: true, orderIndex: true, text: true, correctAnswer: true } },
+          response: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
 
-    return res.json(
-      list.map((r) => ({
+      return res.json(
+        list.map((r) => {
+        let correctAnswer: string | undefined;
+        const pdfMatch = r.questionId?.match(/^pdf-page-(\d+)$/);
+        if (pdfMatch && pdfMatch[1]) {
+          const pageNum = pdfMatch[1];
+          const answerKeyJson = (r.assignment as any)?.testAsset?.answerKeyJson;
+          if (answerKeyJson) {
+            try {
+              const key = JSON.parse(answerKeyJson) as Record<string, string>;
+              correctAnswer = key[pageNum];
+            } catch {
+              // ignore parse error
+            }
+          }
+        } else if (r.question?.correctAnswer) {
+          correctAnswer = r.question.correctAnswer;
+        }
+        const testAsset = (r.assignment as any)?.testAsset;
+        return {
         id: r.id,
         studentId: r.studentId,
         studentName: r.student?.name ?? 'Öğrenci',
@@ -942,8 +1185,12 @@ router.get(
         assignmentId: r.assignmentId,
         assignmentTitle: r.assignment?.title ?? '',
         questionId: r.questionId ?? undefined,
-        questionNumber: r.question ? (r.question.orderIndex ?? 0) + 1 : undefined,
+        questionNumber: r.question ? (r.question.orderIndex ?? 0) + 1 : (pdfMatch?.[1] ? parseInt(pdfMatch[1], 10) : undefined),
         questionText: r.question?.text ?? undefined,
+        correctAnswer,
+        studentAnswer: r.studentAnswer ?? undefined,
+        testAssetFileUrl: pdfMatch ? testAsset?.fileUrl ?? undefined : undefined,
+        testAssetId: pdfMatch ? (r.assignment as any)?.testAssetId ?? undefined : undefined,
         message: r.message ?? undefined,
         status: r.status,
         createdAt: r.createdAt.toISOString(),
@@ -958,8 +1205,16 @@ router.get(
               playedAt: (r.response as any).playedAt ?? undefined,
             }
           : undefined,
-      })),
+        };
+      }),
     );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[HELP_REQUESTS]', err);
+      return res.status(500).json({
+        error: err instanceof Error ? err.message : 'Yardım talepleri yüklenemedi',
+      });
+    }
   },
 );
 
@@ -1751,6 +2006,96 @@ router.post(
       url: getLiveKitUrl(),
       roomId,
       token,
+    });
+  },
+);
+
+// Tüm katılımcıların sesini kapat (öğretmen)
+router.post(
+  '/meetings/:id/mute-all',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+
+    if (meeting.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+
+    const roomName = buildRoomName(meeting.id);
+
+    try {
+      const { muted } = await muteAllParticipantsInRoom(roomName);
+      return res.json({ success: true, muted });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[mute-all]', err);
+      return res.status(500).json({
+        error: 'Ses kapatma işlemi başarısız oldu. Odada canlı ders devam ediyor mu kontrol edin.',
+      });
+    }
+  },
+);
+
+// Kayıt başlat (placeholder – LiveKit Egress için S3/GCP depolama gerekir)
+router.post(
+  '/meetings/:id/start-recording',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+
+    if (meeting.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+
+    // LiveKit Egress için S3/GCP/Azure depolama konfigürasyonu gerekir.
+    // Şimdilik kayıt bilgisini güncellemeden bilgilendirme dönüyoruz.
+    return res.status(501).json({
+      error:
+        'Kayıt özelliği henüz yapılandırılmadı. LiveKit Egress ve depolama (S3/GCP) kurulumu gereklidir.',
+    });
+  },
+);
+
+// Kayıt durdur (placeholder)
+router.post(
+  '/meetings/:id/stop-recording',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+
+    if (meeting.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+
+    return res.status(501).json({
+      error: 'Kayıt özelliği henüz yapılandırılmadı.',
     });
   },
 );

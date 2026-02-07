@@ -36,14 +36,16 @@ import {
   type StudentAssignmentDetail,
   type TeacherListItem,
 } from './api';
-import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
-import type { SidebarItem } from './components/DashboardPrimitives';
+import { Breadcrumb, DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
+import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { StudentPlanner, type PlannerCreatePayload } from './components/StudentPlanner.tsx';
 import { DrawingCanvas } from './DrawingCanvas';
 import { LiveClassOverlay } from './LiveClassOverlay';
+import { PdfTestOverlay, type PdfTestAssignment } from './PdfTestOverlay';
+import { useSearchParams } from 'react-router-dom';
 
-type StudentTab = 'overview' | 'assignments' | 'planner' | 'grades' | 'complaints';
+type StudentTab = 'overview' | 'assignments' | 'planner' | 'grades' | 'notifications' | 'complaints';
 type AssignmentStatus = 'todo' | 'in-progress' | 'done' | 'overdue';
 
 const sortMeetingsByDate = (items: StudentMeeting[]): StudentMeeting[] =>
@@ -247,8 +249,21 @@ export const StudentDashboard: React.FC = () => {
     relatedEntityId?: string;
   };
 
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<StudentNotification[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [focusedNotificationId, setFocusedNotificationId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const notif = searchParams.get('notifications');
+    const notificationId = searchParams.get('notificationId');
+    if (notif === '1') {
+      setActiveTab('notifications');
+      if (notificationId) setFocusedNotificationId(notificationId);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
 
@@ -296,6 +311,19 @@ export const StudentDashboard: React.FC = () => {
     const id = window.setInterval(() => loadNotifications().catch(() => {}), 30000);
     return () => window.clearInterval(id);
   }, [token]);
+
+  useEffect(() => {
+    if (activeTab === 'notifications' && token) {
+      loadNotifications().catch(() => {});
+    }
+  }, [activeTab, token]);
+
+  useEffect(() => {
+    if (activeTab === 'notifications' && focusedNotificationId && notifications.length > 0) {
+      const el = document.querySelector(`[data-notification-id="${focusedNotificationId}"]`);
+      if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [activeTab, focusedNotificationId, notifications]);
 
   const handleJoinMeeting = async (meetingId?: string) => {
     if (!token) {
@@ -360,6 +388,15 @@ export const StudentDashboard: React.FC = () => {
   } | null>(null);
   const [showNotesLibrary, setShowNotesLibrary] = useState(false);
   const [startedAssignmentIds, setStartedAssignmentIds] = useState<string[]>([]);
+  const [activePdfAssignment, setActivePdfAssignment] = useState<{
+    assignment: PdfTestAssignment;
+    fileUrl: string;
+    timeLimitMinutes?: number;
+    answerKey?: Record<string, string>;
+  } | null>(null);
+  const [pdfTestSubmitting, setPdfTestSubmitting] = useState(false);
+  const [pdfTestStartedAtMs, setPdfTestStartedAtMs] = useState<number | null>(null);
+  const [pdfTestRemainingSeconds, setPdfTestRemainingSeconds] = useState<number | null>(null);
 
   const submitActiveTest = async () => {
     if (!token || !activeTest?.assignment.testId) return;
@@ -418,6 +455,23 @@ export const StudentDashboard: React.FC = () => {
   }, [activeTest?.assignment.id, activeTest?.assignment.timeLimitMinutes, testStartedAtMs]);
 
   useEffect(() => {
+    if (!activePdfAssignment) return;
+    const limitMinutes = activePdfAssignment.timeLimitMinutes;
+    if (pdfTestStartedAtMs == null) return;
+    if (typeof limitMinutes !== 'number' || limitMinutes <= 0) return;
+
+    const totalSeconds = Math.round(limitMinutes * 60);
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - pdfTestStartedAtMs) / 1000);
+      const remaining = Math.max(0, totalSeconds - elapsed);
+      setPdfTestRemainingSeconds(remaining);
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [activePdfAssignment?.assignment.id, activePdfAssignment?.timeLimitMinutes, pdfTestStartedAtMs]);
+
+  useEffect(() => {
     if (!activeTest) return;
     if (typeof testRemainingSeconds !== 'number') return;
     if (testRemainingSeconds > 0) return;
@@ -465,15 +519,32 @@ export const StudentDashboard: React.FC = () => {
       return;
     }
 
-    // Dosya tabanlı test (testAssetId) – PDF / doküman linkini aç
+    // Dosya tabanlı test (testAssetId) – Uygulama içi interaktif PDF test arayüzünü aç
     if (!assignment.testId && assignment.testAssetId && assignment.testAsset) {
       const fileUrl = resolveContentUrl(assignment.testAsset.fileUrl);
-      try {
-        window.open(fileUrl, '_blank', 'noopener,noreferrer');
-      } catch {
-        // eslint-disable-next-line no-alert
-        alert('Test dosyası yeni sekmede açılamadı. Tarayıcınızın açılır pencere engelleyicisini kontrol edin.');
+      let answerKey: Record<string, string> | undefined;
+      if (assignment.testAsset.answerKeyJson) {
+        try {
+          answerKey = JSON.parse(assignment.testAsset.answerKeyJson) as Record<string, string>;
+        } catch {
+          // ignore parse error
+        }
       }
+      const limitMin = assignment.timeLimitMinutes;
+      setPdfTestStartedAtMs(Date.now());
+      setPdfTestRemainingSeconds(
+        typeof limitMin === 'number' && limitMin > 0 ? Math.round(limitMin * 60) : null,
+      );
+      setActivePdfAssignment({
+        assignment: {
+          id: assignment.id,
+          title: assignment.title,
+          testAsset: assignment.testAsset,
+        },
+        fileUrl,
+        timeLimitMinutes: limitMin,
+        answerKey,
+      });
       return;
     }
   };
@@ -546,6 +617,18 @@ export const StudentDashboard: React.FC = () => {
     }
   };
 
+  const breadcrumbs = useMemo<BreadcrumbItem[]>(() => {
+    const items: BreadcrumbItem[] = [
+      { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
+    ];
+    if (activeTab === 'assignments') items.push({ label: 'Ödevler' });
+    else if (activeTab === 'planner') items.push({ label: 'Planlama' });
+    else if (activeTab === 'grades') items.push({ label: 'Sınav Analizi' });
+    else if (activeTab === 'notifications') items.push({ label: 'Bildirimler' });
+    else if (activeTab === 'complaints') items.push({ label: 'Şikayet/Öneri' });
+    return items;
+  }, [activeTab]);
+
   const sidebarItems = useMemo<SidebarItem[]>(
     () => [
       {
@@ -599,6 +682,20 @@ export const StudentDashboard: React.FC = () => {
         },
       },
       {
+        id: 'notifications',
+        label: 'Bildirimler',
+        icon: <Bell size={18} />,
+        description: 'Mesajlar',
+        badge: unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined,
+        active: activeTab === 'notifications',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('notifications');
+          loadNotifications().catch(() => {});
+        },
+      },
+      {
         id: 'complaints',
         label: 'Şikayet/Öneri',
         icon: <ClipboardList size={18} />,
@@ -611,7 +708,7 @@ export const StudentDashboard: React.FC = () => {
         },
       },
     ],
-    [activeTab, assignments.length, plannerTodos.length],
+    [activeTab, assignments.length, plannerTodos.length, unreadNotificationsCount],
   );
 
   return (
@@ -626,12 +723,15 @@ export const StudentDashboard: React.FC = () => {
             ? 'Ödev Akışı'
             : activeTab === 'planner'
               ? 'Planlama'
-              : activeTab === 'complaints'
-                ? 'Şikayet/Öneri'
-                : 'Sınav Analizi'
+              : activeTab === 'notifications'
+                ? 'Bildirimler'
+                : activeTab === 'complaints'
+                  ? 'Şikayet/Öneri'
+                  : 'Sınav Analizi'
       }
       subtitle="Gerçek verilerle çalışma serini ve ödevlerini yönet."
       status={{ label: `${dashboardState.data?.testsSolvedThisWeek ?? 0} test çözüldü`, tone: 'warning' }}
+      breadcrumbs={breadcrumbs}
       sidebarItems={sidebarItems}
       user={{
         initials: user?.name?.slice(0, 2).toUpperCase() ?? 'ÖG',
@@ -657,8 +757,8 @@ export const StudentDashboard: React.FC = () => {
             className="ghost-btn"
             aria-label="Bildirimler"
             onClick={() => {
-              setNotificationsOpen((p) => !p);
-              if (!notificationsOpen) loadNotifications().catch(() => {});
+              setActiveTab('notifications');
+              loadNotifications().catch(() => {});
             }}
             style={{ position: 'relative' }}
           >
@@ -722,10 +822,89 @@ export const StudentDashboard: React.FC = () => {
           onCreate={handleCreateTodo}
           onUpdate={handleUpdateTodo}
           onDelete={handleDeleteTodo}
+          token={token}
         />
       )}
       {activeTab === 'grades' && (
         <StudentGrades progress={progressState.data} charts={chartsState.data} loading={progressState.loading} />
+      )}
+      {activeTab === 'notifications' && (
+        <GlassCard title="Bildirimler" subtitle="Ödevler, çözümler ve güncellemeler">
+          {notificationsLoading && notifications.length === 0 && (
+            <div className="empty-state">Yükleniyor...</div>
+          )}
+          {!notificationsLoading && notifications.length === 0 && (
+            <div className="empty-state">Henüz bildirim yok.</div>
+          )}
+          {notifications.length > 0 && (
+            <div className="list-stack">
+              {notifications.map((n) => (
+                <div
+                  key={n.id}
+                  data-notification-id={n.id}
+                  className="list-row"
+                  style={{
+                    alignItems: 'flex-start',
+                    ...(focusedNotificationId === n.id
+                      ? {
+                          background: 'rgba(59,130,246,0.12)',
+                          borderLeft: '3px solid rgb(59,130,246)',
+                          borderRadius: 8,
+                          marginLeft: 2,
+                        }
+                      : {}),
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <strong style={{ display: 'block' }}>{n.title}</strong>
+                    <small style={{ display: 'block', marginTop: '0.15rem' }}>{n.body}</small>
+                    <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.75 }}>
+                      {formatShortDate(n.createdAt)}
+                    </small>
+                    {n.type === 'help_response_ready' &&
+                      n.relatedEntityType === 'help_request' &&
+                      n.relatedEntityId && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <button
+                            type="button"
+                            className="primary-btn"
+                            onClick={async () => {
+                              if (!token) return;
+                              try {
+                                const help = await getStudentHelpRequest(token, n.relatedEntityId!);
+                                if (!help.response) {
+                                  // eslint-disable-next-line no-alert
+                                  alert('Henüz çözüm eklenmemiş.');
+                                  return;
+                                }
+                                setSolutionOverlay({
+                                  open: true,
+                                  title: n.title,
+                                  mode: help.response.mode,
+                                  url: resolveContentUrl(help.response.url),
+                                  helpRequestId: help.id,
+                                });
+                                if (!n.read) {
+                                  await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
+                                  await loadNotifications();
+                                }
+                              } catch (e) {
+                                // eslint-disable-next-line no-alert
+                                alert(e instanceof Error ? e.message : 'Çözüm açılamadı.');
+                              }
+                            }}
+                          >
+                            Çözümü gör
+                          </button>
+                        </div>
+                      )}
+                  </div>
+                  <TagChip label={n.read ? 'Okundu' : 'Yeni'} tone={n.read ? 'success' : 'warning'} />
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
       )}
       {activeTab === 'complaints' && (
         <StudentComplaints token={token} />
@@ -755,15 +934,16 @@ export const StudentDashboard: React.FC = () => {
             setTestRemainingSeconds(null);
           }}
           remainingSeconds={testRemainingSeconds}
-          onAskTeacher={async (questionId) => {
+          onAskTeacher={async (questionId, message) => {
             if (!token || !activeTest) return;
             try {
               await createStudentHelpRequest(token, {
                 assignmentId: activeTest.assignment.id,
                 questionId,
+                message: message || undefined,
               });
               // eslint-disable-next-line no-alert
-              alert('Öğretmenine bildirim gönderildi. En kısa sürede dönüş yapılacak.');
+              alert('Öğretmenine bildirim gönderildi. Sesli veya video çözümle en kısa sürede dönüş yapılacak.');
             } catch (e) {
               // eslint-disable-next-line no-alert
               alert(e instanceof Error ? e.message : 'Bildirim gönderilemedi.');
@@ -772,6 +952,105 @@ export const StudentDashboard: React.FC = () => {
           readingModeEnabled={readingMode}
           onSubmit={submitActiveTest}
           submitting={testSubmitting}
+        />
+      )}
+      {activePdfAssignment && (
+        <PdfTestOverlay
+          assignment={activePdfAssignment.assignment}
+          fileUrl={activePdfAssignment.fileUrl}
+          timeLimitMinutes={activePdfAssignment.timeLimitMinutes}
+          answerKey={activePdfAssignment.answerKey}
+          remainingSeconds={pdfTestRemainingSeconds}
+          onTimeUp={async (ans) => {
+            if (!token || !activePdfAssignment || pdfTestSubmitting) return;
+            setPdfTestSubmitting(true);
+            try {
+              const answersForApi = Object.fromEntries(
+                Object.entries(ans ?? {}).map(([k, v]) => [String(k), v ?? '']),
+              );
+              const result = (await completeStudentAssignment(
+                token,
+                activePdfAssignment.assignment.id,
+                false,
+                answersForApi,
+              )) as { correctCount?: number; incorrectCount?: number; blankCount?: number; scorePercent?: number };
+              if (typeof result?.correctCount === 'number') {
+                setLastTestResult({
+                  testTitle: activePdfAssignment.assignment.title,
+                  correctCount: result.correctCount,
+                  incorrectCount: result.incorrectCount ?? 0,
+                  blankCount: result.blankCount ?? 0,
+                  scorePercent: result.scorePercent ?? 0,
+                });
+              }
+              setAssignments((prev) => prev.filter((a) => a.id !== activePdfAssignment.assignment.id));
+              setActivePdfAssignment(null);
+              setPdfTestStartedAtMs(null);
+              setPdfTestRemainingSeconds(null);
+              // eslint-disable-next-line no-alert
+              alert('Süre doldu. Test otomatik olarak teslim edildi.');
+            } catch (e) {
+              // eslint-disable-next-line no-alert
+              alert(e instanceof Error ? e.message : 'Teslim edilemedi.');
+            } finally {
+              setPdfTestSubmitting(false);
+            }
+          }}
+          onClose={() => {
+            setActivePdfAssignment(null);
+            setPdfTestStartedAtMs(null);
+            setPdfTestRemainingSeconds(null);
+          }}
+          onAskTeacher={async (questionId, message, studentAnswer) => {
+            if (!token) return;
+            try {
+              await createStudentHelpRequest(token, {
+                assignmentId: activePdfAssignment.assignment.id,
+                questionId,
+                message: message || undefined,
+                studentAnswer: studentAnswer || undefined,
+              });
+              // eslint-disable-next-line no-alert
+              alert('Öğretmenine bildirim gönderildi. Sesli veya görüntülü çözümle en kısa sürede dönüş yapılacak.');
+            } catch (e) {
+              // eslint-disable-next-line no-alert
+              alert(e instanceof Error ? e.message : 'Bildirim gönderilemedi.');
+            }
+          }}
+          onSubmit={async (ans) => {
+            if (!token || !activePdfAssignment) return;
+            setPdfTestSubmitting(true);
+            try {
+              const answersForApi = Object.fromEntries(
+                Object.entries(ans ?? {}).map(([k, v]) => [String(k), v ?? '']),
+              );
+              const result = (await completeStudentAssignment(
+                token,
+                activePdfAssignment.assignment.id,
+                false,
+                answersForApi,
+              )) as { correctCount?: number; incorrectCount?: number; blankCount?: number; scorePercent?: number };
+              if (typeof result?.correctCount === 'number') {
+                setLastTestResult({
+                  testTitle: activePdfAssignment.assignment.title,
+                  correctCount: result.correctCount,
+                  incorrectCount: result.incorrectCount ?? 0,
+                  blankCount: result.blankCount ?? 0,
+                  scorePercent: result.scorePercent ?? 0,
+                });
+              }
+              setAssignments((prev) => prev.filter((a) => a.id !== activePdfAssignment.assignment.id));
+              setActivePdfAssignment(null);
+              setPdfTestStartedAtMs(null);
+              setPdfTestRemainingSeconds(null);
+            } catch (e) {
+              // eslint-disable-next-line no-alert
+              alert(e instanceof Error ? e.message : 'Ödev teslim edilemedi.');
+            } finally {
+              setPdfTestSubmitting(false);
+            }
+          }}
+          submitting={pdfTestSubmitting}
         />
       )}
       {lastTestResult && (
@@ -849,6 +1128,7 @@ export const StudentDashboard: React.FC = () => {
           contents={contents}
           initialDoc={initialDocToShow}
           globalReadingMode={readingMode}
+          token={token}
           onClose={() => {
             setShowNotesLibrary(false);
             setInitialDocToShow(null);
@@ -863,120 +1143,6 @@ export const StudentDashboard: React.FC = () => {
           role="student"
           onClose={() => setLiveClass(null)}
         />
-      )}
-
-      {notificationsOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15,23,42,0.55)',
-            zIndex: 90,
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'flex-start',
-            padding: '4.5rem 1.25rem 2rem',
-          }}
-          onClick={() => setNotificationsOpen(false)}
-        >
-          <div
-            style={{
-              width: 'min(720px, 96vw)',
-              background: '#0b1220',
-              borderRadius: 18,
-              border: '1px solid rgba(55,65,81,0.9)',
-              color: '#e5e7eb',
-              boxShadow: '0 30px 80px rgba(0,0,0,0.75)',
-              overflow: 'hidden',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              style={{
-                padding: '1rem 1.1rem',
-                borderBottom: '1px solid rgba(31,41,55,0.9)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>Bildirimler</div>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={() => setNotificationsOpen(false)}
-                style={{
-                  border: '1px solid rgba(148,163,184,0.9)',
-                  background: 'rgba(15,23,42,0.9)',
-                  color: '#e5e7eb',
-                }}
-              >
-                Kapat
-              </button>
-            </div>
-
-            <div style={{ padding: '0.75rem 1.1rem', maxHeight: '70vh', overflow: 'auto' }}>
-              {notificationsLoading && notifications.length === 0 && (
-                <div className="empty-state">Yükleniyor...</div>
-              )}
-              {!notificationsLoading && notifications.length === 0 && (
-                <div className="empty-state">Bildirim yok.</div>
-              )}
-              <div className="list-stack">
-                {notifications.map((n) => (
-                  <div key={n.id} className="list-row" style={{ alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1 }}>
-                      <strong style={{ display: 'block' }}>{n.title}</strong>
-                      <small style={{ display: 'block', marginTop: '0.15rem' }}>{n.body}</small>
-                      <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.75 }}>
-                        {formatShortDate(n.createdAt)}
-                      </small>
-                      {n.type === 'help_response_ready' &&
-                        n.relatedEntityType === 'help_request' &&
-                        n.relatedEntityId && (
-                          <div style={{ marginTop: '0.5rem' }}>
-                            <button
-                              type="button"
-                              className="primary-btn"
-                              onClick={async () => {
-                                if (!token) return;
-                                try {
-                                  const help = await getStudentHelpRequest(token, n.relatedEntityId!);
-                                  if (!help.response) {
-                                    // eslint-disable-next-line no-alert
-                                    alert('Henüz çözüm eklenmemiş.');
-                                    return;
-                                  }
-                                  setSolutionOverlay({
-                                    open: true,
-                                    title: n.title,
-                                    mode: help.response.mode,
-                                    url: resolveContentUrl(help.response.url),
-                                    helpRequestId: help.id,
-                                  });
-                                  // mark read
-                                  if (!n.read) {
-                                    await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
-                                    await loadNotifications();
-                                  }
-                                } catch (e) {
-                                  // eslint-disable-next-line no-alert
-                                  alert(e instanceof Error ? e.message : 'Çözüm açılamadı.');
-                                }
-                              }}
-                            >
-                              Çözümü gör
-                            </button>
-                          </div>
-                        )}
-                    </div>
-                    <TagChip label={n.read ? 'Okundu' : 'Yeni'} tone={n.read ? 'success' : 'warning'} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
       )}
 
       {solutionOverlay?.open && (
@@ -1077,7 +1243,7 @@ const TestSolveOverlay: React.FC<{
   onChangeScratchpad: (questionId: string, dataUrl: string) => void;
   onClose: () => void;
   remainingSeconds: number | null;
-  onAskTeacher: (questionId: string) => void;
+  onAskTeacher: (questionId: string, message?: string) => void;
   readingModeEnabled: boolean;
   onSubmit: () => Promise<void>;
   submitting: boolean;
@@ -1099,6 +1265,8 @@ const TestSolveOverlay: React.FC<{
   const questions = detail.questions;
   const question = questions[currentIndex] as Question | undefined;
   const [showDrawing, setShowDrawing] = useState(false);
+  const [askTeacherQuestionId, setAskTeacherQuestionId] = useState<string | null>(null);
+  const [askTeacherMessage, setAskTeacherMessage] = useState('');
   const [drawingTool, setDrawingTool] = useState<'pen' | 'line' | 'rect' | 'triangle' | 'eraser'>('pen');
   const [drawingColor, setDrawingColor] = useState<string>('#111827');
   const [drawingLineWidth, setDrawingLineWidth] = useState<number>(3);
@@ -1156,13 +1324,18 @@ const TestSolveOverlay: React.FC<{
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div>
-              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', opacity: 0.7 }}>
+              <Breadcrumb
+                items={[
+                  { label: 'Ödevler' },
+                  { label: detail.assignment?.title ?? detail.test?.title ?? 'Test' },
+                  { label: `Soru ${currentIndex + 1} / ${questions.length}` },
+                ]}
+                variant={readingModeEnabled ? 'light' : 'default'}
+              />
+              <h3 style={{ margin: '0.35rem 0 0 0', fontSize: '1.15rem', opacity: 0.9 }}>
                 {detail.test?.title ?? 'Test'}
-              </div>
-              <h3 style={{ margin: '0.25rem 0 0 0', fontSize: '1.25rem' }}>
-                Soru {currentIndex + 1} / {questions.length}
               </h3>
             </div>
             {typeof remainingSeconds === 'number' && (
@@ -1349,14 +1522,14 @@ const TestSolveOverlay: React.FC<{
               <button
                 type="button"
                 className="ghost-btn"
-                onClick={() => onAskTeacher(question.id)}
+                onClick={() => setAskTeacherQuestionId(question.id)}
                 style={{
-                  border: '1px solid rgba(148,163,184,0.9)',
-                  background: 'rgba(15,23,42,0.9)',
-                  color: '#e5e7eb',
+                  border: '1px solid rgba(59,130,246,0.9)',
+                  background: 'rgba(30,58,138,0.5)',
+                  color: '#93c5fd',
                 }}
               >
-                Öğretmene Sor
+                Bu soruyu öğretmene sor
               </button>
             </div>
           </div>
@@ -1538,20 +1711,96 @@ const TestSolveOverlay: React.FC<{
           </div>
         </div>
       )}
+      {askTeacherQuestionId && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.9)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 75,
+            padding: '1.5rem',
+          }}
+          onClick={() => { setAskTeacherQuestionId(null); setAskTeacherMessage(''); }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 420,
+              background: '#0b1220',
+              borderRadius: 16,
+              padding: '1.25rem',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.75)',
+              border: '1px solid rgba(55,65,81,0.9)',
+              color: '#e5e7eb',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Bu soruyu öğretmene sor</div>
+            <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 1rem 0' }}>
+              Öğretmeniniz sesli veya video/ekran paylaşımı ile çözüm gönderecek.
+            </p>
+            <textarea
+              placeholder="Ek not (isteğe bağlı) — Örn: integral kısmında takıldım"
+              value={askTeacherMessage}
+              onChange={(e) => setAskTeacherMessage(e.target.value)}
+              rows={3}
+              style={{
+                width: '100%',
+                padding: '0.6rem',
+                borderRadius: 8,
+                border: '1px solid rgba(71,85,105,0.9)',
+                background: 'rgba(15,23,42,0.9)',
+                color: '#e5e7eb',
+                fontSize: '0.9rem',
+                resize: 'vertical',
+                marginBottom: '1rem',
+              }}
+            />
+            <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => { setAskTeacherQuestionId(null); setAskTeacherMessage(''); }}
+                style={{ border: '1px solid rgba(148,163,184,0.9)', color: '#e5e7eb' }}
+              >
+                İptal
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => {
+                  onAskTeacher(askTeacherQuestionId, askTeacherMessage.trim() || undefined);
+                  setAskTeacherQuestionId(null);
+                  setAskTeacherMessage('');
+                }}
+              >
+                Gönder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+const SAVE_PROGRESS_INTERVAL_MS = 10000;
 
 const NotesLibraryOverlay: React.FC<{
   contents: StudentContent[];
   initialDoc?: { url: string; title: string } | null;
   globalReadingMode?: boolean;
+  token: string | null;
   onClose: () => void;
-}> = ({ contents, initialDoc, globalReadingMode, onClose }) => {
+}> = ({ contents, initialDoc, globalReadingMode, token, onClose }) => {
   const gradeOptions = ['all', '9', '10', '11', '12'] as const;
   const [activeGrade, setActiveGrade] = useState<string>('all');
-  const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
+  const [activeVideoContent, setActiveVideoContent] = useState<StudentContent | null>(null);
   const [videoCompleted, setVideoCompleted] = useState(false);
+  const [showResumeHint, setShowResumeHint] = useState(false);
   const [showVideoExitConfirm, setShowVideoExitConfirm] = useState(false);
   const [videoExitAlsoCloseOverlay, setVideoExitAlsoCloseOverlay] = useState(false);
   const [activeDocUrl, setActiveDocUrl] = useState<string | null>(null);
@@ -1564,6 +1813,23 @@ const NotesLibraryOverlay: React.FC<{
   const videoIsReadingMode = videoReadingMode || !!globalReadingMode;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const lastSaveProgressRef = useRef<number>(0);
+
+  const activeVideoUrl = activeVideoContent?.url
+    ? resolveContentUrl(activeVideoContent.url)
+    : null;
+
+  const saveVideoProgress = React.useCallback(
+    async (contentId: string, watchedSeconds: number, completed: boolean) => {
+      if (!token) return;
+      try {
+        await watchStudentContent(token, contentId, watchedSeconds, completed);
+      } catch {
+        // Sessizce yut
+      }
+    },
+    [token],
+  );
 
   const toggleDocFullscreen = () => {
     if (!docViewerRef.current) return;
@@ -1633,6 +1899,32 @@ const NotesLibraryOverlay: React.FC<{
     return activeTopic ? topic === activeTopic : true;
   });
 
+  const notesBreadcrumbs = useMemo<BreadcrumbItem[]>(() => {
+    const closeContent = () => {
+      setActiveVideoContent(null);
+      setActiveDocUrl(null);
+    };
+    const items: BreadcrumbItem[] = [
+      { label: 'Ders Notları', onClick: closeContent },
+      {
+        label: activeGrade === 'all' ? 'Tüm Sınıflar' : `${activeGrade}. Sınıf`,
+        onClick: () => { setActiveTopic(null); closeContent(); },
+      },
+    ];
+    if (activeSubject) {
+      items.push({
+        label: SUBJECT_LABELS[activeSubject] ?? activeSubject,
+        onClick: () => { setActiveTopic(null); closeContent(); },
+      });
+    }
+    if (activeTopic) {
+      items.push({ label: activeTopic, onClick: closeContent });
+    }
+    if (activeVideoContent) items.push({ label: activeVideoContent.title });
+    else if (activeDocUrl) items.push({ label: activeDocTitle || 'Doküman' });
+    return items;
+  }, [activeGrade, activeSubject, activeTopic, activeVideoContent, activeDocUrl, activeDocTitle]);
+
   const overlayIsReadingMode = !!globalReadingMode;
   return (
     <div
@@ -1672,17 +1964,14 @@ const NotesLibraryOverlay: React.FC<{
           style={{
             display: 'flex',
             justifyContent: 'space-between',
-            alignItems: 'center',
+            alignItems: 'flex-start',
             gap: '1rem',
+            flexWrap: 'wrap',
           }}
         >
           <div>
-            <div
-              style={{ fontSize: '0.8rem', opacity: 0.75, textTransform: 'uppercase' }}
-            >
-              Ders Notları
-            </div>
-            <h3 style={{ margin: '0.15rem 0 0', fontSize: '1.25rem' }}>
+            <Breadcrumb items={notesBreadcrumbs} variant="light" />
+            <h3 style={{ margin: '0.5rem 0 0', fontSize: '1.25rem' }}>
               Konu Anlatımları
             </h3>
           </div>
@@ -1690,10 +1979,11 @@ const NotesLibraryOverlay: React.FC<{
             type="button"
             className="ghost-btn"
             onClick={() => {
-              if (activeVideoUrl) {
+              if (activeVideoContent) {
                 if (videoCompleted) {
-                  setActiveVideoUrl(null);
+                  setActiveVideoContent(null);
                   setVideoCompleted(false);
+                  setShowResumeHint(false);
                   onClose();
                 } else {
                   setVideoExitAlsoCloseOverlay(true);
@@ -1872,7 +2162,7 @@ const NotesLibraryOverlay: React.FC<{
                       onClick={() => {
                         if (!content.url) return;
                         if (isVideo) {
-                          setActiveVideoUrl(resolveContentUrl(content.url!));
+                          setActiveVideoContent(content);
                           setVideoCompleted(false);
                         } else {
                           setActiveDocUrl(resolveContentUrl(content.url!));
@@ -1893,7 +2183,7 @@ const NotesLibraryOverlay: React.FC<{
                           onClick={(event) => {
                             event.stopPropagation();
                             if (isVideo) {
-                              setActiveVideoUrl(resolveContentUrl(content.url!));
+                              setActiveVideoContent(content);
                               setVideoCompleted(false);
                             } else {
                               setActiveDocUrl(resolveContentUrl(content.url!));
@@ -2085,7 +2375,7 @@ const NotesLibraryOverlay: React.FC<{
                   className="ghost-btn"
                   onClick={() => {
                     if (videoCompleted) {
-                      setActiveVideoUrl(null);
+                      setActiveVideoContent(null);
                       setVideoCompleted(false);
                     } else {
                       setVideoExitAlsoCloseOverlay(false);
@@ -2098,6 +2388,21 @@ const NotesLibraryOverlay: React.FC<{
               </div>
             </div>
 
+            {showResumeHint && (
+              <div
+                style={{
+                  marginBottom: '0.5rem',
+                  padding: '0.5rem 0.75rem',
+                  borderRadius: 12,
+                  background: 'rgba(59, 130, 246, 0.15)',
+                  border: '1px solid rgba(96, 165, 250, 0.5)',
+                  fontSize: '0.85rem',
+                  color: '#93c5fd',
+                }}
+              >
+                Kaldığın yerden devam ediyorsun
+              </div>
+            )}
             <div
               style={{
                 overflow: 'hidden',
@@ -2112,7 +2417,35 @@ const NotesLibraryOverlay: React.FC<{
                 controls
                 autoPlay
                 style={{ width: '100%', maxHeight: '70vh', borderRadius: 18, backgroundColor: '#000' }}
-                onEnded={() => setVideoCompleted(true)}
+                onLoadedMetadata={() => {
+                  const vid = videoRef.current;
+                  const content = activeVideoContent;
+                  if (vid && content?.watchRecord && !content.watchRecord.completed && content.watchRecord.watchedSeconds > 0) {
+                    vid.currentTime = Math.min(content.watchRecord.watchedSeconds, vid.duration - 1);
+                    setShowResumeHint(true);
+                    setTimeout(() => setShowResumeHint(false), 3500);
+                  }
+                }}
+                onTimeUpdate={() => {
+                  const vid = videoRef.current;
+                  const content = activeVideoContent;
+                  if (!vid || !content || !token) return;
+                  const now = Date.now();
+                  if (now - lastSaveProgressRef.current >= SAVE_PROGRESS_INTERVAL_MS) {
+                    lastSaveProgressRef.current = now;
+                    const sec = Math.floor(vid.currentTime);
+                    if (sec > 0) saveVideoProgress(content.id, sec, false);
+                  }
+                }}
+                onEnded={() => {
+                  const content = activeVideoContent;
+                  if (content && token) {
+                    const vid = videoRef.current;
+                    const duration = vid ? Math.floor(vid.duration) : (content.durationMinutes ?? 30) * 60;
+                    saveVideoProgress(content.id, duration, true);
+                  }
+                  setVideoCompleted(true);
+                }}
               />
             </div>
 
@@ -2190,10 +2523,16 @@ const NotesLibraryOverlay: React.FC<{
               <button
                 type="button"
                 className="primary-btn"
-                onClick={() => {
+                onClick={async () => {
+                  const content = activeVideoContent;
+                  if (content && token && videoRef.current) {
+                    const sec = Math.floor(videoRef.current.currentTime);
+                    if (sec > 0) await saveVideoProgress(content.id, sec, false);
+                  }
                   setShowVideoExitConfirm(false);
-                  setActiveVideoUrl(null);
+                  setActiveVideoContent(null);
                   setVideoCompleted(false);
+                  setShowResumeHint(false);
                   if (videoExitAlsoCloseOverlay) {
                     setVideoExitAlsoCloseOverlay(false);
                     onClose();

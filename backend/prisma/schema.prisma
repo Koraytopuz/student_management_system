@@ -328,16 +328,17 @@ model Assignment {
 }
 
 model TestAsset {
-  id        String   @id @default(cuid())
-  teacherId String   @map("teacher_id")
-  title     String
-  subjectId String   @map("subject_id")
-  topic     String
-  gradeLevel String  @map("grade_level")
-  fileUrl   String   @map("file_url")
-  fileName  String   @map("file_name")
-  mimeType  String   @map("mime_type")
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  teacherId     String   @map("teacher_id")
+  title         String
+  subjectId     String   @map("subject_id")
+  topic         String
+  gradeLevel    String   @map("grade_level")
+  fileUrl       String   @map("file_url")
+  fileName      String   @map("file_name")
+  mimeType      String   @map("mime_type")
+  answerKeyJson String?  @map("answer_key_json")
+  createdAt     DateTime @default(now())
 
   teacher   User     @relation("TestAssetTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
   subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
@@ -347,13 +348,14 @@ model TestAsset {
 }
 
 model HelpRequest {
-  id          String            @id @default(cuid())
-  studentId   String            @map("student_id")
-  teacherId   String            @map("teacher_id")
-  assignmentId String           @map("assignment_id")
-  questionId  String?           @map("question_id")
-  message     String?
-  status      HelpRequestStatus @default(open)
+  id            String            @id @default(cuid())
+  studentId     String            @map("student_id")
+  teacherId     String            @map("teacher_id")
+  assignmentId  String            @map("assignment_id")
+  questionId    String?           @map("question_id")
+  studentAnswer String?           @map("student_answer")
+  message       String?
+  status        HelpRequestStatus @default(open)
   createdAt   DateTime          @default(now())
   resolvedAt  DateTime?         @map("resolved_at")
 
@@ -480,6 +482,12 @@ model Meeting {
   joinMode         String?    @default("internal")
   /// Canlı ders odası kimliği (örn. LiveKit room)
   roomId           String?
+  /// Kayıt URL'i (LiveKit Egress ile üretilir)
+  recordingUrl     String?    @map("recording_url")
+  /// Kayıt başlangıç zamanı
+  recordingStartedAt DateTime? @map("recording_started_at")
+  /// Kayıt bitiş zamanı
+  recordingEndedAt   DateTime? @map("recording_ended_at")
   createdAt        DateTime   @default(now())
 
   students MeetingStudent[]
