@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
+import { Prisma } from '@prisma/client';
 import { authenticate, AuthenticatedRequest } from './auth';
 import { prisma } from './db';
 import {
@@ -449,33 +450,45 @@ router.post(
       return res.status(400).json({ error: 'Konu alanı zorunludur' });
     }
     try {
-      const prompt = `Lütfen aşağıdaki kriterlere uygun test soruları üret:
+      const prompt = `Lütfen aşağıdaki kriterlere uygun YENİ NESİL test soruları üret:
 
 - Sınıf seviyesi: ${gradeLevel || '9-12 (Lise)'}
 - Konu: ${topic.trim()}
 - Soru sayısı: ${Math.min(Math.max(Number(count) || 5, 1), 20)}
 - Zorluk: ${difficulty || 'orta'} (kolay/orta/zor)
 
-ZORUNLU FORMAT KURALLARI (bu formata tam uy):
-1. Her soru mutlaka A) B) C) D) E) şıklı olsun (5 şık).
-2. Her sorudan hemen önce (ilk soru hariç) ayrı satırda sadece "---SAYFA---" yaz. Böylece her soru ayrı sayfada görünecek.
-3. Her soruyu "**1. Soru:**" "**2. Soru:**" şeklinde numaralandır.
-4. Soru köklerini **kalın** yap. Matematik için x², x³, 4x³ gibi net metin kullan (LaTeX yok). Şekilli sorularda şekli açıkça tarif et, köşe/kenar bilgilerini belirt.
-5. Tüm sorulardan sonra "---" ve "Cevap Anahtarı: 1-A, 2-B, 3-C, ..." formatında doğru cevapları listele.
-6. Daima Türkçe yaz.
+SEVİYE ve STİL KURALLARI
+1. 4–8. sınıflar için: MEB müfredatına uygun, seviyeye göre sade ama düşünmeyi gerektiren sorular yaz.
+2. 9–12. sınıflar için: Özellikle YKS tarzında, çok adımlı ve yorum gerektiren yeni nesil sorular yaz.
+3. Matematik konularında (sayılar, fonksiyonlar, geometri, olasılık vb. çağrıştıran konularda):
+   - Günlük hayat senaryoları, grafikler, tablolar, şekiller ve diyagramlar kullan.
+   - Şekilleri ve görselleri METİNLE ayrıntılı tarif et (örneğin: "ABCD kare, AB kenarı 4 birim, [0,4] aralığında dik koordinat sistemi..." gibi).
+   - Sadece işlem sorusu değil, yorum ve akıl yürütme içeren yeni nesil problemi tercih et.
+4. Diğer derslerde (fizik, kimya, biyoloji, tarih, coğrafya, Türkçe vb.):
+   - Metin/paragraf, tablo, grafik ve günlük hayat bağlamı kullanarak derin kavrama ölçen sorular yaz.
 
-Örnek format:
-**1. Soru:** f(x)=x² fonksiyonunun x=2 noktasındaki türevi kaçtır?
-A) 2  B) 4  C) 6  D) 8  E) 10
+ZORUNLU FORMAT KURALLARI (BU FORMATA TAM UY):
+1. Her soru mutlaka A) B) C) D) E) şıklı olsun (toplam 5 şık, tek doğru cevap).
+2. Her sorudan hemen önce (ilk soru hariç) ayrı satırda sadece "---SAYFA---" yaz. Böylece her soru ayrı sayfada görünecek.
+3. Her soruyu "**1. Soru:**", "**2. Soru:**" gibi numaralandır.
+4. Soru köklerini **kalın** yap. Matematik için x^2, x^3, 4x^3 gibi DÜZ METİN kullan (LaTeX veya özel sembol kullanma).
+5. Şekilli / görselli sorularda, çizimi yapamayacağın için şekli ayrıntılı ve net biçimde tarif et; kenar uzunluklarını, açıları, eksenleri, etiketleri mutlaka yaz.
+6. Tüm sorulardan sonra aşağıdaki formatta cevap anahtarı ver:
+   ---
+   Cevap Anahtarı: 1-A, 2-B, 3-C, ...
+7. Her şeyi sadece Türkçe yaz.
+
+ÖRNEK FORMAT:
+**1. Soru:** Bir fonksiyon grafiği aşağıdaki gibi verilmiştir. Grafikte x ekseni 0'dan 4'e kadar, y ekseni 0'dan 8'e kadar numaralandırılmıştır. Noktalar (0,0), (2,4) ve (4,8) doğrusal olarak işaretlenmiştir. Buna göre f(2) kaçtır?
+A) 1  B) 2  C) 3  D) 4  E) 5
 ---SAYFA---
 **2. Soru:** ...
 A) ...  B) ...  C) ...  D) ...  E) ...
----SAYFA---
-...
 ---
-Cevap Anahtarı: 1-B, 2-C, 3-A, ...`;
+Cevap Anahtarı: 1-D, 2-C, 3-A, ...`;
       const result = await callGemini(prompt, {
-        systemInstruction: 'Sen deneyimli bir soru bankası yazarısın. Bloom taksonomisine uygun, net ve ölçülebilir sorular üretirsin.',
+        systemInstruction:
+          'Sen deneyimli bir soru bankası ve YKS soru yazarı olarak Bloom taksonomisine uygun, net, ölçülebilir ve yeni nesil test soruları üretirsin. Her soruda mümkün olduğunda senaryo, görsel tasvir (grafik, tablo, şekil) ve akıl yürütme adımları kullanırsın.',
         temperature: 0.6,
         maxOutputTokens: 4096,
       });
@@ -1160,54 +1173,54 @@ router.get(
 
       return res.json(
         list.map((r) => {
-        let correctAnswer: string | undefined;
-        const pdfMatch = r.questionId?.match(/^pdf-page-(\d+)$/);
-        if (pdfMatch && pdfMatch[1]) {
-          const pageNum = pdfMatch[1];
-          const answerKeyJson = (r.assignment as any)?.testAsset?.answerKeyJson;
-          if (answerKeyJson) {
-            try {
-              const key = JSON.parse(answerKeyJson) as Record<string, string>;
-              correctAnswer = key[pageNum];
-            } catch {
-              // ignore parse error
+          let correctAnswer: string | undefined;
+          const pdfMatch = r.questionId?.match(/^pdf-page-(\d+)$/);
+          if (pdfMatch && pdfMatch[1]) {
+            const pageNum = pdfMatch[1];
+            const answerKeyJson = (r.assignment as any)?.testAsset?.answerKeyJson;
+            if (answerKeyJson) {
+              try {
+                const key = JSON.parse(answerKeyJson) as Record<string, string>;
+                correctAnswer = key[pageNum];
+              } catch {
+                // ignore parse error
+              }
             }
+          } else if (r.question?.correctAnswer) {
+            correctAnswer = r.question.correctAnswer;
           }
-        } else if (r.question?.correctAnswer) {
-          correctAnswer = r.question.correctAnswer;
-        }
-        const testAsset = (r.assignment as any)?.testAsset;
-        return {
-        id: r.id,
-        studentId: r.studentId,
-        studentName: r.student?.name ?? 'Öğrenci',
-        teacherId: r.teacherId,
-        assignmentId: r.assignmentId,
-        assignmentTitle: r.assignment?.title ?? '',
-        questionId: r.questionId ?? undefined,
-        questionNumber: r.question ? (r.question.orderIndex ?? 0) + 1 : (pdfMatch?.[1] ? parseInt(pdfMatch[1], 10) : undefined),
-        questionText: r.question?.text ?? undefined,
-        correctAnswer,
-        studentAnswer: r.studentAnswer ?? undefined,
-        testAssetFileUrl: pdfMatch ? testAsset?.fileUrl ?? undefined : undefined,
-        testAssetId: pdfMatch ? (r.assignment as any)?.testAssetId ?? undefined : undefined,
-        message: r.message ?? undefined,
-        status: r.status,
-        createdAt: r.createdAt.toISOString(),
-        resolvedAt: r.resolvedAt?.toISOString(),
-        response: r.response
-          ? {
-              id: r.response.id,
-              mode: r.response.mode,
-              url: r.response.url,
-              mimeType: r.response.mimeType ?? undefined,
-              createdAt: r.response.createdAt.toISOString(),
-              playedAt: (r.response as any).playedAt ?? undefined,
-            }
-          : undefined,
-        };
-      }),
-    );
+          const testAsset = (r.assignment as any)?.testAsset;
+          return {
+            id: r.id,
+            studentId: r.studentId,
+            studentName: r.student?.name ?? 'Öğrenci',
+            teacherId: r.teacherId,
+            assignmentId: r.assignmentId,
+            assignmentTitle: r.assignment?.title ?? '',
+            questionId: r.questionId ?? undefined,
+            questionNumber: r.question ? (r.question.orderIndex ?? 0) + 1 : (pdfMatch?.[1] ? parseInt(pdfMatch[1], 10) : undefined),
+            questionText: r.question?.text ?? undefined,
+            correctAnswer,
+            studentAnswer: r.studentAnswer ?? undefined,
+            testAssetFileUrl: pdfMatch ? testAsset?.fileUrl ?? undefined : undefined,
+            testAssetId: pdfMatch ? (r.assignment as any)?.testAssetId ?? undefined : undefined,
+            message: r.message ?? undefined,
+            status: r.status,
+            createdAt: r.createdAt.toISOString(),
+            resolvedAt: r.resolvedAt?.toISOString(),
+            response: r.response
+              ? {
+                id: r.response.id,
+                mode: r.response.mode,
+                url: r.response.url,
+                mimeType: r.response.mimeType ?? undefined,
+                createdAt: r.response.createdAt.toISOString(),
+                playedAt: (r.response as any).playedAt ?? undefined,
+              }
+              : undefined,
+          };
+        }),
+      );
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[HELP_REQUESTS]', err);
@@ -1780,7 +1793,13 @@ router.get(
   async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const meetingsData = await prisma.meeting.findMany({
-      where: { teacherId: userId },
+      where: {
+        teacherId: userId,
+        // Koçluk seansları ile ilişkili toplantıları hariç tut
+        coachingSessions: {
+          none: {},
+        },
+      },
       include: {
         students: { select: { studentId: true } },
         parents: { select: { parentId: true } },
@@ -1942,6 +1961,29 @@ router.post(
         parents: { select: { parentId: true } },
       },
     });
+
+    // Toplantı için öğrencilere (ve varsa velilere) bildirim oluştur
+    const notificationTargets: string[] = [];
+    if (Array.isArray(studentIds)) {
+      notificationTargets.push(...studentIds);
+    }
+    if (Array.isArray(parentIds)) {
+      notificationTargets.push(...parentIds);
+    }
+    if (notificationTargets.length > 0) {
+      const dateLabel = new Date(scheduledAt).toLocaleString('tr-TR');
+      await prisma.notification.createMany({
+        data: notificationTargets.map((uid) => ({
+          userId: uid,
+          type: 'meeting_scheduled',
+          title: 'Yeni canlı ders / toplantı planlandı',
+          body: `"${title}" başlıklı toplantınız ${dateLabel} tarihinde planlandı.`,
+          read: false,
+          relatedEntityType: 'meeting',
+          relatedEntityId: meeting.id,
+        })),
+      });
+    }
     return res.status(201).json({
       id: meeting.id,
       type: meeting.type,
@@ -1974,6 +2016,16 @@ router.post(
 
     if (meeting.teacherId !== teacherId) {
       return res.status(403).json({ error: 'Bu toplantıyı başlatma yetkiniz yok' });
+    }
+
+    const now = Date.now();
+    const scheduledAtMs = new Date(meeting.scheduledAt).getTime();
+    const deadlineMs = scheduledAtMs + 10 * 60 * 1000; // Seans saatinden 10 dk sonra
+    if (now > deadlineMs) {
+      return res.status(400).json({
+        error:
+          'Bu seansın başlatma süresi geçti. Lütfen yeni bir seans oluşturun.',
+      });
     }
 
     const roomId = buildRoomName(meeting.id);
@@ -2240,6 +2292,9 @@ router.get(
         where: {
           teacherId,
           scheduledAt: { gte: startDate, lte: endDate },
+          coachingSessions: {
+            none: {},
+          },
         },
       }),
     ]);
@@ -2301,6 +2356,421 @@ router.get(
   },
 );
 
+type CoachingSessionRow = {
+  id: string;
+  student_id: string;
+  teacher_id: string;
+  meeting_id: string | null;
+  date: Date;
+  duration_minutes: number | null;
+  title: string;
+  notes: string;
+  mode: 'audio' | 'video';
+  meeting_url: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+// Koçluk seansları - belirli bir öğrenci için listeleme
+router.get(
+  '/students/:studentId/coaching',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const studentId = String(req.params.studentId);
+
+    // Sadece öğretmenin sınıflarındaki öğrenciler
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
+    );
+    if (!allowedStudentIds.has(studentId)) {
+      return res
+        .status(403)
+        .json({ error: 'Bu öğrenci için koçluk kayıtlarına erişemezsiniz' });
+    }
+
+    const sessions = await prisma.$queryRaw<CoachingSessionRow[]>`
+      SELECT
+        id,
+        student_id,
+        teacher_id,
+        meeting_id,
+        date,
+        duration_minutes,
+        title,
+        notes,
+        mode,
+        meeting_url,
+        "createdAt",
+        "updatedAt"
+      FROM "coaching_sessions"
+      WHERE student_id = ${studentId} AND teacher_id = ${teacherId}
+      ORDER BY date DESC
+    `;
+
+    return res.json(
+      sessions.map((s) => ({
+        id: s.id,
+        studentId: s.student_id,
+        teacherId: s.teacher_id,
+        meetingId: s.meeting_id ?? undefined,
+        date: s.date.toISOString(),
+        durationMinutes: s.duration_minutes ?? undefined,
+        title: s.title,
+        notes: s.notes,
+        mode: s.mode,
+        meetingUrl: s.meeting_url ?? undefined,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+      })),
+    );
+  },
+);
+
+// Koçluk seansı oluşturma
+router.post(
+  '/students/:studentId/coaching',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const studentId = String(req.params.studentId);
+    const { date, durationMinutes, title, notes, mode, meetingUrl } = req.body as {
+      date?: string;
+      durationMinutes?: number;
+      title?: string;
+      notes?: string;
+      mode?: 'audio' | 'video';
+      meetingUrl?: string;
+    };
+
+    if (!date || !title || !notes) {
+      return res
+        .status(400)
+        .json({ error: 'date, title ve notes alanları zorunludur' });
+    }
+
+    const parsedDate = new Date(date);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: 'Geçersiz tarih formatı' });
+    }
+
+    const normalizedMode: 'audio' | 'video' =
+      mode === 'video' || mode === 'audio' ? mode : 'audio';
+    const safeMeetingUrl =
+      typeof meetingUrl === 'string' && meetingUrl.trim().length > 0
+        ? meetingUrl.trim()
+        : null;
+
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
+    );
+    if (!allowedStudentIds.has(studentId)) {
+      return res
+        .status(403)
+        .json({ error: 'Bu öğrenci için koçluk kaydı oluşturamazsınız' });
+    }
+
+    // İlgili öğrenci için birebir Meeting kaydı oluştur
+    const meeting = await prisma.meeting.create({
+      data: {
+        type: 'teacher_student',
+        title,
+        teacherId,
+        scheduledAt: parsedDate,
+        durationMinutes: typeof durationMinutes === 'number' ? durationMinutes : 30,
+        meetingUrl: '',
+        students: {
+          create: [{ studentId }],
+        },
+      },
+    });
+
+    const [created] = await prisma.$queryRaw<CoachingSessionRow[]>`
+      INSERT INTO "coaching_sessions" (
+        id,
+        student_id,
+        teacher_id,
+        meeting_id,
+        date,
+        duration_minutes,
+        title,
+        notes,
+        mode,
+        meeting_url,
+        "createdAt",
+        "updatedAt"
+      )
+      VALUES (
+        gen_random_uuid(),
+        ${studentId},
+        ${teacherId},
+        ${meeting.id},
+        ${parsedDate},
+        ${typeof durationMinutes === 'number' ? durationMinutes : null},
+        ${title.trim()},
+        ${notes.trim()},
+        ${normalizedMode},
+        ${safeMeetingUrl},
+        NOW(),
+        NOW()
+      )
+      RETURNING
+        id,
+        student_id,
+        teacher_id,
+        meeting_id,
+        date,
+        duration_minutes,
+        title,
+        notes,
+        mode,
+        meeting_url,
+        "createdAt",
+        "updatedAt"
+    `;
+
+    if (!created) {
+      return res.status(500).json({ error: 'Koçluk seansı oluşturulamadı' });
+    }
+
+    // Koçluk seansı için bildirim (öğrenciye)
+    await prisma.notification.create({
+      data: {
+        userId: studentId,
+        type: 'meeting_scheduled',
+        title: 'Yeni koçluk seansı planlandı',
+        body: `"${title}" başlıklı koçluk görüşmeniz ${parsedDate.toLocaleString('tr-TR')} tarihinde planlandı.`,
+        read: false,
+        relatedEntityType: 'meeting',
+        relatedEntityId: meeting.id,
+      },
+    });
+
+    return res.status(201).json({
+      id: created.id,
+      studentId: created.student_id,
+      teacherId: created.teacher_id,
+      meetingId: created.meeting_id ?? undefined,
+      date: created.date.toISOString(),
+      durationMinutes: created.duration_minutes ?? undefined,
+      title: created.title,
+      notes: created.notes,
+      mode: created.mode,
+      meetingUrl: created.meeting_url ?? undefined,
+      createdAt: created.createdAt.toISOString(),
+      updatedAt: created.updatedAt.toISOString(),
+    });
+  },
+);
+
+// Koçluk seanslarını öğretmen bazında listeleme (opsiyonel studentId filtresi)
+router.get(
+  '/coaching',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const studentId = req.query.studentId ? String(req.query.studentId) : undefined;
+
+    const sessions = await prisma.$queryRaw<CoachingSessionRow[]>`
+      SELECT
+        id,
+        student_id,
+        teacher_id,
+        meeting_id,
+        date,
+        duration_minutes,
+        title,
+        notes,
+        mode,
+        meeting_url,
+        "createdAt",
+        "updatedAt"
+      FROM "coaching_sessions"
+      WHERE teacher_id = ${teacherId}
+        ${studentId ? Prisma.sql`AND student_id = ${studentId}` : Prisma.sql``}
+      ORDER BY date DESC
+    `;
+
+    return res.json(
+      sessions.map((s) => ({
+        id: s.id,
+        studentId: s.student_id,
+        teacherId: s.teacher_id,
+        meetingId: s.meeting_id ?? undefined,
+        date: s.date.toISOString(),
+        durationMinutes: s.duration_minutes ?? undefined,
+        title: s.title,
+        notes: s.notes,
+        mode: s.mode,
+        meetingUrl: s.meeting_url ?? undefined,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+      })),
+    );
+  },
+);
+
+// Koçluk seansı güncelleme
+router.put(
+  '/coaching/:sessionId',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const sessionId = String(req.params.sessionId);
+    const { date, durationMinutes, title, notes, mode, meetingUrl } = req.body as {
+      date?: string;
+      durationMinutes?: number | null;
+      title?: string;
+      notes?: string;
+      mode?: 'audio' | 'video';
+      meetingUrl?: string | null;
+    };
+
+    const [existing] = await prisma.$queryRaw<CoachingSessionRow[]>`
+      SELECT
+        id,
+        student_id,
+        teacher_id,
+        date,
+        duration_minutes,
+        title,
+        notes,
+        mode,
+        "createdAt",
+        "updatedAt"
+      FROM "coaching_sessions"
+      WHERE id = ${sessionId}
+      LIMIT 1
+    `;
+    if (!existing) {
+      return res.status(404).json({ error: 'Koçluk seansı bulunamadı' });
+    }
+    if (existing.teacher_id !== teacherId) {
+      return res
+        .status(403)
+        .json({ error: 'Bu koçluk seansını düzenleme yetkiniz yok' });
+    }
+
+    const updates: {
+      date?: Date;
+      duration_minutes?: number | null;
+      title?: string;
+      notes?: string;
+      mode?: 'audio' | 'video';
+      meeting_url?: string | null;
+    } = {};
+
+    if (date) {
+      const parsedDate = new Date(date);
+      if (Number.isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ error: 'Geçersiz tarih formatı' });
+      }
+      updates.date = parsedDate;
+    }
+    if (typeof durationMinutes === 'number') {
+      updates.duration_minutes = durationMinutes;
+    } else if (durationMinutes === null) {
+      updates.duration_minutes = null;
+    }
+    if (title) {
+      updates.title = title.trim();
+    }
+    if (notes) {
+      updates.notes = notes.trim();
+    }
+
+    if (mode === 'audio' || mode === 'video') {
+      updates.mode = mode;
+    }
+
+    if (typeof meetingUrl === 'string') {
+      const trimmed = meetingUrl.trim();
+      updates.meeting_url = trimmed.length > 0 ? trimmed : null;
+    } else if (meetingUrl === null) {
+      updates.meeting_url = null;
+    }
+
+    const [updated] = await prisma.$queryRaw<CoachingSessionRow[]>`
+      UPDATE "coaching_sessions"
+      SET
+        date = COALESCE(${updates.date}::timestamptz, date),
+        duration_minutes = COALESCE(${updates.duration_minutes}, duration_minutes),
+        title = COALESCE(${updates.title}, title),
+        notes = COALESCE(${updates.notes}, notes),
+        mode = COALESCE(${updates.mode}::"CoachingMode", mode),
+        meeting_url = COALESCE(${updates.meeting_url}, meeting_url),
+        "updatedAt" = NOW()
+      WHERE id = ${sessionId}
+      RETURNING
+        id,
+        student_id,
+        teacher_id,
+        date,
+        duration_minutes,
+        title,
+        notes,
+        mode,
+        "createdAt",
+        "updatedAt"
+    `;
+
+    if (!updated) {
+      return res.status(500).json({ error: 'Koçluk seansı güncellenemedi' });
+    }
+
+    return res.json({
+      id: updated.id,
+      studentId: updated.student_id,
+      teacherId: updated.teacher_id,
+      date: updated.date.toISOString(),
+      durationMinutes: updated.duration_minutes ?? undefined,
+      title: updated.title,
+      notes: updated.notes,
+      mode: updated.mode,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    });
+  },
+);
+
+// Koçluk seansı silme
+router.delete(
+  '/coaching/:sessionId',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const sessionId = String(req.params.sessionId);
+
+    const [existing] = await prisma.$queryRaw<Pick<CoachingSessionRow, 'id' | 'teacher_id'>[]>`
+      SELECT id, teacher_id
+      FROM "coaching_sessions"
+      WHERE id = ${sessionId}
+      LIMIT 1
+    `;
+    if (!existing) {
+      return res.status(404).json({ error: 'Koçluk seansı bulunamadı' });
+    }
+    if (existing.teacher_id !== teacherId) {
+      return res
+        .status(403)
+        .json({ error: 'Bu koçluk seansını silme yetkiniz yok' });
+    }
+
+    await prisma.$executeRaw`
+      DELETE FROM "coaching_sessions"
+      WHERE id = ${sessionId}
+    `;
+    return res.json({ success: true });
+  },
+);
 
 // Canlı ders için ödev durumları
 router.get(

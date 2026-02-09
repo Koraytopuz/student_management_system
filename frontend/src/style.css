@@ -233,8 +233,24 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem 1rem;
+  padding: 2.5rem 1.5rem;
   box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-particles-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.8;
+}
+
+:root[data-theme='dark'] .login-particles-canvas {
+  opacity: 0.6;
 }
 
 .login-card {
@@ -249,6 +265,8 @@ a {
     0 0 0 1px rgba(148, 163, 184, 0.35);
   backdrop-filter: blur(18px);
   box-sizing: border-box;
+  position: relative;
+  z-index: 1;
 }
 
 :root[data-theme='dark'] .login-card {
@@ -656,6 +674,9 @@ button:disabled {
   min-height: 100vh;
   background: transparent;
   width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding-inline: 1.5rem;
 }
 
 .dashboard-shell.accent-emerald {
@@ -809,6 +830,9 @@ button:disabled {
   border: none;
   border-radius: 0;
   box-shadow: none;
+  max-width: 1120px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .dashboard-header {
@@ -872,6 +896,7 @@ button:disabled {
 .breadcrumb button {
   text-decoration: none;
 }
+
 .breadcrumb button:focus-visible {
   outline: 2px solid var(--color-primary, #2563eb);
   outline-offset: 2px;
@@ -924,6 +949,8 @@ button:disabled {
   gap: var(--panel-gap);
 }
 
+
+
 .metric-card {
   padding: 1.25rem;
   border-radius: var(--radius-lg);
@@ -947,6 +974,10 @@ button:disabled {
   font-weight: 700;
   margin: 0.35rem 0 0;
   color: var(--color-text-main);
+  white-space: nowrap;
+  /* 5 / 36 / 15 gibi değerler satır kırmasın */
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 
 .metric-trend {
@@ -1816,9 +1847,11 @@ button:disabled {
   box-shadow: var(--shadow-soft);
   transition: background 0.2s, transform 0.15s;
 }
+
 .sidebar-hamburger:hover {
   background: var(--color-surface-soft);
 }
+
 .sidebar-hamburger:active {
   transform: scale(0.96);
 }
@@ -1834,6 +1867,7 @@ button:disabled {
   visibility: hidden;
   transition: opacity 0.25s, visibility 0.25s;
 }
+
 .sidebar-overlay--open {
   opacity: 1;
   visibility: visible;
@@ -1945,7 +1979,7 @@ button:disabled {
   }
 
   .login-layout {
-    padding: 1rem 0.75rem;
+    padding: 1.5rem 0.75rem 2.25rem;
     align-items: flex-start;
     padding-top: 2rem;
   }
@@ -1979,7 +2013,8 @@ button:disabled {
 
   .form .field input,
   .form .field input::placeholder {
-    font-size: 16px; /* iOS zoom önleme */
+    font-size: 16px;
+    /* iOS zoom önleme */
   }
 
   .form button {
@@ -3025,6 +3060,132 @@ button:disabled {
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ========================================
+   BADGES (ÖĞRENCİ ROZETLERİ)
+   ======================================== */
+
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 1rem;
+}
+
+.badge-grid-all {
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+}
+
+.badge-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.badge-icon-circle {
+  width: 68px;
+  height: 68px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Daha mat, nötr zemin – ikonlar öne çıksın */
+  background:
+    radial-gradient(circle at 30% 15%, rgba(249, 250, 251, 0.9), transparent 60%),
+    linear-gradient(145deg, #e5e7eb, #cbd5f5);
+  border: 1px solid rgba(148, 163, 184, 0.8);
+  box-shadow:
+    0 10px 20px rgba(15, 23, 42, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.badge-icon-circle-small {
+  width: 54px;
+  height: 54px;
+}
+
+.badge-icon-circle--bronze {
+  background:
+    radial-gradient(circle at 25% 10%, rgba(254, 215, 170, 0.85), transparent 55%),
+    linear-gradient(145deg, #f97316, #b45309);
+  border-color: #fb923c;
+}
+
+.badge-icon-circle--silver {
+  background:
+    radial-gradient(circle at 25% 10%, rgba(249, 250, 251, 0.95), transparent 55%),
+    linear-gradient(145deg, #e5e7eb, #9ca3af);
+  border-color: #e5e7eb;
+}
+
+.badge-icon-circle--gold {
+  background:
+    radial-gradient(circle at 25% 10%, rgba(254, 243, 199, 0.9), transparent 55%),
+    linear-gradient(145deg, #facc15, #f59e0b);
+  border-color: #facc15;
+}
+
+.badge-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  color: #111827;
+}
+
+:root[data-theme='dark'] .badge-title {
+  color: #e5e7eb;
+}
+
+.badge-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  min-width: 200px;
+  max-width: 260px;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.75rem;
+  background: rgba(15, 23, 42, 0.98);
+  color: #e5e7eb;
+  font-size: 0.75rem;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.7);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 30;
+}
+
+.badge-tooltip strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.badge-tooltip p {
+  margin: 0.1rem 0;
+}
+
+.badge-tooltip-meta {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  margin-top: 0.25rem;
+}
+
+.badge-tooltip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: rgba(15, 23, 42, 0.98) transparent transparent transparent;
+}
+
+.badge-wrapper:hover .badge-tooltip {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Live Top Bar */

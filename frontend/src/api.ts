@@ -178,6 +178,30 @@ export interface StudentDashboardSummary {
   }>;
 }
 
+export type BadgeCategory =
+  | 'questions_solved'
+  | 'tests_completed'
+  | 'assignments_completed'
+  | 'content_watched'
+  | 'streak'
+  | 'mixed';
+
+export interface StudentBadgeProgress {
+  badgeId: string;
+  code: string;
+  title: string;
+  description: string;
+  category: BadgeCategory;
+  icon?: string;
+  color?: string;
+  targetValue: number;
+  metricKey: string;
+  currentValue: number;
+  progressPercent: number;
+  earned: boolean;
+  earnedAt?: string;
+}
+
 export interface StudentAssignment {
   id: string;
   title: string;
@@ -270,6 +294,21 @@ export interface StudentMeeting {
   title: string;
   scheduledAt: string;
   meetingUrl: string;
+  durationMinutes?: number;
+}
+
+export interface StudentCoachingSession {
+  id: string;
+  teacherId: string;
+  teacherName: string;
+  date: string;
+  durationMinutes?: number;
+  title: string;
+  mode: 'audio' | 'video';
+  meetingId?: string;
+  meetingUrl?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface TeacherListItem {
@@ -312,6 +351,17 @@ export interface StudentTodo {
   relatedContentId?: string;
 }
 
+export interface StudentStudyPlan {
+  id: string;
+  studentId?: string;
+  focusTopic?: string;
+  gradeLevel?: string;
+  subject?: string;
+  weeklyHours: number;
+  content: string;
+  createdAt: string;
+}
+
 export interface TeacherDashboardSummary {
   totalStudents: number;
   testsAssignedThisWeek: number;
@@ -328,6 +378,18 @@ export interface TeacherContent {
   topic?: string;
   gradeLevel?: string;
   url?: string;
+}
+
+export interface CurriculumTopic {
+  id: string;
+  subjectId: string;
+  gradeLevel: string;
+  unitNumber: number;
+  topicName: string;
+  kazanimKodu: string;
+  kazanimText: string;
+  orderIndex: number;
+  subject?: { id: string; name: string };
 }
 
 export interface TeacherStudent {
@@ -365,7 +427,22 @@ export interface TeacherStudentProfile {
   }>;
 }
 
-export interface TeacherCalendarEvent extends CalendarEvent {}
+export interface TeacherCoachingSession {
+  id: string;
+  studentId: string;
+  teacherId: string;
+  meetingId?: string;
+  date: string;
+  durationMinutes?: number;
+  title: string;
+  notes: string;
+  mode: 'audio' | 'video';
+  meetingUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeacherCalendarEvent extends CalendarEvent { }
 
 export interface TeacherMeeting {
   id: string;
@@ -631,6 +708,18 @@ export function getStudentDashboard(token: string) {
   return apiRequest<StudentDashboardSummary>('/student/dashboard', {}, token);
 }
 
+export function getStudentBadges(token: string) {
+  return apiRequest<StudentBadgeProgress[]>('/student/badges', {}, token).then((payload: any) => {
+    if (Array.isArray(payload)) {
+      return payload as StudentBadgeProgress[];
+    }
+    if (payload && Array.isArray(payload.badges)) {
+      return payload.badges as StudentBadgeProgress[];
+    }
+    return [];
+  });
+}
+
 export function getStudentAssignments(token: string) {
   return apiRequest<StudentAssignment[]>('/student/assignments', {}, token);
 }
@@ -665,7 +754,41 @@ export function submitStudentAssignment(
   answers: Array<{ questionId: string; answer: string; scratchpadImageData?: string }>,
   durationSeconds: number,
 ) {
-  return apiRequest(
+  return apiRequest<{
+    id: string;
+    assignmentId: string;
+    studentId: string;
+    testId: string;
+    answers: Array<{
+      questionId: string;
+      answer: string;
+      isCorrect: boolean;
+      scratchpadImageData?: string;
+    }>;
+    correctCount: number;
+    incorrectCount: number;
+    blankCount: number;
+    scorePercent: number;
+    durationSeconds: number;
+    completedAt: string;
+    questionBankAnalysis?: {
+      testTitle: string;
+      overallScorePercent: number;
+      overallLevel: 'weak' | 'average' | 'strong';
+      topics: Array<{
+        topic: string;
+        totalQuestions: number;
+        correct: number;
+        incorrect: number;
+        blank: number;
+        scorePercent: number;
+        strength: 'weak' | 'average' | 'strong';
+      }>;
+      weakTopics: string[];
+      strongTopics: string[];
+      recommendedNextActions: string[];
+    };
+  }>(
     `/student/assignments/${assignmentId}/submit`,
     {
       method: 'POST',
@@ -740,6 +863,10 @@ export function getStudentCalendar(token: string, startDate: string, endDate: st
 
 export function getStudentMeetings(token: string) {
   return apiRequest<StudentMeeting[]>('/student/meetings', {}, token);
+}
+
+export function getStudentCoachingSessions(token: string) {
+  return apiRequest<StudentCoachingSession[]>('/student/coaching', {}, token);
 }
 
 export function getStudentTeachers(token: string) {
@@ -922,6 +1049,18 @@ export function createTeacherContent(
   );
 }
 
+export function getCurriculumTopics(
+  token: string,
+  params: { subjectId?: string; gradeLevel?: string },
+) {
+  const search = new URLSearchParams();
+  if (params.subjectId) search.set('subjectId', params.subjectId);
+  if (params.gradeLevel) search.set('gradeLevel', params.gradeLevel);
+  const query = search.toString();
+  const url = query ? `/questionbank/curriculum/topics?${query}` : '/questionbank/curriculum/topics';
+  return apiRequest<CurriculumTopic[]>(url, {}, token);
+}
+
 export function getTeacherCalendar(token: string, startDate: string, endDate: string) {
   return apiRequest<{ events: CalendarEvent[] }>(
     `/teacher/calendar?startDate=${startDate}&endDate=${endDate}&viewType=week`,
@@ -936,6 +1075,66 @@ export function getTeacherStudents(token: string) {
 
 export function getTeacherStudentProfile(token: string, studentId: string) {
   return apiRequest<TeacherStudentProfile>(`/teacher/students/${studentId}`, {}, token);
+}
+
+export function getTeacherCoachingSessions(token: string, studentId: string) {
+  return apiRequest<TeacherCoachingSession[]>(
+    `/teacher/students/${studentId}/coaching`,
+    {},
+    token,
+  );
+}
+
+export function createTeacherCoachingSession(
+  token: string,
+  studentId: string,
+  payload: {
+    date: string;
+    durationMinutes?: number;
+    title: string;
+    notes: string;
+    mode?: 'audio' | 'video';
+    meetingUrl?: string;
+  },
+) {
+  return apiRequest<TeacherCoachingSession>(
+    `/teacher/students/${studentId}/coaching`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function updateTeacherCoachingSession(
+  token: string,
+  sessionId: string,
+  payload: Partial<{
+    date: string;
+    durationMinutes?: number | null;
+    title: string;
+    notes: string;
+    mode: 'audio' | 'video';
+    meetingUrl?: string | null;
+  }>,
+) {
+  return apiRequest<TeacherCoachingSession>(
+    `/teacher/coaching/${sessionId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function deleteTeacherCoachingSession(token: string, sessionId: string) {
+  return apiRequest<{ success: boolean }>(
+    `/teacher/coaching/${sessionId}`,
+    { method: 'DELETE' },
+    token,
+  );
 }
 
 export function getTeacherAssignments(token: string) {
@@ -1277,15 +1476,14 @@ export function summarizeTeacherText(
 /** Öğrenciye özel çalışma planı */
 export function getStudentStudyPlan(
   token: string,
-  payload?: { focusTopic?: string; weeklyHours?: number },
+  payload?: { focusTopic?: string; weeklyHours?: number; gradeLevel?: string; subject?: string },
 ) {
-  return apiRequest<{ studyPlan: string }>('/student/ai/study-plan', {
+  return apiRequest<{ studyPlan: string; planId: string }>('/student/ai/study-plan', {
     method: 'POST',
     body: JSON.stringify(payload ?? {}),
   }, token);
 }
 
-/** Metin özetleme (öğrenci) */
 export function summarizeStudentText(
   token: string,
   payload: { text: string; maxLength?: 'kısa' | 'orta' | 'uzun' },
@@ -1295,4 +1493,264 @@ export function summarizeStudentText(
     body: JSON.stringify(payload),
   }, token);
 }
+
+export function getStudentTestFeedback(
+  token: string,
+  testResultId: string,
+  format?: 'pdf',
+) {
+  return apiRequest<{
+    feedback: string;
+    weakTopics: string[];
+    strongTopics: string[];
+    attachment?: {
+      filename: string;
+      mimeType: string;
+      data: string;
+    };
+  }>(
+    '/student/ai/test-feedback',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        testResultId,
+        ...(format ? { format } : {}),
+      }),
+    },
+    token,
+  );
+}
+
+export function getStudentStudyPlans(token: string) {
+  return apiRequest<StudentStudyPlan[]>('/student/study-plans', {}, token);
+}
+
+export function downloadStudentStudyPlanPdf(token: string, planId: string) {
+  return apiRequest<{
+    filename: string;
+    mimeType: string;
+    data: string;
+  }>(`/student/study-plans/${planId}/pdf`, {}, token);
+}
+
+// =============================================================================
+// QUESTION BANK API
+// =============================================================================
+
+export type BloomLevel = 'hatirlama' | 'anlama' | 'uygulama' | 'analiz' | 'degerlendirme' | 'yaratma';
+export type QuestionBankSource = 'teacher' | 'ai' | 'import';
+
+export interface QuestionBankItem {
+  id: string;
+  subjectId: string;
+  gradeLevel: string;
+  topic: string;
+  subtopic?: string;
+  kazanimKodu?: string;
+  text: string;
+  type: 'multiple_choice' | 'true_false' | 'open_ended';
+  choices?: string[];
+  correctAnswer: string;
+  distractorReasons?: string[];
+  solutionExplanation?: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  bloomLevel?: BloomLevel;
+  estimatedMinutes?: number;
+  source: QuestionBankSource;
+  createdByTeacherId?: string;
+  isApproved: boolean;
+  approvedByTeacherId?: string;
+  qualityScore?: number;
+  usageCount: number;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  subject?: { id: string; name: string };
+}
+
+export interface QuestionBankPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface QuestionBankListResponse {
+  questions: QuestionBankItem[];
+  pagination: QuestionBankPagination;
+}
+
+export interface QuestionBankStats {
+  total: number;
+  approved: number;
+  pending: number;
+  bySource: { ai: number; teacher: number };
+  bySubject: Array<{ subjectId: string; subjectName: string; count: number }>;
+  byGrade: Array<{ gradeLevel: string; count: number }>;
+  byDifficulty: Array<{ difficulty: string; count: number }>;
+}
+
+export interface QuestionBankSearchParams {
+  subjectId?: string;
+  gradeLevel?: string;
+  topic?: string;
+  difficulty?: string;
+  bloomLevel?: string;
+  type?: string;
+  isApproved?: boolean;
+  source?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface QuestionBankCreatePayload {
+  subjectId: string;
+  gradeLevel: string;
+  topic: string;
+  subtopic?: string;
+  kazanimKodu?: string;
+  text: string;
+  type: 'multiple_choice' | 'true_false' | 'open_ended';
+  choices?: string[];
+  correctAnswer: string;
+  distractorReasons?: string[];
+  solutionExplanation?: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  bloomLevel?: BloomLevel;
+  estimatedMinutes?: number;
+  tags?: string[];
+}
+
+export interface AIQuestionGeneratePayload {
+  subjectId: string;
+  gradeLevel: string;
+  topic: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  bloomLevel?: BloomLevel;
+  questionType: 'multiple_choice' | 'true_false' | 'open_ended';
+  count: number;
+  referenceQuestionIds?: string[];
+}
+
+export interface SubjectItem {
+  id: string;
+  name: string;
+}
+
+/** Soru Bankası - Liste */
+export function getQuestionBankList(token: string, params?: QuestionBankSearchParams) {
+  const query = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        query.append(key, String(value));
+      }
+    });
+  }
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  return apiRequest<QuestionBankListResponse>(`/questionbank${qs}`, {}, token);
+}
+
+/** Soru Bankası - Tek soru */
+export function getQuestionBankItem(token: string, id: string) {
+  return apiRequest<QuestionBankItem>(`/questionbank/${id}`, {}, token);
+}
+
+/** Soru Bankası - Yeni soru */
+export function createQuestionBankItem(token: string, payload: QuestionBankCreatePayload) {
+  return apiRequest<QuestionBankItem>('/questionbank', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, token);
+}
+
+/** Soru Bankası - Güncelle */
+export function updateQuestionBankItem(token: string, id: string, payload: Partial<QuestionBankCreatePayload>) {
+  return apiRequest<QuestionBankItem>(`/questionbank/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  }, token);
+}
+
+/** Soru Bankası - Sil */
+export function deleteQuestionBankItem(token: string, id: string) {
+  return apiRequest<{ success: boolean }>(`/questionbank/${id}`, { method: 'DELETE' }, token);
+}
+
+/** Soru Bankası - Onayla */
+export function approveQuestionBankItem(token: string, id: string) {
+  return apiRequest<QuestionBankItem>(`/questionbank/${id}/approve`, { method: 'POST' }, token);
+}
+
+/** Soru Bankası - AI ile üret */
+export function generateQuestionBankItems(token: string, payload: AIQuestionGeneratePayload) {
+  return apiRequest<{ success: boolean; message: string; questions: QuestionBankItem[] }>(
+    '/questionbank/generate',
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+/** Soru Bankası - İstatistikler */
+export function getQuestionBankStats(token: string) {
+  return apiRequest<QuestionBankStats>('/questionbank/stats', {}, token);
+}
+
+/** Ders listesi (tüm dersler) */
+export function getSubjectsList(token: string) {
+  return apiRequest<SubjectItem[]>('/questionbank/subjects/list', {}, token);
+}
+
+// =============================================================================
+// STUDENT QUESTIONBANK FLOW
+// =============================================================================
+
+export interface StudentQuestionBankTopicMeta {
+  topic: string;
+  subtopics: string[];
+  questionCount: number;
+}
+
+export interface StudentQuestionBankSubjectMeta {
+  subjectId: string;
+  subjectName: string;
+  gradeLevel: string;
+  topics: StudentQuestionBankTopicMeta[];
+}
+
+export interface StudentQuestionBankMetaResponse {
+  gradeLevel: string;
+  subjects: StudentQuestionBankSubjectMeta[];
+}
+
+export function getStudentQuestionBankMeta(token: string, gradeLevel?: string) {
+  const qs = gradeLevel ? `?gradeLevel=${encodeURIComponent(gradeLevel)}` : '';
+  return apiRequest<StudentQuestionBankMetaResponse>(
+    `/student/questionbank/meta${qs}`,
+    {},
+    token,
+  );
+}
+
+export function startStudentQuestionBankTest(
+  token: string,
+  payload: {
+    subjectId: string;
+    topic: string;
+    subtopic?: string;
+    gradeLevel?: string;
+    questionCount?: number;
+  },
+) {
+  return apiRequest<StudentAssignmentDetail>(
+    '/student/questionbank/start-test',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
 

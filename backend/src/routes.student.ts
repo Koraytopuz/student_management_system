@@ -1,5 +1,8 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
+import PDFDocument from 'pdfkit';
+import fs from 'fs';
+import path from 'path';
 import { authenticate, AuthenticatedRequest } from './auth';
 import { prisma } from './db';
 import {
@@ -21,11 +24,66 @@ import {
   TopicProgress,
   WatchRecord,
   Teacher,
+  StudentBadgeProgress,
 } from './types';
+import { getStudentBadgeProgress } from './services/badgeService';
 import { createLiveKitToken, getLiveKitUrl } from './livekit';
 import { callGemini } from './ai';
 
 const router = express.Router();
+
+// Basit metin PDF'i üretmek için yardımcı fonksiyon
+async function generateFeedbackPdf(text: string): Promise<Buffer> {
+  const fontPath = path.join(__dirname, 'assets', 'fonts', 'arial.ttf');
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50 });
+
+    if (fs.existsSync(fontPath)) {
+      doc.font(fontPath);
+    }
+
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(16).text('Detaylı Test Geri Bildirimi', { align: 'left' });
+    doc.moveDown();
+    doc.fontSize(12).text(text, {
+      align: 'left',
+      lineGap: 6,
+    });
+
+    doc.end();
+  });
+}
+
+function shuffleArray<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i]!;
+    arr[i] = arr[j]!;
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+type StudentCoachingRow = {
+  id: string;
+  student_id: string;
+  teacher_id: string;
+  meeting_id: string | null;
+  date: Date;
+  duration_minutes: number | null;
+  title: string;
+  mode: 'audio' | 'video';
+  meeting_url: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  teacher_name: string;
+};
 
 const USER_CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim();
 const DEFAULT_MODEL = 'gemini-3-flash-preview';
@@ -245,6 +303,51 @@ router.get(
   },
 );
 
+// Öğrenci koçluk seansları (sadece kendi seanslarını görür, not içeriği gösterilmez)
+router.get(
+  '/coaching',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+
+    const sessions = await prisma.$queryRaw<StudentCoachingRow[]>`
+      SELECT
+        s.id,
+        s.student_id,
+        s.teacher_id,
+        s.meeting_id,
+        s.date,
+        s.duration_minutes,
+        s.title,
+        s.mode,
+        s.meeting_url,
+        s."createdAt",
+        s."updatedAt",
+        u.name AS teacher_name
+      FROM "coaching_sessions" s
+      JOIN "users" u ON u.id = s.teacher_id
+      WHERE s.student_id = ${studentId}
+      ORDER BY s.date DESC
+    `;
+
+    return res.json(
+      sessions.map((s) => ({
+        id: s.id,
+        teacherId: s.teacher_id,
+        meetingId: s.meeting_id ?? undefined,
+        teacherName: s.teacher_name,
+        date: s.date.toISOString(),
+        durationMinutes: s.duration_minutes ?? undefined,
+        title: s.title,
+        mode: s.mode,
+        meetingUrl: s.meeting_url ?? undefined,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+      })),
+    );
+  },
+);
+
 router.post(
   '/ai/chat',
   // authenticate('student'), // Chatbot temporarily disabled for students
@@ -277,7 +380,17 @@ router.post(
   authenticate('student'),
   async (req: AuthenticatedRequest, res) => {
     const studentId = req.user!.id;
-    const { focusTopic, weeklyHours = 5 } = req.body as { focusTopic?: string; weeklyHours?: number };
+    const {
+      focusTopic,
+      weeklyHours = 5,
+      gradeLevel,
+      subject,
+    } = req.body as {
+      focusTopic?: string;
+      weeklyHours?: number;
+      gradeLevel?: string;
+      subject?: string;
+    };
     try {
       const [studentResults, watchRecords] = await Promise.all([
         prisma.testResult.findMany({
@@ -305,6 +418,8 @@ router.post(
 
       const context = `
 Öğrenci verileri:
+- Sınıf: ${gradeLevel || 'belirtilmedi'}
+- Ders: ${subject || 'belirtilmedi'}
 - Son test sayısı: ${studentResults.length}
 - Ortalama puan: ${avgScore != null ? Math.round(avgScore) + '%' : 'veri yok'}
 - Test çözülen konular: ${[...new Set(weakTopics)].slice(0, 10).join(', ') || 'yok'}
@@ -319,17 +434,33 @@ ${context}
 
 Planı şu formatta ver:
 1. Genel değerlendirme (2-3 cümle)
-2. Bu hafta için öncelikli konular (liste)
-3. Günlük/heftalık öneri program (örnek: Pazartesi 1 saat matematik konu X)
-4. Önerilen kaynak türleri (video, test, not vb.)
-5. Kısa motivasyon notu`;
+2. Bu hafta için öncelikli konular (liste) — özellikle varsa odak konu "${focusTopic || ''}" ve ders "${subject || ''}" etrafında yoğunlaş.
+3. Günlük/haftalık örnek program (örnek: Pazartesi 1 saat ${subject || 'ders'} - ${focusTopic || 'konu'} tekrar ve soru çözümü)
+4. Önerilen kaynak türleri (video, test, konu anlatımı, tekrar notları vb.)
+5. Kısa motivasyon notu
+
+ÖNEMLİ:
+- Eğer odak konu belirtilmişse, planın en az %70'i bu konu etrafında olsun; diğer konular destekleyici nitelikte kalsın.
+- Sınıf seviyesi (${gradeLevel || 'belirtilmedi'}) ve ders bilgisine (${subject || 'belirtilmedi'}) uygun, gerçekçi ve uygulanabilir öneriler ver.`;
       const result = await callGemini(prompt, {
         systemInstruction:
           'Sen deneyimli bir rehber öğretmensin. Öğrencilere gerçekçi, uygulanabilir ve motive edici çalışma planları hazırlarsın.',
         temperature: 0.6,
         maxOutputTokens: 2048,
       });
-      return res.json({ studyPlan: result });
+      // Oluşturulan çalışma planını kaydet
+      const created = await prisma.studyPlan.create({
+        data: {
+          studentId,
+          focusTopic: focusTopic?.trim() || null,
+          gradeLevel: gradeLevel?.trim() || null,
+          subject: subject?.trim() || null,
+          weeklyHours,
+          content: result,
+        },
+      });
+
+      return res.json({ studyPlan: result, planId: created.id });
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('[AI_STUDY_PLAN]', error);
@@ -366,6 +497,310 @@ router.post(
         error: error instanceof Error ? error.message : 'Özet oluşturulamadı',
       });
     }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Soru Bankası – Öğrenci tarafı meta verisi
+// ---------------------------------------------------------------------------
+router.get(
+  '/questionbank/meta',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: { gradeLevel: true },
+    });
+
+    const requestedGrade = (req.query.gradeLevel as string | undefined)?.trim();
+    const gradeLevel = requestedGrade || student?.gradeLevel || '9';
+
+    const groups = await prisma.questionBank.groupBy({
+      by: ['subjectId', 'gradeLevel', 'topic', 'subtopic'],
+      where: {
+        gradeLevel,
+        // Not: İsterseniz sadece onaylı soruları açmak için isApproved: true ekleyebilirsiniz.
+      },
+      _count: { id: true },
+    });
+
+    if (groups.length === 0) {
+      return res.json({
+        gradeLevel,
+        subjects: [],
+      });
+    }
+
+    const subjectIds = Array.from(new Set(groups.map((g) => g.subjectId)));
+    const subjects = await prisma.subject.findMany({
+      where: { id: { in: subjectIds } },
+      select: { id: true, name: true },
+    });
+    const subjectMap = new Map(subjects.map((s) => [s.id, s.name]));
+
+    const subjectMetaMap = new Map<
+      string,
+      {
+        subjectId: string;
+        subjectName: string;
+        gradeLevel: string;
+        topics: Map<
+          string,
+          {
+            topic: string;
+            subtopics: Set<string>;
+            questionCount: number;
+          }
+        >;
+      }
+    >();
+
+    groups.forEach((g) => {
+      const subjectId = g.subjectId;
+      let subjectMeta = subjectMetaMap.get(subjectId);
+      if (!subjectMeta) {
+        subjectMeta = {
+          subjectId,
+          subjectName: subjectMap.get(subjectId) ?? 'Bilinmeyen',
+          gradeLevel: g.gradeLevel,
+          topics: new Map(),
+        };
+        subjectMetaMap.set(subjectId, subjectMeta);
+      }
+
+      const topicKey = g.topic || 'Genel';
+      let topicMeta = subjectMeta.topics.get(topicKey);
+      if (!topicMeta) {
+        topicMeta = {
+          topic: topicKey,
+          subtopics: new Set<string>(),
+          questionCount: 0,
+        };
+        subjectMeta.topics.set(topicKey, topicMeta);
+      }
+
+      if (g.subtopic) {
+        topicMeta.subtopics.add(g.subtopic);
+      }
+      topicMeta.questionCount += g._count.id;
+    });
+
+    const subjectsPayload = Array.from(subjectMetaMap.values()).map((s) => ({
+      subjectId: s.subjectId,
+      subjectName: s.subjectName,
+      gradeLevel: s.gradeLevel,
+      topics: Array.from(s.topics.values()).map((t) => ({
+        topic: t.topic,
+        subtopics: Array.from(t.subtopics),
+        questionCount: t.questionCount,
+      })),
+    }));
+
+    return res.json({
+      gradeLevel,
+      subjects: subjectsPayload,
+    });
+  },
+);
+
+// Test sonucu için AI destekli geri bildirim
+router.post(
+  '/ai/test-feedback',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const { testResultId, format } = req.body as {
+      testResultId?: string;
+      format?: 'text' | 'pdf';
+    };
+    if (!testResultId) {
+      return res.status(400).json({ error: 'testResultId zorunludur' });
+    }
+
+    const testResult = await prisma.testResult.findFirst({
+      where: { id: testResultId, studentId },
+      include: { answers: true, assignment: { include: { test: true } } },
+    });
+    if (!testResult) {
+      return res.status(404).json({ error: 'Test sonucu bulunamadı' });
+    }
+
+    const test = testResult.assignment.test;
+    if (!test) {
+      return res
+        .status(404)
+        .json({ error: 'Bu test sonucu için test bilgisi bulunamadı' });
+    }
+
+    const questions = await prisma.question.findMany({
+      where: { testId: test.id },
+      orderBy: { orderIndex: 'asc' },
+    });
+    const questionMap = new Map(questions.map((q) => [q.id, q]));
+
+    const topicStatsMap = new Map<
+      string,
+      { total: number; correct: number; incorrect: number; blank: number }
+    >();
+    testResult.answers.forEach((ans) => {
+      const q = questionMap.get(ans.questionId);
+      const topicKey = q?.topic || test.topic || 'Genel';
+      let stats = topicStatsMap.get(topicKey);
+      if (!stats) {
+        stats = { total: 0, correct: 0, incorrect: 0, blank: 0 };
+        topicStatsMap.set(topicKey, stats);
+      }
+      stats.total += 1;
+      if (!ans.answer) stats.blank += 1;
+      else if (ans.isCorrect) stats.correct += 1;
+      else stats.incorrect += 1;
+    });
+
+    const topicSummaries = Array.from(topicStatsMap.entries()).map(
+      ([topicName, stats]) => {
+        const score =
+          stats.total === 0
+            ? 0
+            : Math.round((stats.correct / stats.total) * 100);
+        return {
+          topic: topicName,
+          ...stats,
+          scorePercent: score,
+        };
+      },
+    );
+
+    const weakTopics = topicSummaries
+      .filter((t) => t.scorePercent < 50)
+      .map((t) => t.topic);
+    const strongTopics = topicSummaries
+      .filter((t) => t.scorePercent >= 75)
+      .map((t) => t.topic);
+
+    const context = `
+Test adı: ${test.title}
+Genel skor: ${testResult.scorePercent}%
+Doğru: ${testResult.correctCount}, Yanlış: ${testResult.incorrectCount}, Boş: ${testResult.blankCount}
+
+Konu bazlı performans:
+${topicSummaries
+        .map(
+          (t) =>
+            `- ${t.topic}: ${t.scorePercent}% (Doğru: ${t.correct}, Yanlış: ${t.incorrect}, Boş: ${t.blank})`,
+        )
+        .join('\n')}
+
+Zayıf konular: ${weakTopics.join(', ') || 'yok'}
+Güçlü konular: ${strongTopics.join(', ') || 'yok'}
+`.trim();
+
+    const prompt = `Aşağıdaki test sonucunu analiz ederek öğrenciye Türkçe, kısa ama motive edici bir geri bildirim hazırla.
+
+Kurallar:
+- 3-5 cümlelik net bir açıklama yaz.
+- Önce genel performansı değerlendir.
+- Ardından özellikle zayıf olduğu konulara odaklanarak çalışması gereken alanları öner.
+- Çok teknik terim kullanma, sade ve anlaşılır ol.
+
+${context}
+`;
+
+    try {
+      const feedbackText = await callGemini(prompt, {
+        systemInstruction:
+          'Sen deneyimli bir matematik ve fen koçu olarak öğrencilere net, motive edici ve uygulanabilir geri bildirimler verirsin.',
+        temperature: 0.6,
+        maxOutputTokens: 1024,
+      });
+      let attachment: { filename: string; mimeType: string; data: string } | undefined;
+      if (format === 'pdf') {
+        const buffer = await generateFeedbackPdf(feedbackText);
+        attachment = {
+          filename: `test-yorumu-${testResultId}.pdf`,
+          mimeType: 'application/pdf',
+          data: buffer.toString('base64'),
+        };
+      }
+      return res.json({
+        feedback: feedbackText,
+        weakTopics,
+        strongTopics,
+        ...(attachment ? { attachment } : {}),
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[AI_TEST_FEEDBACK]', error);
+      return res.status(502).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Test geri bildirimi oluşturulamadı',
+      });
+    }
+  },
+);
+
+// Öğrencinin kayıtlı çalışma planları listesi
+router.get(
+  '/study-plans',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const plans = await prisma.studyPlan.findMany({
+      where: { studentId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    return res.json(
+      plans.map((p) => ({
+        id: p.id,
+        studentId: p.studentId,
+        focusTopic: p.focusTopic ?? undefined,
+        gradeLevel: p.gradeLevel ?? undefined,
+        subject: p.subject ?? undefined,
+        weeklyHours: p.weeklyHours,
+        content: p.content,
+        createdAt: p.createdAt.toISOString(),
+      })),
+    );
+  },
+);
+
+// Belirli çalışma planını PDF olarak indirilebilir hale getir
+router.get(
+  '/study-plans/:id/pdf',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const id = String(req.params.id);
+    const plan = await prisma.studyPlan.findFirst({
+      where: { id, studentId },
+    });
+    if (!plan) {
+      return res.status(404).json({ error: 'Çalışma planı bulunamadı' });
+    }
+
+    const headerLines: string[] = [];
+    if (plan.gradeLevel) {
+      headerLines.push(`Sınıf: ${plan.gradeLevel}`);
+    }
+    if (plan.subject) {
+      headerLines.push(`Ders: ${plan.subject}`);
+    }
+    if (plan.focusTopic) {
+      headerLines.push(`Odak konu: ${plan.focusTopic}`);
+    }
+    headerLines.push(`Haftalık hedef saat: ${plan.weeklyHours}`);
+
+    const pdfText = `${headerLines.join('\n')}\n\n${plan.content}`;
+    const buffer = await generateFeedbackPdf(pdfText);
+
+    return res.json({
+      filename: `calisma-plani-${id}.pdf`,
+      mimeType: 'application/pdf',
+      data: buffer.toString('base64'),
+    });
   },
 );
 
@@ -412,13 +847,13 @@ router.get(
         // Test dosyası için öğrenci tarafında görüntüleme bilgileri
         testAsset: as.assignment.testAsset
           ? {
-              id: as.assignment.testAsset.id,
-              title: as.assignment.testAsset.title,
-              fileUrl: as.assignment.testAsset.fileUrl,
-              fileName: as.assignment.testAsset.fileName,
-              mimeType: as.assignment.testAsset.mimeType,
-              answerKeyJson: as.assignment.testAsset.answerKeyJson ?? undefined,
-            }
+            id: as.assignment.testAsset.id,
+            title: as.assignment.testAsset.title,
+            fileUrl: as.assignment.testAsset.fileUrl,
+            fileName: as.assignment.testAsset.fileName,
+            mimeType: as.assignment.testAsset.mimeType,
+            answerKeyJson: as.assignment.testAsset.answerKeyJson ?? undefined,
+          }
           : undefined,
       })),
     );
@@ -651,6 +1086,188 @@ router.get(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Soru Bankası – Öğrenci için dinamik test başlatma
+// ---------------------------------------------------------------------------
+router.post(
+  '/questionbank/start-test',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const {
+      subjectId,
+      topic,
+      subtopic,
+      gradeLevel: gradeFromBody,
+      questionCount,
+    } = req.body as {
+      subjectId?: string;
+      topic?: string;
+      subtopic?: string;
+      gradeLevel?: string;
+      questionCount?: number;
+    };
+
+    if (!subjectId || !topic) {
+      return res
+        .status(400)
+        .json({ error: 'subjectId ve topic alanları zorunludur' });
+    }
+
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: { gradeLevel: true, classId: true },
+    });
+
+    const gradeLevel = gradeFromBody || student?.gradeLevel || '9';
+
+    const subject = await prisma.subject.findUnique({
+      where: { id: subjectId },
+      select: { id: true, name: true },
+    });
+    if (!subject) {
+      return res.status(400).json({ error: 'Geçersiz subjectId' });
+    }
+
+    const where: Record<string, unknown> = {
+      subjectId,
+      gradeLevel,
+      topic: { contains: topic, mode: 'insensitive' },
+    };
+    if (subtopic) {
+      where.subtopic = { contains: subtopic, mode: 'insensitive' };
+    }
+    // Not: Öğrenciye sadece onaylı soruları göstermek isterseniz aşağıyı açabilirsiniz:
+    // where.isApproved = true;
+
+    const qbQuestions = await prisma.questionBank.findMany({
+      where,
+    });
+
+    if (!qbQuestions.length) {
+      return res
+        .status(404)
+        .json({ error: 'Bu filtrelere uygun soru bulunamadı' });
+    }
+
+    const desired =
+      typeof questionCount === 'number' && Number.isFinite(questionCount)
+        ? Math.max(1, Math.min(Math.floor(questionCount), qbQuestions.length))
+        : Math.min(10, qbQuestions.length);
+
+    const selected = shuffleArray(qbQuestions).slice(0, desired);
+
+    // Test oluşturmak için öğretmen kimliği – öncelik: sınıf öğretmeni, yoksa ilk öğretmen
+    let createdByTeacherId: string | null = null;
+    if (student?.classId) {
+      const classGroup = await prisma.classGroup.findUnique({
+        where: { id: student.classId },
+        select: { teacherId: true },
+      });
+      if (classGroup?.teacherId) {
+        createdByTeacherId = classGroup.teacherId;
+      }
+    }
+    if (!createdByTeacherId) {
+      const anyTeacher = await prisma.user.findFirst({
+        where: { role: 'teacher' },
+        select: { id: true },
+      });
+      createdByTeacherId = anyTeacher?.id ?? null;
+    }
+    if (!createdByTeacherId) {
+      const anyUser = await prisma.user.findFirst({
+        select: { id: true },
+      });
+      createdByTeacherId = anyUser?.id ?? studentId;
+    }
+
+    const test = await prisma.test.create({
+      data: {
+        title: `Soru Bankası Testi – ${topic}`,
+        subjectId: subject.id,
+        topic,
+        createdByTeacherId,
+        questions: {
+          create: selected.map((q: any, index: number) => ({
+            text: q.text,
+            type: q.type,
+            choices: q.choices as any,
+            correctAnswer: q.correctAnswer,
+            solutionExplanation: q.solutionExplanation,
+            topic: q.topic,
+            difficulty: q.difficulty,
+            orderIndex: index,
+          })),
+        },
+      },
+      include: { questions: true },
+    });
+
+    const dueDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const assignment = await prisma.assignment.create({
+      data: {
+        title: `Soru Bankası – ${subject.name} / ${topic}`,
+        description: 'Soru bankasından otomatik oluşturulan pratik testi',
+        testId: test.id,
+        classId: student?.classId ?? null,
+        dueDate,
+        points: 100,
+        students: {
+          create: [{ studentId }],
+        },
+      },
+      include: {
+        students: { select: { studentId: true } },
+      },
+    });
+
+    const sortedQuestions = [...(test as any).questions].sort(
+      (a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0),
+    );
+
+    const responseQuestions = sortedQuestions.map((q) => ({
+      id: q.id,
+      text: q.text,
+      type: q.type,
+      // question.choices Json alanı string[] tutar; runtime'da cast ediyoruz
+      choices: (q.choices as string[]) ?? undefined,
+      correctAnswer: q.correctAnswer ?? undefined,
+      solutionExplanation: q.solutionExplanation ?? undefined,
+      topic: q.topic,
+      difficulty: q.difficulty,
+    }));
+
+    return res.status(201).json({
+      assignment: {
+        id: assignment.id,
+        title: assignment.title,
+        description: assignment.description ?? undefined,
+        testId: assignment.testId ?? undefined,
+        contentId: assignment.contentId ?? undefined,
+        // @ts-ignore: Prisma types may lag behind schema
+        testAssetId: (assignment as any).testAssetId ?? undefined,
+        classId: assignment.classId ?? undefined,
+        assignedStudentIds: assignment.students.map((s) => s.studentId),
+        dueDate: assignment.dueDate.toISOString(),
+        points: assignment.points,
+        // @ts-ignore
+        timeLimitMinutes: (assignment as any).timeLimitMinutes ?? undefined,
+      },
+      test: {
+        id: test.id,
+        title: test.title,
+        subjectId: test.subjectId,
+        topic: test.topic,
+        questionIds: sortedQuestions.map((q) => q.id),
+        createdByTeacherId: test.createdByTeacherId,
+      },
+      questions: responseQuestions,
+    });
+  },
+);
+
 // Öğretmene sor (yardım talebi) - test veya PDF test içindeki soru için
 router.post(
   '/help-requests',
@@ -784,12 +1401,12 @@ router.get(
         resolvedAt: r.resolvedAt?.toISOString(),
         response: r.response
           ? {
-              id: r.response.id,
-              mode: r.response.mode,
-              url: r.response.url,
-              mimeType: r.response.mimeType ?? undefined,
-              createdAt: r.response.createdAt.toISOString(),
-            }
+            id: r.response.id,
+            mode: r.response.mode,
+            url: r.response.url,
+            mimeType: r.response.mimeType ?? undefined,
+            createdAt: r.response.createdAt.toISOString(),
+          }
           : undefined,
       })),
     );
@@ -819,13 +1436,13 @@ router.get(
       resolvedAt: r.resolvedAt?.toISOString(),
       response: r.response
         ? {
-            id: r.response.id,
-            mode: r.response.mode,
-            url: r.response.url,
-            mimeType: r.response.mimeType ?? undefined,
-            createdAt: r.response.createdAt.toISOString(),
-            playedAt: (r.response as any).playedAt ?? undefined,
-          }
+          id: r.response.id,
+          mode: r.response.mode,
+          url: r.response.url,
+          mimeType: r.response.mimeType ?? undefined,
+          createdAt: r.response.createdAt.toISOString(),
+          playedAt: (r.response as any).playedAt ?? undefined,
+        }
         : undefined,
     });
   },
@@ -1055,7 +1672,7 @@ router.post(
       },
     });
 
-    return res.status(201).json({
+    const responseBody: any = {
       id: result.id,
       assignmentId: result.assignmentId,
       studentId: result.studentId,
@@ -1072,7 +1689,121 @@ router.post(
       scorePercent: result.scorePercent,
       durationSeconds: result.durationSeconds,
       completedAt: result.completedAt.toISOString(),
-    });
+    };
+
+    // Soru bankası kaynaklı testler için basit konu bazlı analiz ekle
+    try {
+      const [testWithMeta, assignment] = await Promise.all([
+        prisma.test.findUnique({
+          where: { id: result.testId },
+          include: { questions: true },
+        }),
+        prisma.assignment.findUnique({
+          where: { id: result.assignmentId },
+          select: { title: true },
+        }),
+      ]);
+
+      if (testWithMeta) {
+        const byTopic: Record<
+          string,
+          {
+            total: number;
+            correct: number;
+            incorrect: number;
+            blank: number;
+          }
+        > = {};
+        const questionMap = new Map(
+          testWithMeta.questions.map((q) => [q.id, q] as const),
+        );
+        result.answers.forEach((ans) => {
+          const q = questionMap.get(ans.questionId);
+          const topicKey = q?.topic || testWithMeta.topic || 'Genel';
+          if (!byTopic[topicKey]) {
+            byTopic[topicKey] = { total: 0, correct: 0, incorrect: 0, blank: 0 };
+          }
+          const bucket = byTopic[topicKey];
+          bucket.total += 1;
+          if (!ans.answer) {
+            bucket.blank += 1;
+          } else if (ans.isCorrect) {
+            bucket.correct += 1;
+          } else {
+            bucket.incorrect += 1;
+          }
+        });
+
+        const topicsAnalysis = Object.entries(byTopic).map(
+          ([topicName, stats]) => {
+            const topicScore =
+              stats.total === 0
+                ? 0
+                : Math.round((stats.correct / stats.total) * 100);
+            let strength: 'weak' | 'average' | 'strong' = 'average';
+            if (topicScore < 50) strength = 'weak';
+            else if (topicScore >= 75) strength = 'strong';
+            return {
+              topic: topicName,
+              totalQuestions: stats.total,
+              correct: stats.correct,
+              incorrect: stats.incorrect,
+              blank: stats.blank,
+              scorePercent: topicScore,
+              strength,
+            };
+          },
+        );
+
+        const weakTopics = topicsAnalysis
+          .filter((t) => t.strength === 'weak')
+          .map((t) => t.topic);
+        const strongTopics = topicsAnalysis
+          .filter((t) => t.strength === 'strong')
+          .map((t) => t.topic);
+
+        const overallLevel: 'weak' | 'average' | 'strong' =
+          result.scorePercent < 50
+            ? 'weak'
+            : result.scorePercent >= 75
+              ? 'strong'
+              : 'average';
+
+        const recommendedNextActions: string[] = [];
+        if (weakTopics.length) {
+          recommendedNextActions.push(
+            `${weakTopics.join(', ')} konularında ek soru çözerek tekrar yap.`,
+          );
+        }
+        if (overallLevel === 'weak') {
+          recommendedNextActions.push(
+            'Temel kavram özetlerini tekrar oku ve daha kısa testlerle başlayarak ilerle.',
+          );
+        } else if (overallLevel === 'average') {
+          recommendedNextActions.push(
+            'Zayıf olduğun konulara odaklanarak 1-2 ek test çöz; güçlü olduğun konuları haftada bir kez tekrar et.',
+          );
+        } else {
+          recommendedNextActions.push(
+            'Bu konuda oldukça iyisin, farklı seviyelerde karışık deneme testleri çözebilirsin.',
+          );
+        }
+
+        responseBody.questionBankAnalysis = {
+          testTitle: assignment?.title ?? testWithMeta.title,
+          overallScorePercent: result.scorePercent,
+          overallLevel,
+          topics: topicsAnalysis,
+          weakTopics,
+          strongTopics,
+          recommendedNextActions,
+        };
+      }
+    } catch {
+      // Analiz isteğe bağlı; hata durumunda ana yanıtı etkilemesin
+    }
+
+    return res.status(201).json(responseBody);
   },
 );
 
@@ -1191,6 +1922,29 @@ router.get(
   },
 );
 
+// Rozetler – tüm rozetler ve ilerleme durumu
+router.get(
+  '/badges',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+
+    try {
+      const badges: StudentBadgeProgress[] = await getStudentBadgeProgress(studentId);
+      return res.json({ badges });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[STUDENT_BADGES]', error);
+      return res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Rozetler yüklenirken bir hata oluştu',
+      });
+    }
+  },
+);
+
 // İçerik listesi (tüm içerikler) - öğrenci için watchRecord dahil
 router.get(
   '/contents',
@@ -1225,10 +1979,10 @@ router.get(
           assignedToStudentIds: c.students.map((s) => s.studentId),
           watchRecord: watchRecord
             ? {
-                watchedSeconds: watchRecord.watchedSeconds,
-                completed: watchRecord.completed,
-                lastWatchedAt: watchRecord.lastWatchedAt.toISOString(),
-              }
+              watchedSeconds: watchRecord.watchedSeconds,
+              completed: watchRecord.completed,
+              lastWatchedAt: watchRecord.lastWatchedAt.toISOString(),
+            }
             : undefined,
         };
       }),
@@ -1437,7 +2191,15 @@ router.get(
   async (req: AuthenticatedRequest, res) => {
     const userId = req.user!.id;
     const userMeetings = await prisma.meeting.findMany({
-      where: { students: { some: { studentId: userId } } },
+      where: {
+        students: { some: { studentId: userId } },
+        // Bu öğrenci için koçluk seansına bağlı toplantıları hariç tut
+        coachingSessions: {
+          none: {
+            studentId: userId,
+          },
+        },
+      },
       include: {
         students: { select: { studentId: true } },
         parents: { select: { parentId: true } },
@@ -1479,6 +2241,21 @@ router.post(
     const isParticipant = meeting.students.some((s) => s.studentId === studentId);
     if (!isParticipant) {
       return res.status(403).json({ error: 'Bu toplantıya katılma yetkiniz yok' });
+    }
+
+    const now = Date.now();
+    const scheduledAtMs = new Date(meeting.scheduledAt).getTime();
+    const meetingEndMs = scheduledAtMs + meeting.durationMinutes * 60 * 1000;
+    const windowStartMs = scheduledAtMs - 10 * 60 * 1000; // 10 dk önce katılıma izin
+    if (now < windowStartMs) {
+      return res.status(400).json({
+        error: 'Bu seans henüz başlamadı. En erken seans saatinden 10 dakika önce katılabilirsiniz.',
+      });
+    }
+    if (now > meetingEndMs) {
+      return res.status(400).json({
+        error: 'Bu seansın katılım süresi sona erdi.',
+      });
     }
 
     // Canlı dersin açılması sadece öğretmen tarafından yapılabilsin.
@@ -2026,7 +2803,14 @@ router.get(
         select: { assignmentId: true },
       }),
       prisma.meeting.findMany({
-        where: { students: { some: { studentId } } },
+        where: {
+          students: { some: { studentId } },
+          coachingSessions: {
+            none: {
+              studentId,
+            },
+          },
+        },
       }),
     ]);
 

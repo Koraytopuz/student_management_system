@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   FileDown,
   Layers,
+  Library,
   MessageCircle,
   Send,
   Sparkles,
@@ -23,7 +24,6 @@ import { useSearchParams } from 'react-router-dom';
 import {
   createTeacherContent,
   createTeacherAssignment,
-  createTeacherFeedback,
   createTeacherMeeting,
   updateTeacherMeeting,
   deleteTeacherMeeting,
@@ -47,7 +47,6 @@ import {
   createTeacherTestAsset,
   deleteTeacherTestAsset,
   deleteTeacherHelpResponse,
-  getTeacherParents,
   type CalendarEvent,
   type TeacherContent,
   type TeacherDashboardSummary,
@@ -69,6 +68,8 @@ import {
   markAllTeacherNotificationsRead,
   deleteTeacherNotification,
   markTeacherMessageRead,
+  type CurriculumTopic,
+  getCurriculumTopics,
 } from './api';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -80,6 +81,9 @@ if (typeof pdfjsLib.GlobalWorkerOptions !== 'undefined') {
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { LiveClassOverlay } from './LiveClassOverlay';
+import { QuestionBankTab } from './QuestionBankTab';
+import { CoachingTab } from './CoachingTab';
+import { ParentOperationsTab } from './ParentOperationsTab';
 
 type TeacherTab =
   | 'overview'
@@ -87,9 +91,12 @@ type TeacherTab =
   | 'live'
   | 'calendar'
   | 'students'
+  | 'parents'
   | 'tests'
+  | 'questionbank'
   | 'support'
-  | 'notifications';
+  | 'notifications'
+  | 'coaching';
 
 type AiMessage = {
   id: string;
@@ -114,6 +121,64 @@ type TeacherMeetingDraft = {
   type: TeacherMeetingType;
   audience: MeetingAudience;
   selectedStudentIds: string[];
+};
+
+type AiGeneratedQuestion = {
+  index: number;
+  text: string;
+  choices?: string[];
+  correctAnswer?: string;
+  explanation?: string;
+};
+
+const parseAiGeneratedQuestions = (raw: string | null): AiGeneratedQuestion[] | null => {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const cleaned = trimmed.replace(/```json|```/gi, '').trim();
+    const data: any = JSON.parse(cleaned);
+    const items: any[] = Array.isArray(data)
+      ? data
+      : Array.isArray((data as any).questions)
+        ? (data as any).questions
+        : [];
+    if (!items.length) return null;
+    const result: AiGeneratedQuestion[] = [];
+    items.forEach((item, idx) => {
+      if (!item) return;
+      const text = String(item.text ?? item.question ?? item.prompt ?? '').trim();
+      if (!text) return;
+      const rawChoices: any =
+        Array.isArray(item.choices) && item.choices.length
+          ? item.choices
+          : Array.isArray(item.options) && item.options.length
+            ? item.options
+            : null;
+      const choices = rawChoices ? rawChoices.map((c: any) => String(c)) : undefined;
+      const correctAnswer: string | undefined =
+        typeof item.correctAnswer === 'string'
+          ? item.correctAnswer
+          : typeof item.answer === 'string'
+            ? item.answer
+            : typeof item.correctOption === 'string'
+              ? item.correctOption
+              : undefined;
+      const explanation: string | undefined = String(
+        item.solutionExplanation ?? item.explanation ?? item.reason ?? '',
+      ).trim() || undefined;
+      result.push({
+        index: idx + 1,
+        text,
+        choices,
+        correctAnswer,
+        explanation,
+      });
+    });
+    return result.length ? result : null;
+  } catch {
+    return null;
+  }
 };
 
 const sortMeetingsByDate = (items: TeacherMeeting[]): TeacherMeeting[] =>
@@ -142,6 +207,14 @@ const formatShortDate = (iso?: string) => {
 const formatTime = (iso?: string) => {
   if (!iso) return '';
   return new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const TEACHER_START_DEADLINE_MS = 10 * 60 * 1000;
+
+const canTeacherStartMeeting = (scheduledAt: string, now = Date.now()): boolean => {
+  const start = new Date(scheduledAt).getTime();
+  if (Number.isNaN(start)) return false;
+  return now <= start + TEACHER_START_DEADLINE_MS;
 };
 
 const getEventIcon = (event: CalendarEvent) => {
@@ -186,12 +259,16 @@ export const TeacherDashboard: React.FC = () => {
     title: '',
     type: 'video',
     topic: '',
+    subjectId: 'sub_matematik',
     gradeLevel: '',
     url: '',
+    description: '',
   });
-  const [contentSubjectId, setContentSubjectId] = useState<string>('sub1');
+
   const [contentVideoFile, setContentVideoFile] = useState<File | null>(null);
   const [contentUploading, setContentUploading] = useState(false);
+  const [curriculumTopics, setCurriculumTopics] = useState<CurriculumTopic[]>([]);
+  const [curriculumTopicsLoading, setCurriculumTopicsLoading] = useState(false);
   const [announcements, setAnnouncements] = useState<TeacherAnnouncement[]>([]);
   const [announcementDraft, setAnnouncementDraft] = useState({
     title: '',
@@ -215,6 +292,7 @@ export const TeacherDashboard: React.FC = () => {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
+  const aiTestCardRef = useRef<HTMLDivElement | null>(null);
   const [aiFormat, setAiFormat] = useState<'text' | 'pdf' | 'xlsx'>('text');
   const [meetingModalOpen, setMeetingModalOpen] = useState(false);
   const [meetingSaving, setMeetingSaving] = useState(false);
@@ -665,7 +743,8 @@ export const TeacherDashboard: React.FC = () => {
 
   const handleCreateContent = async () => {
     if (!token) return;
-    const subjectId = contentSubjectId || contents[0]?.subjectId || 'sub1';
+    // subjectId is now in contentDraft
+    const subjectId = contentDraft.subjectId;
     let url = contentDraft.url;
     if (contentVideoFile) {
       try {
@@ -683,14 +762,40 @@ export const TeacherDashboard: React.FC = () => {
       topic: contentDraft.topic,
       gradeLevel: contentDraft.gradeLevel,
       url,
-      description: contentDraft.topic || '', // Konu detayı açıklama olarak kullanılıyor
-      durationMinutes: 0, // Video süresi opsiyonel, varsayılan 0
+      description: contentDraft.description || '',
+      durationMinutes: 0,
     });
     setContents((prev) => [created, ...prev]);
-    setContentDraft({ title: '', type: 'video', topic: '', gradeLevel: '', url: '' });
+    setContentDraft({ title: '', type: 'video', topic: '', subjectId: 'sub_matematik', gradeLevel: '', url: '', description: '' });
     setContentVideoFile(null);
-    setContentSubjectId('sub1');
   };
+
+  // İçerik oluştururken seçilen ders + sınıfa göre MEB müfredat konularını getir
+  useEffect(() => {
+    if (!token) return;
+
+    // TYT/AYT gibi özel kategoriler için şu an müfredat tablosu kullanılmıyor
+    // ARTIK KULLANILIYOR: contentDraft.subjectId var
+    if (!contentDraft.subjectId || !contentDraft.gradeLevel) {
+      setCurriculumTopics([]);
+      return;
+    }
+
+    setCurriculumTopicsLoading(true);
+    getCurriculumTopics(token, {
+      subjectId: contentDraft.subjectId,
+      gradeLevel: contentDraft.gradeLevel,
+    })
+      .then((topics) => {
+        setCurriculumTopics(topics);
+      })
+      .catch(() => {
+        setCurriculumTopics([]);
+      })
+      .finally(() => {
+        setCurriculumTopicsLoading(false);
+      });
+  }, [token, contentDraft.subjectId, contentDraft.gradeLevel]);
 
   const handleCreateAnnouncement = async () => {
     if (!token || announcementCreating) return;
@@ -744,6 +849,24 @@ export const TeacherDashboard: React.FC = () => {
       );
     }
   };
+
+  // Koçluk panelinden gelen özel event ile canlı koçluk başlatma
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ meetingId: string; title?: string }>;
+      const { meetingId, title } = custom.detail;
+      handleStartLiveMeeting(meetingId);
+      if (title) {
+        setLiveClass((prev) =>
+          prev ? { ...prev, title } : prev,
+        );
+      }
+    };
+    window.addEventListener('teacher-start-live-meeting', handler as EventListener);
+    return () => {
+      window.removeEventListener('teacher-start-live-meeting', handler as EventListener);
+    };
+  }, [handleStartLiveMeeting]);
 
   const handleAiSend = async () => {
     if (!token || aiLoading) return;
@@ -846,6 +969,14 @@ export const TeacherDashboard: React.FC = () => {
         onClick: () => setActiveTab('tests'),
       },
       {
+        id: 'questionbank',
+        label: 'Soru Bankası',
+        icon: <Library size={18} />,
+        description: 'AI soru üret',
+        active: activeTab === 'questionbank',
+        onClick: () => setActiveTab('questionbank'),
+      },
+      {
         id: 'support',
         label: 'Yardım Talepleri',
         icon: <MessageCircle size={18} />,
@@ -877,6 +1008,22 @@ export const TeacherDashboard: React.FC = () => {
         active: activeTab === 'students',
         onClick: () => setActiveTab('students'),
       },
+      {
+        id: 'parents',
+        label: 'Veli İşlemleri',
+        icon: <Users size={18} />,
+        description: 'Veli not & mesaj',
+        active: activeTab === 'parents',
+        onClick: () => setActiveTab('parents'),
+      },
+      {
+        id: 'coaching',
+        label: 'Koçluk',
+        icon: <TrendingUp size={18} />,
+        description: 'Koçluk takip',
+        active: activeTab === 'coaching',
+        onClick: () => setActiveTab('coaching'),
+      },
     ],
     [activeTab],
   );
@@ -887,10 +1034,13 @@ export const TeacherDashboard: React.FC = () => {
       content: 'Ders İçeriği',
       live: 'Canlı Ders',
       tests: 'Test & Sorular',
+      questionbank: 'Soru Bankası',
       support: 'Yardım Talepleri',
       notifications: 'Bildirimler',
       calendar: 'Takvim & Etüt',
       students: 'Öğrenciler',
+      parents: 'Veli İşlemleri',
+      coaching: 'Koçluk Takip',
     };
     const items: BreadcrumbItem[] = [
       { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
@@ -1255,7 +1405,6 @@ export const TeacherDashboard: React.FC = () => {
           metrics={metrics}
           activities={dashboardState.data?.recentActivity ?? []}
           meetings={meetings}
-          onCreateMeeting={openMeetingModal}
           onStartLive={handleStartLiveMeeting}
         />
       )}
@@ -1263,13 +1412,13 @@ export const TeacherDashboard: React.FC = () => {
         <TeacherContent
           contents={contents}
           draft={contentDraft}
-          subjectId={contentSubjectId}
-          onChangeSubject={setContentSubjectId}
           onDraftChange={setContentDraft}
           onCreateContent={handleCreateContent}
           onSelectVideoFile={setContentVideoFile}
           selectedVideoFileName={contentVideoFile?.name}
           uploadingVideo={contentUploading}
+          curriculumTopics={curriculumTopics}
+          loadingCurriculumTopics={curriculumTopicsLoading}
         />
       )}
       {activeTab === 'live' && (
@@ -1310,6 +1459,12 @@ export const TeacherDashboard: React.FC = () => {
                     type="button"
                     className="primary-btn"
                     onClick={() => handleStartLiveMeeting(meeting.id)}
+                    disabled={!canTeacherStartMeeting(meeting.scheduledAt)}
+                    title={
+                      !canTeacherStartMeeting(meeting.scheduledAt)
+                        ? 'Seans başlatma süresi geçti. Yeni seans oluşturun.'
+                        : undefined
+                    }
                   >
                     Canlı Dersi Başlat
                   </button>
@@ -1351,6 +1506,7 @@ export const TeacherDashboard: React.FC = () => {
       )}
       {activeTab === 'tests' && (
         <TeacherTests
+          aiTestCardRef={aiTestCardRef}
           token={token}
           students={students}
           tests={tests}
@@ -1369,11 +1525,31 @@ export const TeacherDashboard: React.FC = () => {
           }}
         />
       )}
+      {activeTab === 'questionbank' && token && (
+        <QuestionBankTab token={token} />
+      )}
       {activeTab === 'support' && (
         <TeacherSupport
           token={token}
           focusHelpRequestId={focusHelpRequestId}
           onFocusHandled={() => setFocusHelpRequestId(null)}
+        />
+      )}
+      {activeTab === 'coaching' && (
+        <CoachingTab
+          token={token}
+          students={students}
+          selectedStudentId={selectedStudentId}
+          onSelectStudent={setSelectedStudentId}
+          studentProfile={selectedStudentProfile}
+          profileLoading={studentProfileLoading}
+          tests={tests}
+        />
+      )}
+      {activeTab === 'parents' && (
+        <ParentOperationsTab
+          token={token}
+          students={students}
         />
       )}
       {activeTab === 'students' && (
@@ -1387,6 +1563,7 @@ export const TeacherDashboard: React.FC = () => {
           studentProfile={selectedStudentProfile}
           profileLoading={studentProfileLoading}
           onMarkMessageRead={handleMarkMessageRead}
+          onOpenCoaching={() => setActiveTab('coaching')}
         />
       )}
       <TeacherAiAssistant
@@ -1990,6 +2167,7 @@ const TeacherSupport: React.FC<{
 };
 
 const TeacherTests: React.FC<{
+  aiTestCardRef: React.MutableRefObject<HTMLDivElement | null>;
   token: string | null;
   students: TeacherStudent[];
   tests: TeacherTest[];
@@ -1997,7 +2175,7 @@ const TeacherTests: React.FC<{
   onTestsChanged: () => void;
   onTestAssetsChanged: () => void;
   onAssignmentCreated: () => void;
-}> = ({ token, students, tests, testAssets, onTestsChanged: _onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
+}> = ({ aiTestCardRef, token, students, tests, testAssets, onTestsChanged: _onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
   // Yapılandırılmış test oluşturma UI'ı geçici olarak devre dışı (sadece dosya tabanlı testler kullanılıyor)
 
   const [assetDraft, setAssetDraft] = useState({
@@ -2033,6 +2211,7 @@ const TeacherTests: React.FC<{
   const [assignError, setAssignError] = useState<string | null>(null);
 
   const [_assignFileId, _setAssignFileId] = useState<string>('');
+  const [aiGenSubject, setAiGenSubject] = useState('sub_matematik');
   const [aiGenTopic, setAiGenTopic] = useState('');
   const [aiGenGrade, setAiGenGrade] = useState('9');
   const [aiGenCount, setAiGenCount] = useState(5);
@@ -2040,9 +2219,33 @@ const TeacherTests: React.FC<{
   const [aiGenFormat, setAiGenFormat] = useState<'metin' | 'pdf' | 'xlsx'>('metin');
   const [aiGenLoading, setAiGenLoading] = useState(false);
   const [aiGenResult, setAiGenResult] = useState<string | null>(null);
+
+  // AI için Müfredat Konuları
+  const [aiCurriculumTopics, setAiCurriculumTopics] = useState<CurriculumTopic[]>([]);
+  const [aiCurriculumTopicsLoading, setAiCurriculumTopicsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    if (!aiGenSubject || !aiGenGrade) {
+      setAiCurriculumTopics([]);
+      return;
+    }
+    setAiCurriculumTopicsLoading(true);
+    getCurriculumTopics(token, {
+      subjectId: aiGenSubject,
+      gradeLevel: aiGenGrade,
+    })
+      .then((topics) => setAiCurriculumTopics(topics))
+      .catch(() => setAiCurriculumTopics([]))
+      .finally(() => setAiCurriculumTopicsLoading(false));
+  }, [token, aiGenSubject, aiGenGrade]);
   const [aiGenAttachment, setAiGenAttachment] = useState<{ filename: string; mimeType: string; data: string } | null>(null);
   const [aiGenAnswerKey, setAiGenAnswerKey] = useState<Record<string, string> | null>(null);
   const [aiGenSavingAsTest, setAiGenSavingAsTest] = useState(false);
+  const parsedAiQuestions = useMemo(
+    () => parseAiGeneratedQuestions(aiGenResult),
+    [aiGenResult],
+  );
 
   useEffect(() => {
     if (!assignDraft.studentId && students[0]) {
@@ -2176,6 +2379,13 @@ const TeacherTests: React.FC<{
 
   const handleAiGenerateQuestions = async () => {
     if (!token || !aiGenTopic.trim()) return;
+    if (aiTestCardRef.current) {
+      try {
+        aiTestCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch {
+        // scrollIntoView desteklenmiyorsa sessizce yoksay
+      }
+    }
     setAiGenLoading(true);
     setAiGenResult(null);
     setAiGenAttachment(null);
@@ -2252,20 +2462,52 @@ const TeacherTests: React.FC<{
   return (
     <div className="dual-grid">
       <div style={{ display: 'grid', gap: '1rem' }}>
-        <GlassCard title="AI ile Otomatik Soru Üretimi" subtitle="Konu ve kriterlere göre test soruları oluştur">
+        <GlassCard
+          title="AI ile Otomatik Soru Üretimi"
+          subtitle="Konu ve kriterlere göre test soruları oluştur"
+        >
           <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
-            <input
-              type="text"
-              placeholder="Konu (örn: Üslü Sayılar)"
-              value={aiGenTopic}
-              onChange={(e) => setAiGenTopic(e.target.value)}
-            />
             <select value={aiGenGrade} onChange={(e) => setAiGenGrade(e.target.value)}>
+              <option value="4">4. Sınıf</option>
+              <option value="5">5. Sınıf</option>
+              <option value="6">6. Sınıf</option>
+              <option value="7">7. Sınıf</option>
+              <option value="8">8. Sınıf</option>
               <option value="9">9. Sınıf</option>
               <option value="10">10. Sınıf</option>
               <option value="11">11. Sınıf</option>
               <option value="12">12. Sınıf</option>
+              <option value="TYT">TYT</option>
+              <option value="AYT">AYT</option>
             </select>
+            <select value={aiGenSubject} onChange={(e) => setAiGenSubject(e.target.value)}>
+              <option value="sub_matematik">Matematik</option>
+              <option value="sub_fizik">Fizik</option>
+              <option value="sub_biyoloji">Biyoloji</option>
+              <option value="sub_kimya">Kimya</option>
+            </select>
+            
+            {(aiCurriculumTopics.length > 0) ? (
+               <select
+                value={aiGenTopic}
+                onChange={(e) => setAiGenTopic(e.target.value)}
+              >
+                <option value="">Konu seçin</option>
+                {aiCurriculumTopics.map((t) => (
+                  <option key={t.id} value={t.topicName}>
+                    {t.kazanimKodu ? `${t.kazanimKodu} - ${t.topicName}` : t.topicName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+                <input
+                type="text"
+                placeholder={aiCurriculumTopicsLoading ? 'Konular yükleniyor...' : 'Konu (örn: Üslü Sayılar)'}
+                value={aiGenTopic}
+                onChange={(e) => setAiGenTopic(e.target.value)}
+              />
+            )}
+
             <select value={aiGenCount} onChange={(e) => setAiGenCount(Number(e.target.value))}>
               {[3, 5, 10, 15, 20].map((n) => (
                 <option key={n} value={n}>{n} soru</option>
@@ -2310,20 +2552,97 @@ const TeacherTests: React.FC<{
                   )}
                 </div>
               )}
-              <div
-                style={{
-                  padding: '1rem',
-                  borderRadius: 12,
-                  background: 'rgba(15,23,42,0.5)',
-                  border: '1px solid rgba(51,65,85,0.9)',
-                  whiteSpace: 'pre-wrap',
-                  fontSize: '0.9rem',
-                  maxHeight: 320,
-                  overflowY: 'auto',
-                }}
-              >
-                {aiGenResult}
-              </div>
+              {parsedAiQuestions ? (
+                <div
+                  style={{
+                    padding: '1rem',
+                    borderRadius: 12,
+                    background: 'rgba(15,23,42,0.5)',
+                    border: '1px solid rgba(51,65,85,0.9)',
+                    fontSize: '0.9rem',
+                    maxHeight: 360,
+                    overflowY: 'auto',
+                    display: 'grid',
+                    gap: '0.8rem',
+                  }}
+                >
+                  {parsedAiQuestions.map((q) => (
+                    <div
+                      key={q.index}
+                      style={{
+                        padding: '0.75rem 0.9rem',
+                        borderRadius: 10,
+                        background: 'rgba(15,23,42,0.85)',
+                        border: '1px solid rgba(55,65,81,0.9)',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#a5b4fc', marginBottom: '0.25rem' }}>
+                        {q.index}. Soru
+                      </div>
+                      <div style={{ color: 'white', fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{q.text}</div>
+                      {q.choices && q.choices.length > 0 && (
+                        <div
+                          style={{
+                            marginTop: '0.5rem',
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                            gap: '0.25rem 0.75rem',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          {q.choices.map((choice, i) => {
+                            const letter = String.fromCharCode(65 + i);
+                            const isCorrect =
+                              q.correctAnswer &&
+                              (q.correctAnswer.trim().toUpperCase() === letter ||
+                                q.correctAnswer.trim().toUpperCase() === `${letter})` ||
+                                q.correctAnswer.trim() === choice.trim());
+                            return (
+                              <div
+                                key={letter}
+                                style={{
+                                  color: isCorrect ? '#4ade80' : 'rgba(226,232,240,0.9)',
+                                }}
+                              >
+                                <span style={{ fontWeight: 600 }}>{letter})</span> {choice}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {(q.correctAnswer || q.explanation) && (
+                        <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#e5e7eb' }}>
+                          {q.correctAnswer && (
+                            <div style={{ color: '#a5b4fc' }}>
+                              Doğru cevap: <strong>{q.correctAnswer}</strong>
+                            </div>
+                          )}
+                          {q.explanation && (
+                            <div style={{ marginTop: '0.25rem', color: '#cbd5f5' }}>
+                              Açıklama: {q.explanation}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: '1rem',
+                    borderRadius: 12,
+                    background: 'rgba(15,23,42,0.5)',
+                    border: '1px solid rgba(51,65,85,0.9)',
+                    whiteSpace: 'pre-wrap',
+                    fontSize: '0.9rem',
+                    maxHeight: 320,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {aiGenResult}
+                </div>
+              )}
             </div>
           )}
         </GlassCard>
@@ -2554,25 +2873,18 @@ const TeacherOverview: React.FC<{
   metrics: Array<{ label: string; value: string; helper?: string; trendLabel?: string; trendTone?: 'positive' | 'neutral' }>;
   activities: string[];
   meetings: TeacherMeeting[];
-  onCreateMeeting: () => void;
   onStartLive: (meetingId: string) => void;
-}> = ({ metrics, activities, meetings, onCreateMeeting, onStartLive }) => {
+}> = ({ metrics, activities, meetings, onStartLive }) => {
   const now = Date.now();
   const upcomingMeetings = meetings
-    .filter((meeting) => {
-      const time = new Date(meeting.scheduledAt).getTime();
-      if (Number.isNaN(time)) return false;
-      // Biraz tolerans: 10 dk geçmiş toplantıları da gösterme
-      return time >= now - 10 * 60 * 1000;
-    })
+    .filter((meeting) => canTeacherStartMeeting(meeting.scheduledAt, now))
+    .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
     .slice(0, 3);
 
-  // Eğer hiç yaklaşan yoksa, en son 3 toplantıyı göster
-  const visibleMeetings =
-    upcomingMeetings.length > 0 ? upcomingMeetings : meetings.slice(-3);
+  const visibleMeetings = upcomingMeetings;
 
   return (
-  <>
+    <>
     <div className="metric-grid">
       {metrics.map((metric) => (
         <MetricCard key={metric.label} {...metric}>
@@ -2585,13 +2897,6 @@ const TeacherOverview: React.FC<{
       <GlassCard
         title="Sıradaki Görevler"
         subtitle="Yaklaşan toplantılar"
-        actions={
-          <>
-            <button type="button" className="primary-btn" onClick={onCreateMeeting}>
-              Yeni Canlı Ders
-            </button>
-          </>
-        }
       >
         <div className="list-stack">
           {visibleMeetings.map((meeting) => (
@@ -2608,7 +2913,13 @@ const TeacherOverview: React.FC<{
                   type="button"
                   className="ghost-btn"
                   onClick={() => onStartLive(meeting.id)}
+                  disabled={!canTeacherStartMeeting(meeting.scheduledAt, now)}
                   style={{ fontSize: '0.75rem', padding: '0.25rem 0.7rem' }}
+                  title={
+                    !canTeacherStartMeeting(meeting.scheduledAt, now)
+                      ? 'Seans başlatma süresi geçti. Yeni seans oluşturun.'
+                      : undefined
+                  }
                 >
                   Canlıyı Başlat
                 </button>
@@ -2680,15 +2991,25 @@ const TeacherOverview: React.FC<{
 
 const TeacherContent: React.FC<{
   contents: TeacherContent[];
-  draft: { title: string; type: string; topic: string; gradeLevel: string; url: string };
-  subjectId: string;
-  onChangeSubject: (subjectId: string) => void;
-  onDraftChange: (draft: { title: string; type: string; topic: string; gradeLevel: string; url: string }) => void;
+  draft: { title: string; type: string; topic: string; subjectId: string; gradeLevel: string; url: string; description: string };
+  onDraftChange: (draft: { title: string; type: string; topic: string; subjectId: string; gradeLevel: string; url: string; description: string }) => void;
   onCreateContent: () => void;
   onSelectVideoFile: (file: File | null) => void;
   selectedVideoFileName?: string | null;
   uploadingVideo?: boolean;
-}> = ({ contents, draft, subjectId, onChangeSubject, onDraftChange, onCreateContent, onSelectVideoFile, selectedVideoFileName, uploadingVideo }) => (
+  curriculumTopics: CurriculumTopic[];
+  loadingCurriculumTopics?: boolean;
+}> = ({
+  contents,
+  draft,
+  onDraftChange,
+  onCreateContent,
+  onSelectVideoFile,
+  selectedVideoFileName,
+  uploadingVideo,
+  curriculumTopics,
+  loadingCurriculumTopics,
+}) => (
   <GlassCard title="İçerik Kütüphanesi" subtitle="Yeni içerik oluştur">
       <div className="list-stack" style={{ marginBottom: '1rem' }}>
         <div className="list-row">
@@ -2698,9 +3019,38 @@ const TeacherContent: React.FC<{
           </div>
         </div>
         <div style={{ display: 'grid', gap: '0.6rem' }}>
+
+          <div style={{ display: 'grid', gap: '0.35rem' }}>
+             <select
+              value={draft.gradeLevel}
+              onChange={(event) => onDraftChange({ ...draft, gradeLevel: event.target.value })}
+              style={{
+                width: '100%',
+                padding: '0.55rem 0.75rem',
+                borderRadius: 999,
+                border: '1px solid var(--color-border-subtle)',
+                background: 'var(--color-surface)',
+                fontSize: '0.9rem',
+              }}
+            >
+              <option value="">Sınıf seçin</option>
+              <option value="4">4. Sınıf</option>
+              <option value="5">5. Sınıf</option>
+              <option value="6">6. Sınıf</option>
+              <option value="7">7. Sınıf</option>
+              <option value="8">8. Sınıf (LGS)</option>
+              <option value="9">9. Sınıf</option>
+              <option value="10">10. Sınıf</option>
+              <option value="11">11. Sınıf</option>
+              <option value="12">12. Sınıf</option>
+              <option value="TYT">TYT</option>
+              <option value="AYT">AYT</option>
+            </select>
+          </div>
+
           <select
-            value={subjectId}
-            onChange={(event) => onChangeSubject(event.target.value)}
+            value={draft.subjectId}
+            onChange={(event) => onDraftChange({ ...draft, subjectId: event.target.value })}
             style={{
               width: '100%',
               padding: '0.55rem 0.75rem',
@@ -2710,41 +3060,64 @@ const TeacherContent: React.FC<{
               fontSize: '0.9rem',
             }}
           >
-            <option value="sub1">Matematik</option>
-            <option value="sub2">Fizik</option>
-            <option value="sub3">Biyoloji</option>
-            <option value="sub4">Kimya</option>
+            <option value="sub_matematik">Matematik</option>
+            <option value="sub_fizik">Fizik</option>
+            <option value="sub_biyoloji">Biyoloji</option>
+            <option value="sub_kimya">Kimya</option>
           </select>
+
+            {draft.gradeLevel && draft.subjectId && (
+              <div style={{ display: 'grid', gap: '0.25rem' }}>
+                {loadingCurriculumTopics && (
+                  <small style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                    Konular yükleniyor...
+                  </small>
+                )}
+                {curriculumTopics.length > 0 ? (
+                  <select
+                    value={draft.topic}
+                    onChange={(event) => onDraftChange({ ...draft, topic: event.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '0.55rem 0.75rem',
+                      borderRadius: 999,
+                      border: '1px solid var(--color-border-subtle)',
+                      background: 'var(--color-surface)',
+                      fontSize: '0.9rem',
+                    }}
+                  >
+                    <option value="">Konu seçin (MEB müfredatı)</option>
+                    {curriculumTopics.map((t) => (
+                      <option key={t.id} value={t.topicName}>
+                        {t.kazanimKodu ? `${t.kazanimKodu} - ${t.topicName}` : t.topicName}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  !loadingCurriculumTopics && (
+                     <input
+                      type="text"
+                      placeholder="Konu başlığı (Manuel giriş)"
+                      value={draft.topic}
+                      onChange={(event) => onDraftChange({ ...draft, topic: event.target.value })}
+                    />
+                  )
+                )}
+              </div>
+            )}
+            
           <input
             type="text"
-            placeholder="Konu başlığı"
+            placeholder="İçerik başlığı"
             value={draft.title}
             onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
           />
           <input
             type="text"
             placeholder="Konu detayı / açıklama"
-            value={draft.topic}
-            onChange={(event) => onDraftChange({ ...draft, topic: event.target.value })}
+            value={draft.description}
+            onChange={(event) => onDraftChange({ ...draft, description: event.target.value })}
           />
-          <select
-            value={draft.gradeLevel}
-            onChange={(event) => onDraftChange({ ...draft, gradeLevel: event.target.value })}
-            style={{
-              width: '100%',
-              padding: '0.55rem 0.75rem',
-              borderRadius: 999,
-              border: '1px solid var(--color-border-subtle)',
-              background: 'var(--color-surface)',
-              fontSize: '0.9rem',
-            }}
-          >
-            <option value="">Sınıf seçin</option>
-            <option value="9">9. Sınıf</option>
-            <option value="10">10. Sınıf</option>
-            <option value="11">11. Sınıf</option>
-            <option value="12">12. Sınıf</option>
-          </select>
         <div
           style={{
             borderRadius: 14,
@@ -3669,6 +4042,7 @@ const TeacherStudents: React.FC<{
   studentProfile: TeacherStudentProfile | null;
   profileLoading: boolean;
   onMarkMessageRead: (messageId: string) => void;
+  onOpenCoaching: () => void;
 }> = ({
   token,
   students,
@@ -3679,11 +4053,11 @@ const TeacherStudents: React.FC<{
   studentProfile,
   profileLoading,
   onMarkMessageRead: _onMarkMessageRead,
+  onOpenCoaching,
 }) => {
-  type MessageMode = 'none' | 'student' | 'parent';
+  type MessageMode = 'none' | 'student';
   const [messageMode, setMessageMode] = useState<MessageMode>('none');
   const [studentMessageText, setStudentMessageText] = useState('');
-  const [parentMessageText, setParentMessageText] = useState('');
   const [showAllMessages, setShowAllMessages] = useState(true);
   const now = Date.now();
   const studentsWithPresence = students.map((s) => {
@@ -3692,68 +4066,10 @@ const TeacherStudents: React.FC<{
     return { ...s, isOnline };
   });
 
-  const [feedbackDraft, setFeedbackDraft] = useState({
-    type: 'general_feedback',
-    title: '',
-    content: '',
-  });
-  const [feedbackSaving, setFeedbackSaving] = useState(false);
-  const [feedbackError, setFeedbackError] = useState<string | null>(null);
-
-  const [parents, setParents] = useState<
-    { id: string; name: string; email: string; role: 'parent'; studentIds: string[] }[]
-  >([]);
-  const [selectedParentId, setSelectedParentId] = useState<string>('');
-  const [parentLoading, setParentLoading] = useState(false);
-
-  useEffect(() => {
-    if (!token) return;
-    setParentLoading(true);
-    getTeacherParents(token)
-      .then((data) => setParents(data))
-      .catch(() => {})
-      .finally(() => setParentLoading(false));
-  }, [token]);
-
-  useEffect(() => {
-    setSelectedParentId('');
-  }, [selectedStudentId]);
-
-  // Aktif mesaj, mesaj listesi değişirse hala mevcut mu kontrol et
-  // Öğrenci sekmesinde artık bireysel mesaj detayı veya liste tutulmuyor;
-  // tüm mesaj/bildirim akışı 'Bildirimler' sekmesinde yönetiliyor.
-
-  const handleCreateFeedback = async () => {
-    if (!token || !selectedStudentId) return;
-    const title = feedbackDraft.title.trim();
-    const content = feedbackDraft.content.trim();
-    if (!title || !content) {
-      setFeedbackError('Lütfen başlık ve içerik girin.');
-      return;
-    }
-    setFeedbackSaving(true);
-    setFeedbackError(null);
-    try {
-      await createTeacherFeedback(token, {
-        studentId: selectedStudentId,
-        type: feedbackDraft.type,
-        title,
-        content,
-      });
-      setFeedbackDraft({ type: 'general_feedback', title: '', content: '' });
-      // eslint-disable-next-line no-alert
-      alert('Değerlendirme kaydedildi. Sadece veli panelinde görüntülenir.');
-    } catch (e) {
-      setFeedbackError(e instanceof Error ? e.message : 'Kaydedilemedi.');
-    } finally {
-      setFeedbackSaving(false);
-    }
-  };
-
   return (
     <GlassCard
       title="Öğrenci İçgörüleri"
-      subtitle="Mesajlar ve görevler"
+      subtitle="Mesajlar, görevler ve koçluk"
       actions={
         <>
           <button
@@ -3766,6 +4082,13 @@ const TeacherStudents: React.FC<{
             }}
           >
             <Users size={16} /> Tümü
+          </button>
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={onOpenCoaching}
+          >
+            Koçluk Paneli
           </button>
         </>
       }
@@ -3821,7 +4144,7 @@ const TeacherStudents: React.FC<{
           <div className="empty-state">Öğrenci verileri yükleniyor...</div>
         ) : studentProfile ? (
           <>
-            <div className="metric-grid">
+            <div className="metric-grid metric-grid--fixed">
               <MetricCard
                 label="Çözülen Test"
                 value={`${studentProfile.results.length}`}
@@ -3858,7 +4181,7 @@ const TeacherStudents: React.FC<{
               </MetricCard>
             </div>
 
-            {/* Mesaj Gönder - test sonuçlarının üzerinde */}
+            {/* Mesaj Gönder - test sonuçlarının üzerinde (sadece öğrenci) */}
             <div
               style={{
                 marginTop: '1.25rem',
@@ -3910,27 +4233,19 @@ const TeacherStudents: React.FC<{
                   >
                     Öğrenciye Mesaj
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setMessageMode('parent')}
-                    disabled={!selectedStudentId}
-                    style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 500, borderRadius: 999, border: 'none', cursor: selectedStudentId ? 'pointer' : 'not-allowed', opacity: selectedStudentId ? 1 : 0.5, background: 'var(--color-accent-soft, #ede9fe)', color: 'var(--color-accent)' }}
-                  >
-                    Veliye Mesaj
-                  </button>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <button
                       type="button"
-                      onClick={() => { setMessageMode('none'); setStudentMessageText(''); setParentMessageText(''); setSelectedParentId(''); }}
+                      onClick={() => { setMessageMode('none'); setStudentMessageText(''); }}
                       style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem', borderRadius: 6, border: '1px solid var(--color-border-subtle)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
                     >
                       <ArrowRight size={14} style={{ transform: 'rotate(180deg)' }} /> Geri
                     </button>
                     <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', padding: '0.2rem 0.5rem', borderRadius: 4, background: 'var(--color-surface)' }}>
-                      {messageMode === 'student' ? 'Öğrenciye mesaj' : 'Veliye mesaj'}
+                      Öğrenciye mesaj
                     </span>
                   </div>
                   {messageMode === 'student' && (
@@ -3961,56 +4276,6 @@ const TeacherStudents: React.FC<{
                       >
                         <Send size={16} /> Gönder
                       </button>
-                    </>
-                  )}
-                  {messageMode === 'parent' && (
-                    <>
-                      {(() => {
-                        const parentsOfStudent = parents.filter((p) => p.studentIds.includes(selectedStudentId));
-                        return (
-                          <>
-                            <select
-                              value={selectedParentId}
-                              onChange={(e) => setSelectedParentId(e.target.value)}
-                              disabled={parentLoading || parentsOfStudent.length === 0}
-                              style={{ width: '100%', padding: '0.6rem 0.9rem', fontSize: '0.9rem', borderRadius: 8, border: '1px solid var(--color-border-subtle)', background: 'var(--color-surface)', color: 'var(--color-text-main)', cursor: 'pointer' }}
-                            >
-                              <option value="">{parentLoading ? 'Veliler yükleniyor...' : parentsOfStudent.length === 0 ? 'Bu öğrenciye bağlı veli bulunamadı' : 'Veli seçin'}</option>
-                              {parentsOfStudent.map((p) => (
-                                <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
-                              ))}
-                            </select>
-                            <textarea
-                              placeholder="Veliyi bilgilendireceğiniz mesaj..."
-                              value={parentMessageText}
-                              onChange={(e) => setParentMessageText(e.target.value)}
-                              rows={4}
-                              style={{ width: '100%', padding: '0.75rem 1rem', fontSize: '0.9rem', borderRadius: 10, border: '1px solid var(--color-border-subtle)', background: 'var(--color-surface)', color: 'var(--color-text-main)', resize: 'vertical', minHeight: 100 }}
-                            />
-                            <button
-                              type="button"
-                              className="primary-btn"
-                              disabled={!selectedParentId || !parentMessageText.trim() || !token}
-                              onClick={async () => {
-                                if (!token || !selectedParentId || !parentMessageText.trim()) return;
-                                try {
-                                  const studentName = students.find((s) => s.id === selectedStudentId)?.name ?? 'Öğrenci';
-                                  await sendTeacherMessage(token, { toUserId: selectedParentId, text: parentMessageText.trim(), studentId: selectedStudentId, subject: `Öğrenci hakkında mesaj (${studentName})` });
-                                  setParentMessageText('');
-                                  setSelectedParentId('');
-                                  setMessageMode('none');
-                                  alert('Veliye mesaj gönderildi.');
-                                } catch (e) {
-                                  alert(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
-                                }
-                              }}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', padding: '0.6rem 1.25rem' }}
-                            >
-                              <Send size={16} /> Veliyi Bilgilendir
-                            </button>
-                          </>
-                        );
-                      })()}
                     </>
                   )}
                 </div>
@@ -4045,53 +4310,6 @@ const TeacherStudents: React.FC<{
         ) : (
           <div className="empty-state">Öğrenci seçildiğinde performans burada görünecek.</div>
         )}
-      </div>
-
-      {/* Veliye Özel Notlar - performans metriklerinin altında ayrı bölüm */}
-      <div
-        style={{
-          marginBottom: '1.25rem',
-          padding: '1rem',
-          borderRadius: 8,
-          background: 'var(--color-surface-subtle, rgba(255,255,255,0.04))',
-          border: '1px solid var(--color-border-subtle, rgba(255,255,255,0.08))',
-        }}
-      >
-        <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '0.25rem' }}>
-          Veliye Özel Notlar
-        </div>
-        <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
-          Sadece veli panelinde görünür; öğrenci bu notları görmez.
-        </div>
-        <div style={{ display: 'grid', gap: '0.6rem' }}>
-          <select
-            value={feedbackDraft.type}
-            onChange={(e) => setFeedbackDraft((p) => ({ ...p, type: e.target.value }))}
-          >
-            <option value="general_feedback">Genel değerlendirme</option>
-            <option value="performance_note">Performans notu</option>
-            <option value="test_feedback">Test değerlendirmesi</option>
-          </select>
-          <input
-            type="text"
-            placeholder="Başlık"
-            value={feedbackDraft.title}
-            onChange={(e) => setFeedbackDraft((p) => ({ ...p, title: e.target.value }))}
-          />
-          <textarea
-            placeholder="Değerlendirme içeriği (veli görecek)"
-            value={feedbackDraft.content}
-            onChange={(e) => setFeedbackDraft((p) => ({ ...p, content: e.target.value }))}
-            rows={4}
-            style={{ resize: 'vertical' }}
-          />
-          {feedbackError && <div style={{ color: '#f97316', fontSize: '0.85rem' }}>{feedbackError}</div>}
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="button" className="primary-btn" onClick={handleCreateFeedback} disabled={feedbackSaving}>
-              {feedbackSaving ? 'Kaydediliyor...' : 'Değerlendirmeyi Kaydet'}
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Bildirimler artık ayrı 'Bildirimler' sekmesinde; burada mesaj listesi gösterilmiyor */}

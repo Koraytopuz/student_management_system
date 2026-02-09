@@ -168,6 +168,30 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     return () => mq.removeEventListener('change', handler);
   }, []);
 
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/357f6865-f318-4b91-9ae0-9d949d093cc6', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId: 'ui-layout-1',
+        hypothesisId: 'H3',
+        location: 'DashboardPrimitives.tsx:DashboardLayout',
+        message: 'dashboard layout render',
+        data: {
+          accent,
+          title,
+          viewport: {
+            width: typeof window !== 'undefined' ? window.innerWidth : null,
+            height: typeof window !== 'undefined' ? window.innerHeight : null,
+          },
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+  }, [accent, title]);
+
   return (
     <div className={`dashboard-shell ${accentClass[accent]}`}>
       <button
@@ -289,26 +313,30 @@ export const MetricCard: React.FC<MetricCardProps> = ({
 };
 
 export interface GlassCardProps {
-  title: string;
+  title?: string;
   subtitle?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
+  className?: string;
 }
 
-export const GlassCard: React.FC<GlassCardProps> = ({ title, subtitle, actions, children }) => {
+export const GlassCard: React.FC<GlassCardProps> = ({ title, subtitle, actions, children, className }) => {
   return (
-    <div className="glass-card">
-      <div className="card-header">
-        <div>
-          <h3>{title}</h3>
-          {subtitle && <p className="card-subtitle">{subtitle}</p>}
+    <div className={`glass-card${className ? ` ${className}` : ''}`}>
+      {(title || subtitle || actions) && (
+        <div className="card-header">
+          <div>
+            {title && <h3>{title}</h3>}
+            {subtitle && <p className="card-subtitle">{subtitle}</p>}
+          </div>
+          {actions && <div className="card-actions">{actions}</div>}
         </div>
-        {actions && <div className="card-actions">{actions}</div>}
-      </div>
+      )}
       {children}
     </div>
   );
 };
+
 
 export const TagChip: React.FC<{ label: string; tone?: 'success' | 'warning' | 'info' }> = ({
   label,

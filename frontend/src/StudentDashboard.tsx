@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle, ClipboardList, ListChecks, Maximize2, Minimize2, Video, X } from 'lucide-react';
+import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Video, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import {
   apiRequest,
@@ -25,6 +25,9 @@ import {
   watchStudentContent,
   joinStudentLiveMeeting,
   markStudentHelpResponsePlayed,
+  getStudentCoachingSessions,
+  getStudentTestFeedback,
+  getStudentBadges,
   type CalendarEvent,
   type ProgressCharts,
   type ProgressOverview,
@@ -36,6 +39,8 @@ import {
   type Question,
   type StudentAssignmentDetail,
   type TeacherListItem,
+  type StudentCoachingSession,
+  type StudentBadgeProgress,
 } from './api';
 import { Breadcrumb, DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
@@ -45,8 +50,21 @@ import { DrawingCanvas } from './DrawingCanvas';
 import { LiveClassOverlay } from './LiveClassOverlay';
 import { PdfTestOverlay, type PdfTestAssignment } from './PdfTestOverlay';
 import { useSearchParams } from 'react-router-dom';
+import { StudentQuestionBankTab } from './StudentQuestionBankTab';
+import { StudentBadgesTab } from './StudentBadgesTab';
 
-type StudentTab = 'overview' | 'assignments' | 'planner' | 'grades' | 'notifications' | 'complaints';
+type StudentTab =
+  | 'overview'
+  | 'assignments'
+  | 'planner'
+  | 'grades'
+  | 'coursenotes'
+  | 'questionbank'
+  | 'badges'
+  | 'liveclasses'
+  | 'coaching'
+  | 'notifications'
+  | 'complaints';
 type AssignmentStatus = 'todo' | 'in-progress' | 'done' | 'overdue';
 
 const sortMeetingsByDate = (items: StudentMeeting[]): StudentMeeting[] =>
@@ -92,6 +110,20 @@ const resolveContentUrl = (url: string): string => {
   return url;
 };
 
+const MEETING_WINDOW_BEFORE_MS = 10 * 60 * 1000; // 10 dk önce katılıma izin
+
+const isMeetingJoinable = (
+  scheduledAt: string,
+  durationMinutes: number,
+  now = Date.now(),
+): boolean => {
+  const start = new Date(scheduledAt).getTime();
+  if (Number.isNaN(start)) return false;
+  const end = start + durationMinutes * 60 * 1000;
+  const windowStart = start - MEETING_WINDOW_BEFORE_MS;
+  return now >= windowStart && now <= end;
+};
+
 export const StudentDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<StudentTab>('overview');
@@ -131,6 +163,10 @@ export const StudentDashboard: React.FC = () => {
   const progressState = useApiState<ProgressOverview>(null);
   const chartsState = useApiState<ProgressCharts>(null);
   const calendarState = useApiState<CalendarEvent[]>([]);
+  const coachingState = useApiState<StudentCoachingSession[]>([]);
+  const [badges, setBadges] = useState<StudentBadgeProgress[]>([]);
+  const [badgesLoading, setBadgesLoading] = useState(false);
+  const [badgesError, setBadgesError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -153,7 +189,33 @@ export const StudentDashboard: React.FC = () => {
       })
       .catch(() => {});
     todosState.run(() => getStudentTodos(token)).catch(() => {});
+    coachingState.run(() => getStudentCoachingSessions(token)).catch(() => {});
   }, [token]);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'badges') return;
+    let cancelled = false;
+    const load = async () => {
+      setBadgesLoading(true);
+      setBadgesError(null);
+      try {
+        const data = await getStudentBadges(token);
+        if (cancelled) return;
+        setBadges(data);
+      } catch (error) {
+        if (cancelled) return;
+        setBadgesError(
+          error instanceof Error ? error.message : 'Rozetler yüklenemedi',
+        );
+      } finally {
+        if (!cancelled) setBadgesLoading(false);
+      }
+    };
+    load().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeTab]);
 
   // Ödevleri periyodik olarak yenile (öğretmen yeni ödev atayınca öğrenci sayfayı yenilemeden görsün)
   useEffect(() => {
@@ -295,16 +357,21 @@ export const StudentDashboard: React.FC = () => {
 
   const nextMeeting = useMemo(() => {
     if (!meetings.length) return null;
-    const now = Date.now();
-    const withDates = meetings
-      .map((meeting) => ({ meeting, start: new Date(meeting.scheduledAt) }))
-      .filter((item) => !Number.isNaN(item.start.getTime()))
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
-
-    const target =
-      withDates.find((item) => item.start.getTime() >= now - 10 * 60 * 1000) ?? withDates[0];
-    return target?.meeting ?? null;
+    const joinable = meetings.filter((m) =>
+      isMeetingJoinable(m.scheduledAt, m.durationMinutes ?? 30),
+    );
+    if (!joinable.length) return null;
+    const sorted = [...joinable].sort(
+      (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
+    );
+    return sorted[0];
   }, [meetings]);
+
+  const isNextMeetingFromCoaching = useMemo(() => {
+    if (!nextMeeting) return false;
+    const sessions = coachingState.data ?? [];
+    return sessions.some((session) => session.meetingId === nextMeeting.id);
+  }, [nextMeeting, coachingState.data]);
 
   useEffect(() => {
     if (!token) return;
@@ -386,7 +453,16 @@ export const StudentDashboard: React.FC = () => {
     incorrectCount: number;
     blankCount: number;
     scorePercent: number;
+    analysis?: {
+      overallLevel: 'weak' | 'average' | 'strong';
+      weakTopics: string[];
+      strongTopics: string[];
+      recommendedNextActions: string[];
+    };
+    testResultId?: string;
   } | null>(null);
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  const [aiFeedbackLoading, setAiFeedbackLoading] = useState(false);
   const [showNotesLibrary, setShowNotesLibrary] = useState(false);
   const [startedAssignmentIds, setStartedAssignmentIds] = useState<string[]>([]);
   const [activePdfAssignment, setActivePdfAssignment] = useState<{
@@ -411,23 +487,28 @@ export const StudentDashboard: React.FC = () => {
       }));
       const durationSeconds =
         testStartedAtMs != null ? Math.max(0, Math.round((Date.now() - testStartedAtMs) / 1000)) : 0;
-      const result = (await submitStudentAssignment(
+      const result = await submitStudentAssignment(
         token,
         activeTest.assignment.id,
         payload,
         durationSeconds,
-      )) as {
-        correctCount?: number;
-        incorrectCount?: number;
-        blankCount?: number;
-        scorePercent?: number;
-      };
+      );
       setLastTestResult({
         testTitle: activeTest.test?.title ?? activeTest.assignment.title,
-        correctCount: result?.correctCount ?? 0,
-        incorrectCount: result?.incorrectCount ?? 0,
-        blankCount: result?.blankCount ?? 0,
-        scorePercent: result?.scorePercent ?? 0,
+        correctCount: result.correctCount ?? 0,
+        incorrectCount: result.incorrectCount ?? 0,
+        blankCount: result.blankCount ?? 0,
+        scorePercent: result.scorePercent ?? 0,
+        analysis: result.questionBankAnalysis
+          ? {
+              overallLevel: result.questionBankAnalysis.overallLevel,
+              weakTopics: result.questionBankAnalysis.weakTopics,
+              strongTopics: result.questionBankAnalysis.strongTopics,
+              recommendedNextActions:
+                result.questionBankAnalysis.recommendedNextActions,
+            }
+          : undefined,
+        testResultId: result.id,
       });
       setAssignments((prev) => prev.filter((item) => item.id !== activeTest.assignment.id));
       setActiveTest(null);
@@ -625,6 +706,11 @@ export const StudentDashboard: React.FC = () => {
     if (activeTab === 'assignments') items.push({ label: 'Ödevler' });
     else if (activeTab === 'planner') items.push({ label: 'Planlama' });
     else if (activeTab === 'grades') items.push({ label: 'Sınav Analizi' });
+    else if (activeTab === 'coursenotes') items.push({ label: 'Ders Notları' });
+    else if (activeTab === 'questionbank') items.push({ label: 'Soru Havuzu' });
+    else if (activeTab === 'badges') items.push({ label: 'Rozetlerim' });
+    else if (activeTab === 'liveclasses') items.push({ label: 'Canlı Dersler' });
+    else if (activeTab === 'coaching') items.push({ label: 'Koçluk' });
     else if (activeTab === 'notifications') items.push({ label: 'Bildirimler' });
     else if (activeTab === 'complaints') items.push({ label: 'Şikayet/Öneri' });
     return items;
@@ -683,6 +769,66 @@ export const StudentDashboard: React.FC = () => {
         },
       },
       {
+        id: 'coursenotes',
+        label: 'Ders Notları',
+        icon: <FileText size={18} />,
+        description: 'Konu Anlatımları',
+        active: activeTab === 'coursenotes',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('coursenotes');
+        },
+      },
+      {
+        id: 'questionbank',
+        label: 'Soru Havuzu',
+        icon: <BookOpen size={18} />,
+        description: 'Konu Testleri',
+        active: activeTab === 'questionbank',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('questionbank');
+        },
+      },
+      {
+        id: 'badges',
+        label: 'Rozetler',
+        icon: <Award size={18} />,
+        description: 'Başarılarım',
+        active: activeTab === 'badges',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('badges');
+        },
+      },
+      {
+        id: 'liveclasses',
+        label: 'Canlı Dersler',
+        icon: <Video size={18} />,
+        description: 'Planlı dersler',
+        active: activeTab === 'liveclasses',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('liveclasses');
+        },
+      },
+      {
+        id: 'coaching',
+        label: 'Koçluk',
+        icon: <CalendarCheck size={18} />,
+        description: 'Görüşmeler',
+        active: activeTab === 'coaching',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('coaching');
+        },
+      },
+      {
         id: 'notifications',
         label: 'Bildirimler',
         icon: <Bell size={18} />,
@@ -724,11 +870,19 @@ export const StudentDashboard: React.FC = () => {
             ? 'Ödev Akışı'
             : activeTab === 'planner'
               ? 'Planlama'
-              : activeTab === 'notifications'
-                ? 'Bildirimler'
-                : activeTab === 'complaints'
-                  ? 'Şikayet/Öneri'
-                  : 'Sınav Analizi'
+              : activeTab === 'grades'
+                ? 'Sınav Analizi'
+                : activeTab === 'questionbank'
+                  ? 'Soru Havuzu Testleri'
+                  : activeTab === 'badges'
+                    ? 'Rozetlerim'
+                    : activeTab === 'liveclasses'
+                      ? 'Canlı Dersler'
+                      : activeTab === 'coaching'
+                        ? 'Koçluk Görüşmeleri'
+                        : activeTab === 'notifications'
+                          ? 'Bildirimler'
+                          : 'Şikayet/Öneri'
       }
       subtitle="Gerçek verilerle çalışma serini ve ödevlerini yönet."
       status={{ label: `${dashboardState.data?.testsSolvedThisWeek ?? 0} test çözüldü`, tone: 'warning' }}
@@ -795,6 +949,7 @@ export const StudentDashboard: React.FC = () => {
         <StudentOverview
           metrics={metrics}
           meeting={nextMeeting}
+          isCoachingMeeting={isNextMeetingFromCoaching}
           events={calendarState.data ?? []}
           groupedAssignments={groupedAssignments}
           contents={contents}
@@ -803,6 +958,9 @@ export const StudentDashboard: React.FC = () => {
           joinMeetingHint={joinMeetingHint}
           loading={dashboardState.loading}
         />
+      )}
+      {activeTab === 'badges' && (
+        <StudentBadgesTab badges={badges} loading={badgesLoading} error={badgesError} />
       )}
       {activeTab === 'assignments' && (
         <StudentAssignments
@@ -824,10 +982,76 @@ export const StudentDashboard: React.FC = () => {
           onUpdate={handleUpdateTodo}
           onDelete={handleDeleteTodo}
           token={token}
+          defaultGradeLevel={user?.gradeLevel}
         />
       )}
       {activeTab === 'grades' && (
         <StudentGrades progress={progressState.data} charts={chartsState.data} loading={progressState.loading} />
+      )}
+      {activeTab === 'coursenotes' && (
+        <NotesLibraryOverlay
+          contents={contents}
+          initialDoc={null}
+          globalReadingMode={readingMode}
+          token={token}
+          embedded
+          onClose={() => {}}
+        />
+      )}
+      {activeTab === 'questionbank' && token && (
+        <StudentQuestionBankTab
+          token={token}
+          defaultGradeLevel={user?.gradeLevel}
+          onTestStarted={(detail) => {
+            setActiveTest(detail);
+            setActiveQuestionIndex(0);
+            setAnswers({});
+            setScratchpads({});
+            setTestStartedAtMs(Date.now());
+            setTestRemainingSeconds(null);
+          }}
+        />
+      )}
+      {activeTab === 'liveclasses' && (
+        <GlassCard title="Canlı Dersler" subtitle="Planlanmış canlı ders ve toplantılar">
+          {meetings.length === 0 && (
+            <div className="empty-state">Henüz planlanmış canlı dersiniz yok.</div>
+          )}
+          {meetings.length > 0 && (
+            <div className="list-stack">
+              {meetings.map((m) => (
+                <div key={m.id} className="list-row">
+                  <div>
+                    <strong>{m.title}</strong>
+                    <small>
+                      {new Date(m.scheduledAt).toLocaleString('tr-TR', {
+                        day: '2-digit',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                      {m.durationMinutes ? ` • ${m.durationMinutes} dk` : null}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => handleJoinMeeting(m.id)}
+                  >
+                    Katıl
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
+      )}
+      {activeTab === 'coaching' && (
+        <StudentCoachingTab
+          loading={coachingState.loading}
+          sessions={coachingState.data ?? []}
+          onJoinMeeting={handleJoinMeeting}
+        />
       )}
       {activeTab === 'notifications' && (
         <GlassCard title="Bildirimler" subtitle="Ödevler, çözümler ve güncellemeler">
@@ -1066,14 +1290,16 @@ export const StudentDashboard: React.FC = () => {
         >
           <div
             style={{
-              minWidth: 260,
-              maxWidth: 340,
+              minWidth: 320,
+              maxWidth: 420,
               background: 'rgba(15,23,42,0.97)',
               borderRadius: 16,
               padding: '1rem 1.1rem',
               boxShadow: '0 25px 60px rgba(0,0,0,0.8)',
               border: '1px solid rgba(55,65,81,0.9)',
               color: '#e5e7eb',
+              maxHeight: '80vh',
+              overflowY: 'auto',
             }}
           >
             <div
@@ -1120,6 +1346,110 @@ export const StudentDashboard: React.FC = () => {
               <div>
                 <strong>Puan:</strong> %{lastTestResult.scorePercent}
               </div>
+              {lastTestResult.analysis && (
+                <>
+                  <div style={{ marginTop: '0.25rem' }}>
+                    <strong>Genel Durum:</strong>{' '}
+                    {lastTestResult.analysis.overallLevel === 'weak'
+                      ? 'Geliştirilmeli'
+                      : lastTestResult.analysis.overallLevel === 'strong'
+                        ? 'Güçlü'
+                        : 'Orta'}
+                  </div>
+                  {lastTestResult.analysis.weakTopics.length > 0 && (
+                    <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>
+                      <strong>Zayıf Konular:</strong>{' '}
+                      {lastTestResult.analysis.weakTopics.join(', ')}
+                    </div>
+                  )}
+                  {lastTestResult.analysis.recommendedNextActions.length > 0 && (
+                    <div
+                      style={{
+                        fontSize: '0.8rem',
+                        opacity: 0.9,
+                        marginTop: '0.15rem',
+                      }}
+                    >
+                      {lastTestResult.analysis.recommendedNextActions[0]}
+                    </div>
+                  )}
+                </>
+              )}
+              {lastTestResult.testResultId && token && (
+                <div
+                  style={{
+                    marginTop: '0.4rem',
+                    display: 'flex',
+                    gap: '0.4rem',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.7rem',
+                    }}
+                    disabled={aiFeedbackLoading}
+                    onClick={async () => {
+                      if (!token || !lastTestResult.testResultId) return;
+                      setAiFeedbackLoading(true);
+                      try {
+                        const res = await getStudentTestFeedback(
+                          token,
+                          lastTestResult.testResultId,
+                          'pdf',
+                        );
+                        setAiFeedback(res.feedback);
+                        if (res.attachment) {
+                          const blob = new Blob(
+                            [
+                              Uint8Array.from(
+                                atob(res.attachment.data),
+                                (c) => c.charCodeAt(0),
+                              ),
+                            ],
+                            { type: res.attachment.mimeType },
+                          );
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = res.attachment.filename;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }
+                      } catch (e) {
+                        // eslint-disable-next-line no-alert
+                        alert(
+                          e instanceof Error
+                            ? e.message
+                            : 'Detaylı yorum alınamadı.',
+                        );
+                      } finally {
+                        setAiFeedbackLoading(false);
+                      }
+                    }}
+                  >
+                    {aiFeedbackLoading
+                      ? 'AI yorum hazırlanıyor...'
+                      : 'Detaylı AI yorumu göster ve PDF indir'}
+                  </button>
+                </div>
+              )}
+              {aiFeedback && (
+                <div
+                  style={{
+                    marginTop: '0.35rem',
+                    paddingTop: '0.35rem',
+                    borderTop: '1px solid rgba(55,65,81,0.8)',
+                    fontSize: '0.8rem',
+                    opacity: 0.95,
+                  }}
+                >
+                  {aiFeedback}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1795,8 +2125,9 @@ const NotesLibraryOverlay: React.FC<{
   initialDoc?: { url: string; title: string } | null;
   globalReadingMode?: boolean;
   token: string | null;
+  embedded?: boolean;
   onClose: () => void;
-}> = ({ contents, initialDoc, globalReadingMode, token, onClose }) => {
+}> = ({ contents, initialDoc, globalReadingMode, token, embedded = false, onClose }) => {
   const gradeOptions = ['all', '9', '10', '11', '12'] as const;
   const [activeGrade, setActiveGrade] = useState<string>('all');
   const [activeVideoContent, setActiveVideoContent] = useState<StudentContent | null>(null);
@@ -1930,16 +2261,20 @@ const NotesLibraryOverlay: React.FC<{
   return (
     <div
       style={{
-        position: 'fixed',
-        inset: 0,
+        ...(embedded
+          ? { position: 'relative', minHeight: 400 }
+          : {
+              position: 'fixed',
+              inset: 0,
+              zIndex: 65,
+            }),
         background: overlayIsReadingMode
           ? 'radial-gradient(circle at top left, #fff7ed, #fffaf0)'
           : 'radial-gradient(circle at top left, rgba(15,23,42,0.96), rgba(15,23,42,0.98))',
-        zIndex: 65,
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'flex-start',
-        padding: '4.5rem 1.25rem 2rem',
+        padding: embedded ? '1rem 0' : '4.5rem 1.25rem 2rem',
         transition: 'background 0.3s ease',
       }}
     >
@@ -1976,32 +2311,34 @@ const NotesLibraryOverlay: React.FC<{
               Konu Anlatımları
             </h3>
           </div>
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={() => {
-              if (activeVideoContent) {
-                if (videoCompleted) {
-                  setActiveVideoContent(null);
-                  setVideoCompleted(false);
-                  setShowResumeHint(false);
-                  onClose();
+          {!embedded && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                if (activeVideoContent) {
+                  if (videoCompleted) {
+                    setActiveVideoContent(null);
+                    setVideoCompleted(false);
+                    setShowResumeHint(false);
+                    onClose();
+                  } else {
+                    setVideoExitAlsoCloseOverlay(true);
+                    setShowVideoExitConfirm(true);
+                  }
                 } else {
-                  setVideoExitAlsoCloseOverlay(true);
-                  setShowVideoExitConfirm(true);
+                  onClose();
                 }
-              } else {
-                onClose();
-              }
-            }}
-            style={{
-              border: '1px solid rgba(148,163,184,0.9)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
-            }}
-          >
-            Kapat
-          </button>
+              }}
+              style={{
+                border: '1px solid rgba(148,163,184,0.9)',
+                background: 'rgba(15,23,42,0.9)',
+                color: '#e5e7eb',
+              }}
+            >
+              Kapat
+            </button>
+          )}
         </div>
 
         <div
@@ -2559,6 +2896,7 @@ const StudentOverview: React.FC<{
     trendTone?: 'positive' | 'neutral' | 'negative';
   }>;
   meeting: StudentMeeting | null;
+  isCoachingMeeting?: boolean;
   events: CalendarEvent[];
   groupedAssignments: Record<AssignmentStatus, StudentAssignment[]>;
   contents: StudentContent[];
@@ -2566,7 +2904,18 @@ const StudentOverview: React.FC<{
   onOpenContentLibrary: (initialDoc?: { url: string; title: string }) => void;
   loading: boolean;
   joinMeetingHint?: string | null;
-}> = ({ metrics, meeting, events, groupedAssignments, contents, onJoinMeeting, onOpenContentLibrary, loading, joinMeetingHint }) => (
+}> = ({
+  metrics,
+  meeting,
+  isCoachingMeeting,
+  events,
+  groupedAssignments,
+  contents,
+  onJoinMeeting,
+  onOpenContentLibrary,
+  loading,
+  joinMeetingHint,
+}) => (
   <>
     <div className="metric-grid">
       {metrics.map((metric) => (
@@ -2594,16 +2943,8 @@ const StudentOverview: React.FC<{
               onClick={() => onJoinMeeting(meeting?.id)}
               disabled={!meeting}
             >
-              Derse Katıl <ArrowRight size={16} />
-            </button>
-          </div>
-          <div className="list-row">
-            <div>
-              <strong>İçerik Notları</strong>
-              <small>{events[0]?.title ?? 'Takvimden içerik seçin'}</small>
-            </div>
-            <button type="button" className="ghost-btn" onClick={() => onOpenContentLibrary()}>
-              Ders Notlarını Aç
+              {meeting && isCoachingMeeting ? 'Görüşmeye Katıl' : 'Derse Katıl'}{' '}
+              <ArrowRight size={16} />
             </button>
           </div>
           {joinMeetingHint && (
@@ -2630,7 +2971,14 @@ const StudentOverview: React.FC<{
               const isMeeting = t.includes('meeting') || t.includes('live') || title.includes('canlı');
               const meetingId = event.relatedId;
               const startTime = event.startDate ? new Date(event.startDate).getTime() : NaN;
-              const canJoin = isMeeting && Boolean(meetingId) && !Number.isNaN(startTime) && startTime >= Date.now() - 10 * 60 * 1000;
+              const endTime = event.endDate ? new Date(event.endDate).getTime() : startTime + 30 * 60 * 1000;
+              const now = Date.now();
+              const canJoin =
+                isMeeting &&
+                Boolean(meetingId) &&
+                !Number.isNaN(startTime) &&
+                now >= startTime - MEETING_WINDOW_BEFORE_MS &&
+                now <= endTime;
 
               return (
                 <div
@@ -2829,6 +3177,142 @@ const StudentGrades: React.FC<{
     </GlassCard>
   </div>
 );
+
+const StudentCoachingTab: React.FC<{
+  loading: boolean;
+  sessions: StudentCoachingSession[];
+  onJoinMeeting: (meetingId: string) => void;
+}> = ({ loading, sessions, onJoinMeeting }) => {
+  const upcoming = useMemo(
+    () =>
+      sessions
+        .filter((s) => new Date(s.date).getTime() >= Date.now())
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0],
+    [sessions],
+  );
+
+  const last = useMemo(
+    () =>
+      sessions
+        .filter((s) => new Date(s.date).getTime() < Date.now())
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0],
+    [sessions],
+  );
+
+  return (
+    <div className="panel-grid">
+      <GlassCard
+        title="Koçluk Görüşmeleri"
+        subtitle="Öğretmeninle yaptığın birebir gelişim seansları."
+      >
+        <div className="metric-grid">
+          <MetricCard
+            label="Toplam Seans"
+            value={`${sessions.length}`}
+            helper="Tüm zamanlar"
+            trendLabel={sessions.length ? 'Aktif koçluk' : 'Başlamak için öğretmeninle konuş.'}
+            trendTone={sessions.length ? 'positive' : 'neutral'}
+          />
+          <MetricCard
+            label="Sıradaki Seans"
+            value={upcoming ? formatShortDate(upcoming.date) : '-'}
+            helper={upcoming ? upcoming.teacherName : 'Planlanmış seans yok'}
+            trendLabel={upcoming ? 'Hazırlığını yap' : 'Takipte kal'}
+            trendTone={upcoming ? 'positive' : 'neutral'}
+          >
+            {upcoming && (
+              <div className="metric-inline">
+                <CalendarCheck size={14} />
+              </div>
+            )}
+          </MetricCard>
+          <MetricCard
+            label="Son Görüşme"
+            value={last ? formatShortDate(last.date) : '-'}
+            helper={last ? last.teacherName : 'Henüz görüşme yapılmadı'}
+            trendLabel={last ? 'Geri bildirimi gözden geçir' : 'İlk görüşme seni bekliyor'}
+            trendTone={last ? 'neutral' : 'warning'}
+          />
+        </div>
+
+        <div style={{ marginTop: '1.25rem' }}>
+          <h3 style={{ fontSize: '0.95rem', marginBottom: '0.35rem' }}>Tüm Seanslar</h3>
+          {loading && sessions.length === 0 && (
+            <div className="empty-state">Koçluk kayıtların yükleniyor...</div>
+          )}
+          {!loading && sessions.length === 0 && (
+            <div className="empty-state">
+              Henüz koçluk görüşmesi yapılmamış. Öğretmeninle birlikte hedef belirlediğinizde
+              buradan tarih ve detayları takip edebilirsin.
+            </div>
+          )}
+          {sessions.length > 0 && (
+            <div className="list-stack">
+              {sessions.map((s) => (
+                <div key={s.id} className="list-row">
+                  <div style={{ flex: 1 }}>
+                    <strong style={{ display: 'block' }}>
+                      {s.title || 'Koçluk görüşmesi'}
+                    </strong>
+                    <small
+                      style={{
+                        display: 'block',
+                        marginTop: '0.2rem',
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      {formatShortDate(s.date)} ·{' '}
+                      {new Date(s.date).toLocaleTimeString('tr-TR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}{' '}
+                      {s.durationMinutes ? `· ${s.durationMinutes} dk` : ''}
+                    </small>
+                    <small
+                      style={{
+                        display: 'block',
+                        marginTop: '0.25rem',
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      Koç: {s.teacherName}
+                    </small>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-end' }}>
+                    <TagChip
+                      label={s.mode === 'video' ? 'Görüntülü' : 'Sesli'}
+                      tone={s.mode === 'video' ? 'info' : 'success'}
+                    />
+                    {s.meetingId &&
+                      isMeetingJoinable(s.date, s.durationMinutes ?? 30) && (
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={() => onJoinMeeting(s.meetingId!)}
+                        >
+                          Görüşmeye Katıl
+                        </button>
+                      )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div
+            style={{
+              marginTop: '0.75rem',
+              fontSize: '0.75rem',
+              color: 'var(--color-text-muted)',
+            }}
+          >
+            Koçluk seanslarının detaylı notları yalnızca öğretmenin ve yetkili yöneticilerin
+            erişimine açıktır; burada sadece temel planlama bilgileri gösterilir.
+          </div>
+        </div>
+      </GlassCard>
+    </div>
+  );
+};
 
 const StudentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
   const [teachers, setTeachers] = useState<TeacherListItem[]>([]);

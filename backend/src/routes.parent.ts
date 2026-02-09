@@ -944,6 +944,21 @@ router.post(
       return res.status(403).json({ error: 'Bu toplantıya erişim izniniz yok' });
     }
 
+    const now = Date.now();
+    const scheduledAtMs = new Date(meeting.scheduledAt).getTime();
+    const meetingEndMs = scheduledAtMs + meeting.durationMinutes * 60 * 1000;
+    const windowStartMs = scheduledAtMs - 10 * 60 * 1000;
+    if (now < windowStartMs) {
+      return res.status(400).json({
+        error: 'Bu toplantı henüz başlamadı. En erken toplantı saatinden 10 dakika önce katılabilirsiniz.',
+      });
+    }
+    if (now > meetingEndMs) {
+      return res.status(400).json({
+        error: 'Bu toplantının katılım süresi sona erdi.',
+      });
+    }
+
     return res.json({ success: true, meetingUrl: meeting.meetingUrl });
   },
 );
