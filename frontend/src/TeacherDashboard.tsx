@@ -18,6 +18,7 @@ import {
   Users,
   Video,
   X,
+  BarChart3,
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { useSearchParams } from 'react-router-dom';
@@ -75,6 +76,7 @@ import {
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
+import { AnnualPerformanceReport } from './AnnualPerformanceReport';
 
 if (typeof pdfjsLib.GlobalWorkerOptions !== 'undefined') {
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -97,7 +99,8 @@ type TeacherTab =
   | 'questionbank'
   | 'support'
   | 'notifications'
-  | 'coaching';
+  | 'coaching'
+  | 'reports';
 
 type AiMessage = {
   id: string;
@@ -287,6 +290,11 @@ export const TeacherDashboard: React.FC = () => {
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [announcementCreating, setAnnouncementCreating] = useState(false);
   const [announcementError, setAnnouncementError] = useState<string | null>(null);
+
+  const selectedStudent = useMemo(
+    () => students.find((s) => s.id === selectedStudentId) ?? null,
+    [students, selectedStudentId],
+  );
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMessages, setAiMessages] = useState<AiMessage[]>(() => [
     {
@@ -769,6 +777,8 @@ export const TeacherDashboard: React.FC = () => {
         type: 'class',
         audience: 'all',
         selectedStudentIds: [],
+        targetGrade: '',
+        subjectName: '',
       });
       setEditingMeetingId(null);
     } catch (error) {
@@ -1123,6 +1133,14 @@ export const TeacherDashboard: React.FC = () => {
         active: activeTab === 'coaching',
         onClick: () => setActiveTab('coaching'),
       },
+      {
+        id: 'reports',
+        label: 'Rapor',
+        icon: <BarChart3 size={18} />,
+        description: 'Yıllık gelişim',
+        active: activeTab === 'reports',
+        onClick: () => setActiveTab('reports'),
+      },
     ],
     [activeTab],
   );
@@ -1140,6 +1158,7 @@ export const TeacherDashboard: React.FC = () => {
       students: 'Öğrenciler',
       parents: 'Veli İşlemleri',
       coaching: 'Koçluk Takip',
+      reports: 'Yıllık Rapor',
     };
     const items: BreadcrumbItem[] = [
       { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
@@ -1667,6 +1686,12 @@ export const TeacherDashboard: React.FC = () => {
           onOpenCoaching={() => setActiveTab('coaching')}
         />
       )}
+      {activeTab === 'reports' && (
+        <AnnualPerformanceReport
+          studentName={selectedStudent?.name}
+          className={selectedStudent?.gradeLevel ? `${selectedStudent.gradeLevel}. Sınıf` : undefined}
+        />
+      )}
       <TeacherAiAssistant
         open={aiOpen}
         onToggle={() => setAiOpen((prev) => !prev)}
@@ -1715,7 +1740,7 @@ export const TeacherDashboard: React.FC = () => {
           title={liveClass.title}
           role="teacher"
           meetingId={liveClass.meetingId}
-          authToken={token}
+          authToken={token ?? undefined}
           onClose={() => setLiveClass(null)}
         />
       )}

@@ -1507,7 +1507,7 @@ export const StudentDashboard: React.FC = () => {
           token={liveClass.token}
           title={liveClass.title}
           role="student"
-          authToken={token}
+          authToken={token ?? undefined}
           onClose={() => setLiveClass(null)}
         />
       )}

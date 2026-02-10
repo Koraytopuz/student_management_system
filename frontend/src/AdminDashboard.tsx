@@ -7,6 +7,7 @@ import {
   MetricCard,
   TagChip,
 } from './components/DashboardPrimitives';
+import { AnnualPerformanceReport } from './AnnualPerformanceReport';
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 
 interface AdminSummary {
@@ -123,8 +124,16 @@ export const AdminDashboard: React.FC = () => {
 
   const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const [reportStudentId, setReportStudentId] = useState<string | null>(null);
 
-  type AdminTab = 'overview' | 'teachers' | 'students' | 'parents' | 'notifications' | 'complaints';
+  type AdminTab =
+    | 'overview'
+    | 'teachers'
+    | 'students'
+    | 'parents'
+    | 'notifications'
+    | 'complaints'
+    | 'reports';
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>([]);
   const [adminNotificationsLoading, setAdminNotificationsLoading] = useState(false);
@@ -181,6 +190,14 @@ export const AdminDashboard: React.FC = () => {
         active: activeTab === 'complaints',
         onClick: () => setActiveTab('complaints'),
       },
+      {
+        id: 'reports',
+        label: 'Rapor',
+        icon: <span>📈</span>,
+        description: 'Yıllık gelişim',
+        active: activeTab === 'reports',
+        onClick: () => setActiveTab('reports'),
+      },
     ],
     [activeTab, adminNotifications],
   );
@@ -193,6 +210,7 @@ export const AdminDashboard: React.FC = () => {
       parents: 'Veliler',
       notifications: 'Bildirimler',
       complaints: 'Şikayet / Öneri',
+      reports: 'Yıllık Rapor',
     };
     const items: BreadcrumbItem[] = [
       { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
@@ -424,6 +442,9 @@ export const AdminDashboard: React.FC = () => {
   if (!token) {
     return <div>Önce yönetici olarak giriş yapmalısınız.</div>;
   }
+
+  const reportStudent =
+    (reportStudentId && students.find((s) => s.id === reportStudentId)) || students[0] || null;
 
   return (
     <DashboardLayout
@@ -993,13 +1014,25 @@ export const AdminDashboard: React.FC = () => {
                         </span>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={() => startEditStudent(s)}
-                    >
-                      Düzenle
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => {
+                          setReportStudentId(s.id);
+                          setActiveTab('reports');
+                        }}
+                      >
+                        PDF / Rapor
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => startEditStudent(s)}
+                      >
+                        Düzenle
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -1195,6 +1228,22 @@ export const AdminDashboard: React.FC = () => {
               );
             })}
           </div>
+        </GlassCard>
+      )}
+
+      {activeTab === 'reports' && (
+        <GlassCard
+          title="Yıllık Gelişim Raporu"
+          subtitle={
+            reportStudent
+              ? `${reportStudent.name} için yıllık performans özeti`
+              : 'Öğrenci bulunamadı'
+          }
+        >
+          <AnnualPerformanceReport
+            studentName={reportStudent?.name}
+            className={reportStudent?.gradeLevel ? `${reportStudent.gradeLevel}. Sınıf` : undefined}
+          />
         </GlassCard>
       )}
     </DashboardLayout>

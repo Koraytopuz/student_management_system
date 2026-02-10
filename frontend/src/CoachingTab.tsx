@@ -9,12 +9,16 @@ import {
   type TeacherCoachingNote,
   type TeacherStudentProfile,
   type TeacherTest,
+  type CoachingGoalStatus,
   getTeacherCoachingSessions,
   getTeacherCoachingGoals,
   getTeacherCoachingNotes,
   createTeacherCoachingSession,
   updateTeacherCoachingSession,
   deleteTeacherCoachingSession,
+  createTeacherCoachingGoal,
+  updateTeacherCoachingGoal,
+  createTeacherCoachingNote,
 } from './api';
 
 function toLocalInputValue(iso?: string): string {

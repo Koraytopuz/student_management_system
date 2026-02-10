@@ -13,6 +13,11 @@ import { CalendarDays, Clock, PlayCircle, HelpCircle, Download } from 'lucide-re
 
 type SubjectKey = 'matematik' | 'fen' | 'turkce' | 'sosyal' | 'yabanci';
 
+interface AnnualPerformanceReportProps {
+  studentName?: string;
+  className?: string;
+}
+
 type Topic = {
   id: string;
   name: string;
@@ -136,8 +141,20 @@ const formatMinutesToHhMm = (minutes: number) => {
   return `${h} sa ${m} dk`;
 };
 
-export const AnnualPerformanceReport: React.FC = () => {
+export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = ({
+  studentName,
+  className,
+}) => {
   const [openSubjectId, setOpenSubjectId] = React.useState<SubjectKey | null>('matematik');
+
+  const effectiveStudent = React.useMemo(
+    () => ({
+      ...mockData.student,
+      name: studentName ?? mockData.student.name,
+      className: className ?? mockData.student.className,
+    }),
+    [studentName, className],
+  );
 
   const handlePrint = () => {
     if (typeof window !== 'undefined') {
@@ -146,76 +163,61 @@ export const AnnualPerformanceReport: React.FC = () => {
   };
 
   return (
-    <div className="annual-report-page min-h-screen w-full bg-slate-950/90 text-slate-50 flex items-stretch justify-center py-10 px-4 print:bg-white print:text-slate-900">
-      <div className="annual-report-print max-w-6xl w-full grid gap-6 lg:gap-8 auto-rows-max">
+    <div className="annual-report-page">
+      <div className="annual-report-print">
         {/* HEADER / KİMLİK KARTI */}
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-500/10 via-indigo-500/10 to-sky-500/10 border border-slate-700/60 shadow-[0_40px_120px_rgba(15,23,42,0.9)] backdrop-blur-2xl p-6 lg:p-8 print:shadow-none print:border-slate-200 print:bg-white">
-          <div className="pointer-events-none absolute inset-0 opacity-60 mix-blend-screen">
-            <div className="absolute -top-32 -left-16 h-72 w-72 rounded-full bg-emerald-500/20 blur-3xl" />
-            <div className="absolute -bottom-40 -right-24 h-96 w-96 rounded-full bg-indigo-500/30 blur-3xl" />
-          </div>
-
-          <div className="relative flex flex-col lg:flex-row items-start lg:items-center justify-between gap-8">
-            <div className="flex items-start gap-5">
-              <div className="relative h-20 w-20 lg:h-24 lg:w-24 rounded-3xl bg-slate-900/80 border border-emerald-400/40 shadow-[0_18px_45px_rgba(16,185,129,0.55)] flex items-center justify-center overflow-hidden">
-                {mockData.student.avatarUrl ? (
+        <section className="glass-card annual-report-header">
+          <div className="annual-report-header-main">
+            <div className="annual-report-identity">
+              <div className="annual-report-avatar">
+                {effectiveStudent.avatarUrl ? (
                   <img
-                    src={mockData.student.avatarUrl}
-                    alt={mockData.student.name}
+                    src={effectiveStudent.avatarUrl}
+                    alt={effectiveStudent.name}
                     className="h-full w-full object-cover"
                   />
                 ) : (
                   <span className="text-3xl lg:text-4xl font-semibold tracking-tight">
-                    {mockData.student.name
+                    {effectiveStudent.name
                       .split(' ')
                       .map((p) => p[0])
                       .join('')
                       .slice(0, 2)}
                   </span>
                 )}
-                <span className="absolute -bottom-2 -right-2 rounded-full bg-emerald-500 text-[0.65rem] font-semibold px-2 py-1 shadow-lg">
-                  {mockData.student.className}
-                </span>
               </div>
-              <div className="space-y-2">
-                <p className="uppercase tracking-[0.35em] text-[0.68rem] text-emerald-300/80">
+              <div className="annual-report-title-block">
+                <p className="annual-report-eyebrow">
                   AnnualPerformanceReport
                 </p>
-                <h1 className="text-2xl lg:text-3xl font-semibold tracking-tight">
-                  Yıl Sonu Gelişim Raporu
-                </h1>
-                <p className="text-sm text-slate-300/80">
-                  {mockData.student.name} · {mockData.student.className}
+                <h1>Yıl Sonu Gelişim Raporu</h1>
+                <p className="annual-report-subtitle">
+                  {effectiveStudent.name} · {effectiveStudent.className}
                 </p>
-                <p className="text-xs text-slate-400">
+                <p className="annual-report-helper">
                   Spotify Wrapped tarzında, yıl boyu performansının kişiselleştirilmiş bir özeti.
                 </p>
               </div>
             </div>
 
-            <div className="flex flex-col items-end gap-4">
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <p className="text-[0.7rem] uppercase tracking-[0.25em] text-slate-300/80">
-                    Yıllık Genel Başarı Puanı
-                  </p>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-4xl lg:text-5xl font-semibold">
-                      {mockData.student.annualScore.toFixed(1)}
-                    </span>
-                    <span className="text-sm text-slate-300/80">/10</span>
+            <div className="annual-report-score">
+              <div className="annual-report-score-row">
+                <div className="annual-report-score-text">
+                  <p className="annual-report-score-label">Yıllık Genel Başarı Puanı</p>
+                  <div className="annual-report-score-value">
+                    <span>{mockData.student.annualScore.toFixed(1)}</span>
+                    <span className="annual-report-score-denominator">/10</span>
                   </div>
                 </div>
-                <div className="relative h-16 w-16 rounded-full bg-slate-900/80 border border-slate-600 flex items-center justify-center">
-                  <div className="absolute inset-[3px] rounded-full bg-gradient-to-br from-emerald-500/40 via-cyan-400/30 to-indigo-500/50 blur-[1px]" />
-                  <div className="relative flex flex-col items-center text-[0.65rem] font-semibold">
-                    <span className="text-slate-200/90">TOP</span>
-                    <span className="text-lg">{mockData.student.annualRankPercentile}</span>
-                    <span className="text-slate-300/80 text-[0.6rem]">percentile</span>
+                <div className="annual-report-rank-pill">
+                  <div className="annual-report-rank-inner">
+                    <span>TOP</span>
+                    <strong>{mockData.student.annualRankPercentile}</strong>
+                    <span className="annual-report-rank-caption">percentile</span>
                   </div>
                 </div>
               </div>
-              <p className="text-xs text-slate-300/80 max-w-xs text-right">
+              <p className="annual-report-score-description">
                 Bu skor; ders başarıları, dijital efor ve odaklanma metriklerinin birleşimiyle hesaplanmış
                 yıllık genel performans indeksidir.
               </p>
@@ -224,32 +226,32 @@ export const AnnualPerformanceReport: React.FC = () => {
         </section>
 
         {/* ÜST GRID: RADAR + DİJİTAL EFOR */}
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-7">
+        <section className="annual-report-top-grid">
           {/* RADAR CHART */}
-          <div className="lg:col-span-2 rounded-3xl bg-slate-950/70 border border-slate-800/80 shadow-[0_32px_80px_rgba(15,23,42,0.9)] backdrop-blur-2xl p-5 lg:p-6 print:border-slate-200 print:bg-white print:shadow-none">
-            <div className="flex items-center justify-between mb-4 gap-3">
+          <div className="glass-card annual-report-card annual-report-card--radar">
+            <div className="annual-report-card-header">
               <div>
-                <p className="uppercase tracking-[0.3em] text-[0.65rem] text-slate-400">
+                <p className="annual-report-eyebrow">
                   Chart 01 · Karşılaştırmalı Analiz
                 </p>
-                <h2 className="text-lg lg:text-xl font-semibold mt-1">Ders Bazlı Yıllık Performans</h2>
-                <p className="text-xs text-slate-400 mt-1 max-w-md">
+                <h2 className="annual-report-card-title">Ders Bazlı Yıllık Performans</h2>
+                <p className="annual-report-card-helper">
                   Öğrencinin yıl sonu ders performansı, sınıf ortalaması ile radar grafiği üzerinde
                   karşılaştırmalı olarak gösterilmiştir.
                 </p>
               </div>
-              <div className="hidden sm:flex items-center gap-3 text-[0.7rem] text-slate-300/80">
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-1.5 w-5 rounded-full bg-emerald-400" />
+              <div className="annual-report-legend">
+                <span className="annual-report-legend-item">
+                  <span className="annual-report-legend-swatch annual-report-legend-swatch--student" />
                   Öğrenci
                 </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-1.5 w-5 rounded-full bg-slate-500/70" />
+                <span className="annual-report-legend-item">
+                  <span className="annual-report-legend-swatch annual-report-legend-swatch--class" />
                   Sınıf Ort.
                 </span>
               </div>
             </div>
-            <div className="h-72 lg:h-80 -mx-2">
+            <div className="annual-report-radar-shell">
               <ResponsiveContainer width="100%" height="100%">
                 <RadarChart data={mockData.radar} outerRadius="80%">
                   <PolarGrid stroke="rgba(148,163,184,0.35)" />
@@ -302,109 +304,109 @@ export const AnnualPerformanceReport: React.FC = () => {
           </div>
 
           {/* DİJİTAL EFOR GRIDİ */}
-          <div className="rounded-3xl bg-slate-950/70 border border-slate-800/80 shadow-[0_32px_80px_rgba(15,23,42,0.9)] backdrop-blur-2xl p-5 flex flex-col gap-4 print:border-slate-200 print:bg-white print:shadow-none">
+          <div className="glass-card annual-report-card annual-report-card--effort">
             <div>
-              <p className="uppercase tracking-[0.3em] text-[0.65rem] text-slate-400">
+              <p className="annual-report-eyebrow">
                 Section 03 · Dijital Efor
               </p>
-              <h2 className="text-lg font-semibold mt-1">Dijital Efor Özeti</h2>
-              <p className="text-xs text-slate-400 mt-1">
+              <h2 className="annual-report-card-title">Dijital Efor Özeti</h2>
+              <p className="annual-report-card-helper">
                 Öğrencinin yıl boyunca platform üzerindeki etkileşimleri.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3 mt-1 text-xs sm:text-sm">
-              <div className="group rounded-2xl border border-slate-700/80 bg-slate-900/70 px-3 py-3 flex flex-col gap-2 shadow-[0_14px_30px_rgba(15,23,42,0.75)]">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[0.7rem] text-slate-300/90 uppercase tracking-[0.18em]">
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300">
+            <div className="annual-report-effort-grid">
+              <div className="annual-report-effort-item">
+                <div className="annual-report-effort-header">
+                  <span className="annual-report-effort-label">
+                    <span className="annual-report-effort-icon annual-report-effort-icon--emerald">
                       <CalendarDays size={14} />
                     </span>
                     Devamlılık
                   </span>
-                  <span className="text-[0.7rem] text-emerald-300 bg-emerald-500/10 border border-emerald-500/40 rounded-full px-2 py-0.5">
+                  <span className="annual-report-effort-tag annual-report-effort-tag--emerald">
                     Günlük rutine bağlı
                   </span>
                 </div>
-                <div className="flex items-baseline justify-between">
-                  <p className="text-xl font-semibold">
+                <div className="annual-report-effort-body">
+                  <p className="annual-report-effort-value">
                     {mockData.digitalEffort.attendanceRate}
-                    <span className="text-xs text-slate-400 ml-1">%</span>
+                    <span className="annual-report-effort-unit">%</span>
                   </p>
-                  <p className="text-[0.7rem] text-slate-400">Katıldığı canlı ders oranı</p>
+                  <p className="annual-report-effort-caption">Katıldığı canlı ders oranı</p>
                 </div>
-                <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                <div className="annual-report-effort-bar">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-emerald-300 to-emerald-200"
+                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--emerald"
                     style={{ width: `${mockData.digitalEffort.attendanceRate}%` }}
                   />
                 </div>
               </div>
 
-              <div className="group rounded-2xl border border-slate-700/80 bg-slate-900/70 px-3 py-3 flex flex-col gap-2 shadow-[0_14px_30px_rgba(15,23,42,0.75)]">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[0.7rem] text-slate-300/90 uppercase tracking-[0.18em]">
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300">
+              <div className="annual-report-effort-item">
+                <div className="annual-report-effort-header">
+                  <span className="annual-report-effort-label">
+                    <span className="annual-report-effort-icon annual-report-effort-icon--sky">
                       <Clock size={14} />
                     </span>
                     Odak Süresi
                   </span>
                 </div>
-                <div className="flex items-baseline justify-between">
-                  <p className="text-xl font-semibold">
+                <div className="annual-report-effort-body">
+                  <p className="annual-report-effort-value">
                     {mockData.digitalEffort.focusHours}
-                    <span className="text-xs text-slate-400 ml-1">saat</span>
+                    <span className="annual-report-effort-unit">saat</span>
                   </p>
-                  <p className="text-[0.7rem] text-slate-400">Toplam pomodoro odak süresi</p>
+                  <p className="annual-report-effort-caption">Toplam pomodoro odak süresi</p>
                 </div>
-                <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                <div className="annual-report-effort-bar">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-sky-400 via-cyan-300 to-emerald-200"
+                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--sky"
                     style={{ width: '82%' }}
                   />
                 </div>
               </div>
 
-              <div className="group rounded-2xl border border-slate-700/80 bg-slate-900/70 px-3 py-3 flex flex-col gap-2 shadow-[0_14px_30px_rgba(15,23,42,0.75)]">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[0.7rem] text-slate-300/90 uppercase tracking-[0.18em]">
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-fuchsia-500/20 text-fuchsia-300">
+              <div className="annual-report-effort-item">
+                <div className="annual-report-effort-header">
+                  <span className="annual-report-effort-label">
+                    <span className="annual-report-effort-icon annual-report-effort-icon--fuchsia">
                       <PlayCircle size={14} />
                     </span>
                     Video
                   </span>
                 </div>
-                <div className="flex items-baseline justify-between">
-                  <p className="text-xl font-semibold">
+                <div className="annual-report-effort-body">
+                  <p className="annual-report-effort-value">
                     {formatMinutesToHhMm(mockData.digitalEffort.videoMinutes)}
                   </p>
-                  <p className="text-[0.7rem] text-slate-400">İzlenen toplam ders videosu</p>
+                  <p className="annual-report-effort-caption">İzlenen toplam ders videosu</p>
                 </div>
-                <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                <div className="annual-report-effort-bar">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-fuchsia-400 via-pink-300 to-rose-200"
+                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--fuchsia"
                     style={{ width: '68%' }}
                   />
                 </div>
               </div>
 
-              <div className="group rounded-2xl border border-slate-700/80 bg-slate-900/70 px-3 py-3 flex flex-col gap-2 shadow-[0_14px_30px_rgba(15,23,42,0.75)]">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[0.7rem] text-slate-300/90 uppercase tracking-[0.18em]">
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-500/20 text-amber-300">
+              <div className="annual-report-effort-item">
+                <div className="annual-report-effort-header">
+                  <span className="annual-report-effort-label">
+                    <span className="annual-report-effort-icon annual-report-effort-icon--amber">
                       <HelpCircle size={14} />
                     </span>
                     Soru
                   </span>
                 </div>
-                <div className="flex items-baseline justify-between">
-                  <p className="text-xl font-semibold">
+                <div className="annual-report-effort-body">
+                  <p className="annual-report-effort-value">
                     {mockData.digitalEffort.solvedQuestions.toLocaleString('tr-TR')}
                   </p>
-                  <p className="text-[0.7rem] text-slate-400">Çözülen toplam soru sayısı</p>
+                  <p className="annual-report-effort-caption">Çözülen toplam soru sayısı</p>
                 </div>
-                <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                <div className="annual-report-effort-bar">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-amber-400 via-orange-300 to-lime-200"
+                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--amber"
                     style={{ width: '90%' }}
                   />
                 </div>
@@ -414,23 +416,23 @@ export const AnnualPerformanceReport: React.FC = () => {
         </section>
 
         {/* KONU KARNESİ + KOÇ NOTU */}
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-7 items-start">
+        <section className="annual-report-bottom-grid">
           {/* KONU KARNESİ */}
-          <div className="lg:col-span-2 rounded-3xl bg-slate-950/70 border border-slate-800/80 shadow-[0_32px_80px_rgba(15,23,42,0.9)] backdrop-blur-2xl p-5 lg:p-6 space-y-4 print:border-slate-200 print:bg-white print:shadow-none">
-            <div className="flex items-center justify-between gap-3">
+          <div className="glass-card annual-report-card annual-report-card--topics">
+            <div className="annual-report-card-header">
               <div>
-                <p className="uppercase tracking-[0.3em] text-[0.65rem] text-slate-400">
+                <p className="annual-report-eyebrow">
                   Section 02 · Konu Karnesi
                 </p>
-                <h2 className="text-lg lg:text-xl font-semibold mt-1">Konu Bazlı Yeterlilik</h2>
-                <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                <h2 className="annual-report-card-title">Konu Bazlı Yeterlilik</h2>
+                <p className="annual-report-card-helper">
                   Her ders için alt konu performansı, doğru/yanlış dengesi ve yıl sonu ustalık seviyesi
                   gösterilmektedir.
                 </p>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 mt-1 text-xs">
+            <div className="annual-report-subject-tabs">
               {mockData.subjects.map((subject) => {
                 const isActive = openSubjectId === subject.id;
                 return (
@@ -453,7 +455,7 @@ export const AnnualPerformanceReport: React.FC = () => {
               })}
             </div>
 
-            <div className="mt-3 space-y-3">
+            <div className="annual-report-topics-list">
               {mockData.subjects.map((subject) => {
                 const isOpen = openSubjectId === subject.id;
                 const subjectAvg =
@@ -462,37 +464,38 @@ export const AnnualPerformanceReport: React.FC = () => {
                 return (
                   <div
                     key={subject.id}
-                    className="rounded-2xl border border-slate-800 bg-slate-900/75 overflow-hidden"
+                    className="annual-report-subject-group"
                   >
                     <button
                       type="button"
-                      className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+                      className="annual-report-subject-header"
                       onClick={() =>
                         setOpenSubjectId((prev) =>
                           prev === subject.id ? null : (subject.id as SubjectKey),
                         )
                       }
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-2xl bg-slate-800/90 flex items-center justify-center text-xs font-semibold text-slate-100">
+                      <div className="annual-report-subject-header-main">
+                        <div className="annual-report-subject-avatar">
                           {subject.label[0]}
                         </div>
                         <div>
-                          <p className="text-sm font-medium">{subject.label}</p>
-                          <p className="text-[0.7rem] text-slate-400">
+                          <p className="annual-report-subject-title">{subject.label}</p>
+                          <p className="annual-report-subject-helper">
                             Ortalama ustalık: {subjectAvg.toFixed(0)}%
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="inline-flex items-center gap-1 text-[0.7rem] text-slate-300">
+                      <div className="annual-report-subject-header-right">
+                        <span className="annual-report-subject-toggle-label">
                           {isOpen ? 'Gizle' : 'Detayları aç'}
                         </span>
                         <span
-                          className={[
-                            'h-7 w-7 inline-flex items-center justify-center rounded-full border border-slate-700 text-slate-200 text-xs transition-transform',
-                            isOpen ? 'rotate-90' : '',
-                          ].join(' ')}
+                          className={
+                            isOpen
+                              ? 'annual-report-subject-toggle annual-report-subject-toggle--open'
+                              : 'annual-report-subject-toggle'
+                          }
                         >
                           ▸
                         </span>
@@ -500,7 +503,7 @@ export const AnnualPerformanceReport: React.FC = () => {
                     </button>
 
                     {isOpen && (
-                      <div className="border-t border-slate-800/80 bg-slate-950/70 px-4 py-3 space-y-3">
+                      <div className="annual-report-topic-items">
                         {subject.topics.map((topic) => {
                           const total = topic.correct + topic.incorrect || 1;
                           const correctRatio = (topic.correct / total) * 100;
@@ -508,57 +511,57 @@ export const AnnualPerformanceReport: React.FC = () => {
 
                           const badgeClass =
                             badge.tone === 'success'
-                              ? 'bg-emerald-500/15 border-emerald-400/60 text-emerald-100'
+                              ? 'annual-report-mastery-badge annual-report-mastery-badge--success'
                               : badge.tone === 'warning'
-                                ? 'bg-amber-500/15 border-amber-400/60 text-amber-100'
-                                : 'bg-rose-500/10 border-rose-400/60 text-rose-100';
+                                ? 'annual-report-mastery-badge annual-report-mastery-badge--warning'
+                                : 'annual-report-mastery-badge annual-report-mastery-badge--danger';
 
                           return (
                             <div
                               key={topic.id}
-                              className="rounded-xl border border-slate-800/80 bg-slate-900/70 px-3 py-2.5 space-y-2"
+                              className="annual-report-topic-row"
                             >
-                              <div className="flex items-center justify-between gap-3">
+                              <div className="annual-report-topic-header">
                                 <div>
-                                  <p className="text-sm font-medium">{topic.name}</p>
-                                  <p className="text-[0.7rem] text-slate-400">
+                                  <p className="annual-report-topic-title">{topic.name}</p>
+                                  <p className="annual-report-topic-helper">
                                     Doğru: {topic.correct} · Yanlış: {topic.incorrect}
                                   </p>
                                 </div>
-                                <div className="flex flex-col items-end gap-1">
+                                <div className="annual-report-topic-badge-col">
                                   <span
                                     className={[
                                       'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.68rem] font-semibold',
                                       badgeClass,
                                     ].join(' ')}
                                   >
-                                    <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                                    <span className="annual-report-mastery-dot" />
                                     {badge.label}
-                                    <span className="text-[0.65rem] opacity-80">
+                                    <span className="annual-report-mastery-percent">
                                       {topic.masteryPercent.toFixed(0)}%
                                     </span>
                                   </span>
-                                  <span className="text-[0.7rem] text-slate-400">
+                                  <span className="annual-report-topic-caption">
                                     Konu karne puanı
                                   </span>
                                 </div>
                               </div>
 
-                              <div className="space-y-1">
-                                <div className="flex justify-between text-[0.68rem] text-slate-400">
+                              <div className="annual-report-topic-stats">
+                                <div className="annual-report-topic-stats-header">
                                   <span>Doğru / Yanlış dağılımı</span>
                                   <span>
                                     {correctRatio.toFixed(0)}% doğru ·{' '}
                                     {(100 - correctRatio).toFixed(0)}% yanlış
                                   </span>
                                 </div>
-                                <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden flex">
+                                <div className="annual-report-topic-bar">
                                   <div
-                                    className="h-full bg-emerald-400"
+                                    className="annual-report-topic-bar-correct"
                                     style={{ width: `${correctRatio}%` }}
                                   />
                                   <div
-                                    className="h-full bg-rose-500/80"
+                                    className="annual-report-topic-bar-incorrect"
                                     style={{ width: `${100 - correctRatio}%` }}
                                   />
                                 </div>
@@ -575,22 +578,22 @@ export const AnnualPerformanceReport: React.FC = () => {
           </div>
 
           {/* KOÇ NOTU */}
-          <div className="rounded-3xl bg-slate-950/70 border border-slate-800/80 shadow-[0_32px_80px_rgba(15,23,42,0.9)] backdrop-blur-2xl p-5 flex flex-col gap-4 print:border-slate-200 print:bg-white print:shadow-none">
+          <div className="glass-card annual-report-card annual-report-card--coach">
             <div>
-              <p className="uppercase tracking-[0.3em] text-[0.65rem] text-slate-400">
+              <p className="annual-report-eyebrow">
                 Section 04 · AI Coach Insight
               </p>
-              <h2 className="text-lg font-semibold mt-1">Koçun Notu & Gelecek Tavsiyesi</h2>
+              <h2 className="annual-report-card-title">Koçun Notu & Gelecek Tavsiyesi</h2>
             </div>
-            <div className="relative rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 via-slate-950/90 to-slate-950/95 px-4 py-3 text-sm leading-relaxed text-slate-100 shadow-[0_20px_60px_rgba(16,185,129,0.45)] print:border-emerald-500/40 print:bg-emerald-50 print:text-slate-900">
-              <div className="absolute -top-4 left-4 h-8 w-8 rounded-2xl bg-emerald-500 text-slate-950 flex items-center justify-center text-xs font-semibold shadow-lg print:hidden">
+            <div className="annual-report-coach-card">
+              <div className="annual-report-coach-pill">
                 AI
               </div>
-              <p className="mt-2 text-[0.8rem] uppercase tracking-[0.25em] text-emerald-300/80 print:text-emerald-700">
+              <p className="annual-report-coach-eyebrow">
                 Koçun Notu
               </p>
-              <p className="mt-2">{mockData.coachNote}</p>
-              <p className="mt-3 text-[0.7rem] text-emerald-300/80 print:text-emerald-700/90">
+              <p className="annual-report-coach-text">{mockData.coachNote}</p>
+              <p className="annual-report-coach-meta">
                 Not: Bu yorum, yıl boyunca toplanan performans ve efor verilerine göre yapay zeka koç
                 tarafından otomatik üretilmiştir.
               </p>
@@ -599,15 +602,15 @@ export const AnnualPerformanceReport: React.FC = () => {
         </section>
 
         {/* FOOTER / PDF İNDİR */}
-        <footer className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mt-2 text-[0.75rem] text-slate-400 print:hidden">
-          <p>
+        <footer className="annual-report-footer print:hidden">
+          <p className="annual-report-footer-text">
             Bu rapor; ders istatistikleri, dijital efor ve konu karnesi verilerinin birleşimiyle yıllık
             bir gelişim panoraması sunar.
           </p>
           <button
             type="button"
             onClick={handlePrint}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-xs font-semibold text-slate-50 shadow-[0_18px_40px_rgba(15,23,42,0.9)] hover:border-emerald-400 hover:text-emerald-100 hover:bg-slate-900/90 transition-colors"
+            className="primary-btn annual-report-download-btn"
           >
             <Download size={14} />
             PDF Olarak İndir
