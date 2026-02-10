@@ -7,8 +7,45 @@ import { UserRole } from '@prisma/client';
 
 const router = express.Router();
 
+// Sistem genelinde kullanılacak sabit sınıf seviyeleri
+// Öğrenci ve soru bankası tarafındaki gradeLevel alanlarıyla uyumlu tutulmalıdır.
+const ALLOWED_GRADES = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'];
+
 function toTeacher(u: { id: string; name: string; email: string; subjectAreas: string[] }): Teacher {
   return { id: u.id, name: u.name, email: u.email, role: 'teacher', subjectAreas: u.subjectAreas };
+}
+
+/**
+ * Veli telefon numarasını normalize eder.
+ * - Tüm rakam dışı karakterleri temizler
+ * - 90 / 0 gibi önekleri kırpar
+ * - Veritabanında 5XXXXXXXXX (10 hane) formatında saklar
+ */
+function normalizeParentPhone(raw: unknown): string | null {
+  if (raw == null) return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+
+  // Tüm rakam dışı karakterleri temizle
+  let digits = str.replace(/\D+/g, '');
+
+  // Çok uzunsa son 10 haneyi bırak (9053..., 0090..., vb.)
+  if (digits.length > 10) {
+    digits = digits.slice(-10);
+  }
+
+  // 0XXXXXXXXXX formatı geldiyse baştaki 0'ı at
+  if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+
+  // 90XXXXXXXXXX gibi ülke kodu dahil geldiyse son 10 haneyi bırakmış olduk
+
+  if (digits.length !== 10 || !digits.startsWith('5')) {
+    throw new Error('INVALID_PARENT_PHONE');
+  }
+
+  return digits;
 }
 
 function toStudent(u: {
@@ -17,6 +54,7 @@ function toStudent(u: {
   email: string;
   gradeLevel: string | null;
   classId: string | null;
+  parentPhone: string | null;
 }): Student {
   return {
     id: u.id,
@@ -25,6 +63,7 @@ function toStudent(u: {
     role: 'student',
     gradeLevel: u.gradeLevel ?? '',
     classId: u.classId ?? '',
+    parentPhone: u.parentPhone ?? undefined,
   };
 }
 
@@ -62,7 +101,14 @@ router.get('/teachers', authenticate('admin'), async (_req, res) => {
 router.get('/students', authenticate('admin'), async (_req, res) => {
   const list = await prisma.user.findMany({
     where: { role: 'student' },
-    select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      gradeLevel: true,
+      classId: true,
+      parentPhone: true,
+    },
   });
   res.json(list.map(toStudent));
 });
@@ -80,10 +126,11 @@ router.get('/parents', authenticate('admin'), async (_req, res) => {
 });
 
 router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
-  const { name, email, subjectAreas, password } = req.body as {
+  const { name, email, subjectAreas, assignedGrades, password } = req.body as {
     name?: string;
     email?: string;
     subjectAreas?: string[] | string;
+    assignedGrades?: string[] | string;
     password?: string;
   };
 
@@ -104,6 +151,14 @@ router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest
       ? subjectAreas.split(',').map((s) => s.trim()).filter(Boolean)
       : subjectAreas ?? [];
 
+  const gradesArray: string[] =
+    typeof assignedGrades === 'string'
+      ? assignedGrades
+          .split(',')
+          .map((s) => s.trim())
+          .filter((g) => g && ALLOWED_GRADES.includes(g))
+      : (assignedGrades ?? []).filter((g) => typeof g === 'string' && ALLOWED_GRADES.includes(g));
+
   const passwordHash = await bcrypt.hash(password, 10);
   const created = await prisma.user.create({
     data: {
@@ -112,6 +167,10 @@ router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest
       role: 'teacher' as UserRole,
       passwordHash,
       subjectAreas: areasArray,
+      // Not: teacherGrades alanı Prisma Client/DB ile tam senkronize edilene kadar
+      // güvenli tarafta kalmak için doğrudan yazmıyoruz. İleride migration sonrasında
+      // tekrar aktifleştirilebilir.
+      // teacherGrades: gradesArray,
     },
     select: { id: true, name: true, email: true, subjectAreas: true },
   });
@@ -129,11 +188,12 @@ router.delete('/teachers/:id', authenticate('admin'), async (req: AuthenticatedR
 });
 
 router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
-  const { name, email, gradeLevel, classId, password } = req.body as {
+  const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body as {
     name?: string;
     email?: string;
     gradeLevel?: string;
     classId?: string;
+    parentPhone?: string;
     password?: string;
   };
 
@@ -142,6 +202,22 @@ router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest
   }
   if (!password || password.length < 4) {
     return res.status(400).json({ error: 'Şifre en az 4 karakter olmalıdır' });
+  }
+
+  if (gradeLevel && !ALLOWED_GRADES.includes(gradeLevel)) {
+    return res.status(400).json({ error: 'Geçersiz sınıf seviyesi' });
+  }
+
+  let parentPhone: string | null = null;
+  try {
+    parentPhone = normalizeParentPhone(parentPhoneRaw);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'INVALID_PARENT_PHONE') {
+      return res
+        .status(400)
+        .json({ error: 'Geçersiz veli telefon numarası. Lütfen 555 123 45 67 formatında girin.' });
+    }
+    throw err;
   }
 
   const exists = await prisma.user.findFirst({ where: { email, role: 'student' } });
@@ -158,10 +234,103 @@ router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest
       passwordHash,
       gradeLevel: gradeLevel ?? '',
       classId: classId ?? '',
+      parentPhone,
     },
-    select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      gradeLevel: true,
+      classId: true,
+      parentPhone: true,
+    },
   });
   return res.status(201).json(toStudent(created));
+});
+
+router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+  const id = String(req.params.id);
+  const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body as {
+    name?: string;
+    email?: string;
+    gradeLevel?: string;
+    classId?: string;
+    parentPhone?: string | null;
+    password?: string;
+  };
+
+  const existing = await prisma.user.findFirst({ where: { id, role: 'student' } });
+  if (!existing) {
+    return res.status(404).json({ error: 'Öğrenci bulunamadı' });
+  }
+
+  if (
+    name === undefined &&
+    email === undefined &&
+    gradeLevel === undefined &&
+    classId === undefined &&
+    parentPhoneRaw === undefined &&
+    password === undefined
+  ) {
+    return res
+      .status(400)
+      .json({ error: 'Güncellenecek en az bir alan gönderilmelidir' });
+  }
+
+  const data: {
+    name?: string;
+    email?: string;
+    gradeLevel?: string | null;
+    classId?: string | null;
+    parentPhone?: string | null;
+    passwordHash?: string;
+  } = {};
+
+  if (name !== undefined) data.name = String(name).trim();
+  if (email !== undefined) data.email = String(email).trim();
+  if (gradeLevel !== undefined) {
+    if (gradeLevel && !ALLOWED_GRADES.includes(gradeLevel)) {
+      return res.status(400).json({ error: 'Geçersiz sınıf seviyesi' });
+    }
+    data.gradeLevel = gradeLevel ?? '';
+  }
+  if (classId !== undefined) data.classId = classId ?? '';
+
+  if (parentPhoneRaw !== undefined) {
+    try {
+      const normalized = normalizeParentPhone(parentPhoneRaw);
+      data.parentPhone = normalized;
+    } catch (err) {
+      if (err instanceof Error && err.message === 'INVALID_PARENT_PHONE') {
+        return res
+          .status(400)
+          .json({ error: 'Geçersiz veli telefon numarası. Lütfen 555 123 45 67 formatında girin.' });
+      }
+      throw err;
+    }
+  }
+
+  if (password !== undefined) {
+    if (!password || password.length < 4) {
+      return res.status(400).json({ error: 'Yeni şifre en az 4 karakter olmalıdır' });
+    }
+    data.passwordHash = await bcrypt.hash(password, 10);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      gradeLevel: true,
+      classId: true,
+      parentPhone: true,
+    },
+  });
+
+  return res.json(toStudent(updated));
 });
 
 router.delete('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {

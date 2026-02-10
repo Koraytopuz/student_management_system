@@ -17,6 +17,9 @@ import {
   Notification as AppNotification,
 } from './types';
 import { buildRoomName, createLiveKitToken, getLiveKitUrl, muteAllParticipantsInRoom } from './livekit';
+import { notifyParentsOfStudent } from './services/notificationService';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { sendSMS } = require('./services/smsService');
 import { callGemini } from './ai';
 
 const router = express.Router();
@@ -246,9 +249,18 @@ router.get(
       where: { teacherId },
       include: { students: { include: { student: true } } },
     });
-    const teacherStudentIds = teacherClasses.flatMap((c) =>
+    let teacherStudentIds = teacherClasses.flatMap((c) =>
       c.students.map((s) => s.studentId),
     );
+
+    // Eğer henüz sınıf/öğrenci ilişkilendirilmemişse, sistemdeki tüm öğrencileri kullan
+    if (teacherStudentIds.length === 0) {
+      const allStudents = await prisma.user.findMany({
+        where: { role: 'student' },
+        select: { id: true },
+      });
+      teacherStudentIds = allStudents.map((s) => s.id);
+    }
 
     const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const recentResults = await prisma.testResult.findMany({
@@ -673,8 +685,13 @@ router.get(
     const studentIds = new Set(
       teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
     );
+    const idsArray = [...studentIds];
+    const whereClause =
+      idsArray.length > 0
+        ? { id: { in: idsArray }, role: 'student' as const }
+        : { role: 'student' as const };
     const teacherStudents = await prisma.user.findMany({
-      where: { id: { in: [...studentIds] }, role: 'student' },
+      where: whereClause,
       select: { id: true, name: true, email: true, gradeLevel: true, classId: true, lastSeenAt: true },
     });
     return res.json(
@@ -1924,6 +1941,7 @@ router.post(
       scheduledAt,
       durationMinutes,
       meetingUrl,
+      targetGrade,
     } = req.body as {
       type?: 'teacher_student' | 'teacher_student_parent' | 'class';
       title?: string;
@@ -1932,12 +1950,39 @@ router.post(
       scheduledAt?: string;
       durationMinutes?: number;
       meetingUrl?: string;
+      /** Canlı dersin hedef sınıf seviyesi (\"4\"–\"12\" veya \"Mezun\") */
+      targetGrade?: string;
     };
 
     if (!type || !title || !scheduledAt || !durationMinutes) {
       return res.status(400).json({
         error: 'type, title, scheduledAt ve durationMinutes alanları zorunludur',
       });
+    }
+
+    // Öğrenciler:
+    // 1) Eğer body'de özel bir liste gelmişse onu kullan
+    // 2) Eğer boşsa ve hedef sınıf verilmişse: o sınıftaki tüm öğrencileri ekle
+    // 3) Hâlâ boşsa: sistemdeki tüm öğrencileri ekle (hiçbir öğrenciyle kalmamak için)
+    let effectiveStudentIds: string[] = Array.isArray(studentIds)
+      ? studentIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : [];
+
+    if (effectiveStudentIds.length === 0 && targetGrade) {
+      const grade = String(targetGrade);
+      const gradeStudents = await prisma.user.findMany({
+        where: { role: 'student', gradeLevel: grade },
+        select: { id: true },
+      });
+      effectiveStudentIds = gradeStudents.map((s) => s.id);
+    }
+
+    if (effectiveStudentIds.length === 0) {
+      const allStudents = await prisma.user.findMany({
+        where: { role: 'student' },
+        select: { id: true },
+      });
+      effectiveStudentIds = allStudents.map((s) => s.id);
     }
 
     const meeting = await prisma.meeting.create({
@@ -1947,10 +1992,13 @@ router.post(
         teacherId,
         scheduledAt: new Date(scheduledAt),
         durationMinutes,
-        // Harici link desteği ileride tekrar eklenecekse meetingUrl kullanılabilir.
+        // Canlı dersler için dahili LiveKit altyapısı kullanıldığından meetingUrl şimdilik boş tutuluyor.
         meetingUrl: meetingUrl ?? '',
+        // Not: targetGrade alanı veritabanı / Prisma Client ile tam senkronize edilene kadar
+        // burada set edilmiyor. Frontend tarafı yine de sınıf bazlı filtreleme yapıyor.
+        // targetGrade: targetGrade ?? null,
         students: {
-          create: (studentIds ?? []).map((studentId) => ({ studentId })),
+          create: effectiveStudentIds.map((studentId) => ({ studentId })),
         },
         parents: {
           create: (parentIds ?? []).map((parentId) => ({ parentId })),
@@ -1964,8 +2012,8 @@ router.post(
 
     // Toplantı için öğrencilere (ve varsa velilere) bildirim oluştur
     const notificationTargets: string[] = [];
-    if (Array.isArray(studentIds)) {
-      notificationTargets.push(...studentIds);
+    if (effectiveStudentIds.length > 0) {
+      notificationTargets.push(...effectiveStudentIds);
     }
     if (Array.isArray(parentIds)) {
       notificationTargets.push(...parentIds);
@@ -2149,6 +2197,167 @@ router.post(
     return res.status(501).json({
       error: 'Kayıt özelliği henüz yapılandırılmadı.',
     });
+  },
+);
+
+// Derse kayıtlı öğrencileri getir (yoklama modalı için)
+router.get(
+  '/meetings/:id/attendance-students',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+      include: {
+        students: {
+          include: {
+            student: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (meeting.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+
+    const students = meeting.students.map((ms) => ({
+      id: ms.student.id,
+      name: ms.student.name,
+    }));
+
+    return res.json({
+      meetingId: meeting.id,
+      meetingTitle: meeting.title,
+      students,
+    });
+  },
+);
+
+// Yoklama kaydet ve velilere bildirim gönder
+router.post(
+  '/meetings/:id/attendance',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+    const { attendance: attendanceList } = req.body as {
+      attendance?: Array<{ studentId: string; present: boolean }>;
+    };
+
+    if (!Array.isArray(attendanceList) || attendanceList.length === 0) {
+      return res.status(400).json({ error: 'attendance dizisi zorunludur (en az bir öğrenci)' });
+    }
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+      include: {
+        students: { select: { studentId: true } },
+      },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+    if (meeting.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+
+    const enrolledStudentIds = new Set(meeting.students.map((s) => s.studentId));
+
+    try {
+      const savedAttendance: Array<{ studentId: string; present: boolean }> = [];
+
+      for (const item of attendanceList) {
+        const { studentId, present } = item;
+        if (!studentId || typeof present !== 'boolean') continue;
+        if (!enrolledStudentIds.has(studentId)) continue;
+
+        await prisma.meetingAttendance.upsert({
+          where: {
+            meetingId_studentId: { meetingId, studentId },
+          },
+          create: {
+            meetingId,
+            studentId,
+            present,
+          },
+          update: { present },
+        });
+
+        savedAttendance.push({ studentId, present });
+      }
+
+      // Her öğrenci için veliye bildirim
+      const meetingTitle = meeting.title;
+      const meetingDateLabel = new Date(meeting.scheduledAt).toLocaleDateString('tr-TR');
+      for (const { studentId, present } of savedAttendance) {
+        const student = await prisma.user.findUnique({
+          where: { id: studentId },
+          select: {
+            name: true,
+            // Veli SMS gönderimi için öğrencinin kayıtlı veli telefonu
+            parentPhone: true,
+          },
+        });
+        const studentName = student?.name ?? 'Öğrenci';
+
+        const body = present
+          ? `Öğrencimiz ${studentName} ${meetingTitle} canlı dersine katılım sağlamıştır.`
+          : `Dikkat: Öğrencimiz ${studentName} ${meetingTitle} canlı dersine katılım SAĞLAMAMIŞTIR.`;
+
+        await notifyParentsOfStudent(studentId, {
+          type: 'live_class_attendance',
+          title: present ? 'Canlı Ders Katılımı' : 'Canlı Ders Devamsızlığı',
+          body,
+          relatedEntityType: 'attendance',
+          relatedEntityId: meetingId,
+        });
+
+        // Öğrenci derse gelmediyse, velilere SMS gönder (fire and forget)
+        if (!present) {
+          try {
+            // Veli telefon numarası, öğrenci kaydındaki parentPhone alanından alınır.
+            const parentPhones: string[] = [];
+            const directPhone =
+              student && typeof (student as any).parentPhone === 'string'
+                ? (student as any).parentPhone.trim()
+                : '';
+            if (directPhone) {
+              parentPhones.push(directPhone);
+            }
+
+            if (parentPhones.length > 0) {
+              const smsText = `Sayın Veli, Öğrenciniz ${studentName} ${meetingDateLabel} tarihli ${meetingTitle} dersine katılım sağlamamıştır.`;
+              // Ana akışı bekletmemek için await kullanmıyoruz
+              // Hatalar smsService içinde loglanacak.
+              // eslint-disable-next-line @typescript-eslint/no-floating-promises
+              sendSMS(parentPhones, smsText);
+            }
+          } catch (smsErr) {
+            // Ana işlemi bozmadan sadece logla
+            // eslint-disable-next-line no-console
+            console.error('[attendance] SMS gönderimi sırasında hata:', smsErr);
+          }
+        }
+      }
+
+      return res.status(201).json({
+        success: true,
+        saved: savedAttendance.length,
+        attendance: savedAttendance,
+      });
+    } catch (err) {
+      console.error('[attendance]', err);
+      return res.status(500).json({
+        error: 'Yoklama kaydedilirken bir hata oluştu.',
+      });
+    }
   },
 );
 
@@ -2371,6 +2580,26 @@ type CoachingSessionRow = {
   updatedAt: Date;
 };
 
+type CoachingGoalRow = {
+  id: string;
+  student_id: string;
+  coach_id: string;
+  title: string;
+  description: string | null;
+  deadline: Date;
+  status: 'pending' | 'completed' | 'missed';
+  created_at: Date;
+};
+
+type CoachingNoteRow = {
+  id: string;
+  student_id: string;
+  coach_id: string;
+  content: string;
+  visibility: 'teacher_only' | 'shared_with_parent';
+  date: Date;
+};
+
 // Koçluk seansları - belirli bir öğrenci için listeleme
 router.get(
   '/students/:studentId/coaching',
@@ -2428,6 +2657,294 @@ router.get(
         updatedAt: s.updatedAt.toISOString(),
       })),
     );
+  },
+);
+
+// Koçluk hedefleri - belirli bir öğrenci için listeleme
+router.get(
+  '/students/:studentId/coaching-goals',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const studentId = String(req.params.studentId);
+
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
+    );
+    if (!allowedStudentIds.has(studentId)) {
+      return res
+        .status(403)
+        .json({ error: 'Bu öğrenci için koçluk hedeflerine erişemezsiniz' });
+    }
+
+    const goals = await prisma.$queryRaw<CoachingGoalRow[]>`
+      SELECT
+        id,
+        student_id,
+        coach_id,
+        title,
+        description,
+        deadline,
+        status,
+        "created_at"
+      FROM "coaching_goals"
+      WHERE student_id = ${studentId} AND coach_id = ${teacherId}
+      ORDER BY deadline ASC, "created_at" DESC
+    `;
+
+    return res.json(
+      goals.map((g) => ({
+        id: g.id,
+        studentId: g.student_id,
+        coachId: g.coach_id,
+        title: g.title,
+        description: g.description ?? undefined,
+        deadline: g.deadline.toISOString(),
+        status: g.status,
+        createdAt: g.created_at.toISOString(),
+        isOverdue: g.status === 'pending' && g.deadline.getTime() < Date.now(),
+      })),
+    );
+  },
+);
+
+// Koçluk hedefi oluşturma
+router.post(
+  '/students/:studentId/coaching-goals',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const studentId = String(req.params.studentId);
+    const { title, description, deadline } = req.body as {
+      title?: string;
+      description?: string;
+      deadline?: string;
+    };
+
+    if (!title || !deadline) {
+      return res
+        .status(400)
+        .json({ error: 'title ve deadline alanları zorunludur' });
+    }
+    const parsedDeadline = new Date(deadline);
+    if (Number.isNaN(parsedDeadline.getTime())) {
+      return res.status(400).json({ error: 'Geçersiz deadline formatı' });
+    }
+
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
+    );
+    if (!allowedStudentIds.has(studentId)) {
+      return res
+        .status(403)
+        .json({ error: 'Bu öğrenci için koçluk hedefi oluşturamazsınız' });
+    }
+
+    const created = await prisma.coachingGoal.create({
+      data: {
+        studentId,
+        coachId: teacherId,
+        title: title.trim(),
+        description: description?.trim() || undefined,
+        deadline: parsedDeadline,
+        status: 'pending',
+      },
+    });
+
+    return res.status(201).json({
+      id: created.id,
+      studentId: created.studentId,
+      coachId: created.coachId,
+      title: created.title,
+      description: created.description ?? undefined,
+      deadline: created.deadline.toISOString(),
+      status: created.status,
+      createdAt: created.createdAt.toISOString(),
+      isOverdue:
+        created.status === 'pending' &&
+        created.deadline.getTime() < Date.now(),
+    });
+  },
+);
+
+// Koçluk hedefi güncelleme (durum veya alanlar)
+router.patch(
+  '/coaching-goals/:goalId',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const goalId = String(req.params.goalId);
+
+    const existing = await prisma.coachingGoal.findUnique({
+      where: { id: goalId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Koçluk hedefi bulunamadı' });
+    }
+    if (existing.coachId !== teacherId) {
+      return res
+        .status(403)
+        .json({ error: 'Bu koçluk hedefini düzenleme yetkiniz yok' });
+    }
+
+    const { title, description, deadline, status } = req.body as Partial<{
+      title: string;
+      description: string;
+      deadline: string;
+      status: 'pending' | 'completed' | 'missed';
+    }>;
+
+    const data: Record<string, unknown> = {};
+    if (typeof title === 'string') data.title = title.trim();
+    if (typeof description === 'string') {
+      data.description = description.trim() || null;
+    }
+    if (typeof deadline === 'string') {
+      const parsed = new Date(deadline);
+      if (Number.isNaN(parsed.getTime())) {
+        return res.status(400).json({ error: 'Geçersiz deadline formatı' });
+      }
+      data.deadline = parsed;
+    }
+    if (status === 'pending' || status === 'completed' || status === 'missed') {
+      data.status = status;
+    }
+
+    const updated = await prisma.coachingGoal.update({
+      where: { id: goalId },
+      data,
+    });
+
+    return res.json({
+      id: updated.id,
+      studentId: updated.studentId,
+      coachId: updated.coachId,
+      title: updated.title,
+      description: updated.description ?? undefined,
+      deadline: updated.deadline.toISOString(),
+      status: updated.status,
+      createdAt: updated.createdAt.toISOString(),
+      isOverdue:
+        updated.status === 'pending' &&
+        updated.deadline.getTime() < Date.now(),
+    });
+  },
+);
+
+// Koçluk notları - öğretmen view (tüm notlar)
+router.get(
+  '/students/:studentId/coaching-notes',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const studentId = String(req.params.studentId);
+
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
+    );
+    if (!allowedStudentIds.has(studentId)) {
+      return res
+        .status(403)
+        .json({ error: 'Bu öğrenci için koçluk notlarına erişemezsiniz' });
+    }
+
+    const notes = await prisma.$queryRaw<CoachingNoteRow[]>`
+      SELECT
+        id,
+        student_id,
+        coach_id,
+        content,
+        visibility,
+        date
+      FROM "coaching_notes"
+      WHERE student_id = ${studentId} AND coach_id = ${teacherId}
+      ORDER BY date DESC
+    `;
+
+    return res.json(
+      notes.map((n) => ({
+        id: n.id,
+        studentId: n.student_id,
+        coachId: n.coach_id,
+        content: n.content,
+        visibility: n.visibility,
+        date: n.date.toISOString(),
+      })),
+    );
+  },
+);
+
+// Koçluk notu ekleme
+router.post(
+  '/students/:studentId/coaching-notes',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res) => {
+    const teacherId = req.user!.id;
+    const studentId = String(req.params.studentId);
+    const { content, visibility, date } = req.body as {
+      content?: string;
+      visibility?: 'teacher_only' | 'shared_with_parent';
+      date?: string;
+    };
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'content alanı zorunludur' });
+    }
+
+    const teacherClasses = await prisma.classGroup.findMany({
+      where: { teacherId },
+      include: { students: { select: { studentId: true } } },
+    });
+    const allowedStudentIds = new Set(
+      teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
+    );
+    if (!allowedStudentIds.has(studentId)) {
+      return res
+        .status(403)
+        .json({ error: 'Bu öğrenci için koçluk notu oluşturamazsınız' });
+    }
+
+    let noteDate: Date | undefined;
+    if (date) {
+      const parsed = new Date(date);
+      if (!Number.isNaN(parsed.getTime())) {
+        noteDate = parsed;
+      }
+    }
+
+    const created = await prisma.coachingNote.create({
+      data: {
+        studentId,
+        coachId: teacherId,
+        content: content.trim(),
+        visibility:
+          visibility === 'teacher_only' || visibility === 'shared_with_parent'
+            ? visibility
+            : 'shared_with_parent',
+        ...(noteDate ? { date: noteDate } : {}),
+      },
+    });
+
+    return res.status(201).json({
+      id: created.id,
+      studentId: created.studentId,
+      coachId: created.coachId,
+      content: created.content,
+      visibility: created.visibility,
+      date: created.date.toISOString(),
+    });
   },
 );
 

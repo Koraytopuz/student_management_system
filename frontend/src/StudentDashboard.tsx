@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Video, X } from 'lucide-react';
+import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import {
   apiRequest,
@@ -28,6 +28,7 @@ import {
   getStudentCoachingSessions,
   getStudentTestFeedback,
   getStudentBadges,
+  recordFocusSession,
   type CalendarEvent,
   type ProgressCharts,
   type ProgressOverview,
@@ -52,6 +53,7 @@ import { PdfTestOverlay, type PdfTestAssignment } from './PdfTestOverlay';
 import { useSearchParams } from 'react-router-dom';
 import { StudentQuestionBankTab } from './StudentQuestionBankTab';
 import { StudentBadgesTab } from './StudentBadgesTab';
+import { FocusZone } from './components/FocusZone';
 
 type StudentTab =
   | 'overview'
@@ -59,6 +61,7 @@ type StudentTab =
   | 'planner'
   | 'grades'
   | 'coursenotes'
+  | 'pomodoro'
   | 'questionbank'
   | 'badges'
   | 'liveclasses'
@@ -707,6 +710,7 @@ export const StudentDashboard: React.FC = () => {
     else if (activeTab === 'planner') items.push({ label: 'Planlama' });
     else if (activeTab === 'grades') items.push({ label: 'Sınav Analizi' });
     else if (activeTab === 'coursenotes') items.push({ label: 'Ders Notları' });
+    else if (activeTab === 'pomodoro') items.push({ label: 'Pomodoro' });
     else if (activeTab === 'questionbank') items.push({ label: 'Soru Havuzu' });
     else if (activeTab === 'badges') items.push({ label: 'Rozetlerim' });
     else if (activeTab === 'liveclasses') items.push({ label: 'Canlı Dersler' });
@@ -778,6 +782,18 @@ export const StudentDashboard: React.FC = () => {
           setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('coursenotes');
+        },
+      },
+      {
+        id: 'pomodoro',
+        label: 'Pomodoro',
+        icon: <Target size={18} />,
+        description: 'Focus Zone',
+        active: activeTab === 'pomodoro',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('pomodoro');
         },
       },
       {
@@ -872,8 +888,10 @@ export const StudentDashboard: React.FC = () => {
               ? 'Planlama'
               : activeTab === 'grades'
                 ? 'Sınav Analizi'
-                : activeTab === 'questionbank'
-                  ? 'Soru Havuzu Testleri'
+                : activeTab === 'pomodoro'
+                  ? 'Pomodoro'
+                  : activeTab === 'questionbank'
+                    ? 'Soru Havuzu Testleri'
                   : activeTab === 'badges'
                     ? 'Rozetlerim'
                     : activeTab === 'liveclasses'
@@ -997,6 +1015,23 @@ export const StudentDashboard: React.FC = () => {
           embedded
           onClose={() => {}}
         />
+      )}
+      {activeTab === 'pomodoro' && (
+        <GlassCard
+          title="Focus Zone"
+          subtitle="Odaklan, tamamla, XP kazan"
+          className="focus-zone-wrapper"
+        >
+          <FocusZone
+            todoItems={plannerTodos
+              .filter((t) => t.status !== 'completed')
+              .map((t) => ({ id: t.id, title: t.title }))}
+            token={token}
+            onXpEarned={(xp) => {
+              if (token && xp > 0) recordFocusSession(token, xp).catch(() => {});
+            }}
+          />
+        </GlassCard>
       )}
       {activeTab === 'questionbank' && token && (
         <StudentQuestionBankTab
@@ -1472,6 +1507,7 @@ export const StudentDashboard: React.FC = () => {
           token={liveClass.token}
           title={liveClass.title}
           role="student"
+          authToken={token}
           onClose={() => setLiveClass(null)}
         />
       )}
@@ -3231,7 +3267,7 @@ const StudentCoachingTab: React.FC<{
             value={last ? formatShortDate(last.date) : '-'}
             helper={last ? last.teacherName : 'Henüz görüşme yapılmadı'}
             trendLabel={last ? 'Geri bildirimi gözden geçir' : 'İlk görüşme seni bekliyor'}
-            trendTone={last ? 'neutral' : 'warning'}
+            trendTone={last ? 'neutral' : 'negative'}
           />
         </div>
 

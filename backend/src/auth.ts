@@ -27,7 +27,13 @@ function prismaUserToApiUser(dbUser: PrismaUser, studentIds?: string[]): User {
   };
   switch (dbUser.role) {
     case 'teacher':
-      return { ...base, role: 'teacher', subjectAreas: dbUser.subjectAreas };
+      return {
+        ...base,
+        role: 'teacher',
+        subjectAreas: dbUser.subjectAreas,
+        // Yeni alan: öğretmenin girebildiği sınıflar (opsiyonel)
+        assignedGrades: (dbUser as any).teacherGrades ?? [],
+      };
     case 'student':
       return {
         ...base,

@@ -25,12 +25,13 @@ import {
   type TeacherFeedbackItem,
   type TeacherListItem,
 } from './api';
+import { ParentReports } from './ParentReports';
 import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { useSearchParams } from 'react-router-dom';
 
-type ParentTab = 'overview' | 'calendar' | 'messages' | 'notifications' | 'feedback' | 'complaints';
+type ParentTab = 'overview' | 'calendar' | 'messages' | 'notifications' | 'feedback' | 'complaints' | 'reports';
 
 const getWeekRange = () => {
   const now = new Date();
@@ -62,8 +63,14 @@ export const ParentDashboard: React.FC = () => {
 
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab === 'overview' || tab === 'notifications') {
-      setActiveTab(tab === 'notifications' ? 'notifications' : 'overview');
+    if (tab === 'overview' || tab === 'notifications' || tab === 'reports') {
+      if (tab === 'notifications') {
+        setActiveTab('notifications');
+      } else if (tab === 'reports') {
+        setActiveTab('reports');
+      } else {
+        setActiveTab('overview');
+      }
       setSearchParams({}, { replace: true });
     }
   }, [searchParams, setSearchParams]);
@@ -185,6 +192,14 @@ export const ParentDashboard: React.FC = () => {
         onClick: () => setActiveTab('calendar'),
       },
       {
+        id: 'reports',
+        label: 'Gelişim Raporu',
+        icon: <BarChart3 size={18} />,
+        description: 'Öğrenci hedef ve performans özeti',
+        active: activeTab === 'reports',
+        onClick: () => setActiveTab('reports'),
+      },
+      {
         id: 'messages',
         label: 'İletişim',
         icon: <MessageSquare size={18} />,
@@ -229,6 +244,7 @@ export const ParentDashboard: React.FC = () => {
     const tabLabels: Record<string, string> = {
       overview: 'Akademik Durum',
       calendar: 'Devamsızlık',
+      reports: 'Gelişim Raporu',
       messages: 'İletişim',
       notifications: 'Bildirimler',
       feedback: 'Değerlendirme',
@@ -279,6 +295,7 @@ export const ParentDashboard: React.FC = () => {
       {activeTab === 'calendar' && (
         <ParentCalendar events={calendarState.data ?? []} loading={calendarState.loading} />
       )}
+      {activeTab === 'reports' && <ParentReports />}
       {activeTab === 'notifications' && (
         <GlassCard title="Bildirimler" subtitle="Kurum ve öğretmen bildirimleri">
           <div className="list-stack">

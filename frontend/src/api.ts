@@ -5,6 +5,12 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  /** Bazı dashboard'larda default seçim için kullanılır */
+  gradeLevel?: string;
+  /** Öğretmenler için: atanmış branşlar */
+  subjectAreas?: string[];
+  /** Öğretmenler için: yetkili olduğu sınıf seviyeleri (\"4\"–\"12\") */
+  assignedGrades?: string[];
 }
 
 export interface LoginResponse {
@@ -442,6 +448,61 @@ export interface TeacherCoachingSession {
   updatedAt: string;
 }
 
+export type CoachingGoalStatus = 'pending' | 'completed' | 'missed';
+
+export interface TeacherCoachingGoal {
+  id: string;
+  studentId: string;
+  coachId: string;
+  title: string;
+  description?: string;
+  deadline: string;
+  status: CoachingGoalStatus;
+  createdAt: string;
+  isOverdue: boolean;
+}
+
+export type CoachingNoteVisibility = 'teacher_only' | 'shared_with_parent';
+
+export interface TeacherCoachingNote {
+  id: string;
+  studentId: string;
+  coachId: string;
+  content: string;
+  visibility: CoachingNoteVisibility;
+  date: string;
+}
+
+export interface ParentCoachingNote {
+  id: string;
+  studentId: string;
+  coachId: string;
+  coachName: string;
+  content: string;
+  visibility: CoachingNoteVisibility;
+  date: string;
+}
+
+export interface ParentCoachingProgress {
+  goals: Array<{
+    id: string;
+    studentId: string;
+    coachId: string;
+    coachName: string;
+    title: string;
+    description?: string;
+    deadline: string;
+    status: CoachingGoalStatus;
+    createdAt: string;
+    isOverdue: boolean;
+  }>;
+  completionPercent: number;
+  pendingCount: number;
+  completedCount: number;
+  missedCount: number;
+  overduePendingCount: number;
+}
+
 export interface TeacherCalendarEvent extends CalendarEvent { }
 
 export interface TeacherMeeting {
@@ -720,6 +781,14 @@ export function getStudentBadges(token: string) {
   });
 }
 
+export function recordFocusSession(token: string, xp: number) {
+  return apiRequest<{ success: boolean; xp: number }>(
+    '/student/focus-session',
+    { method: 'POST', body: JSON.stringify({ xp }) },
+    token,
+  );
+}
+
 export function getStudentAssignments(token: string) {
   return apiRequest<StudentAssignment[]>('/student/assignments', {}, token);
 }
@@ -932,6 +1001,22 @@ export function createParentComplaint(
   );
 }
 
+export function getParentCoachingNotes(token: string, studentId: string) {
+  return apiRequest<ParentCoachingNote[]>(
+    `/parent/children/${studentId}/coaching-notes`,
+    {},
+    token,
+  );
+}
+
+export function getParentCoachingProgress(token: string, studentId: string) {
+  return apiRequest<ParentCoachingProgress>(
+    `/parent/children/${studentId}/coaching-progress`,
+    {},
+    token,
+  );
+}
+
 export function getAdminComplaints(token: string, status?: string) {
   const q = status ? `?status=${encodeURIComponent(status)}` : '';
   return apiRequest<ComplaintItem[]>(`/admin/complaints${q}`, {}, token);
@@ -1061,6 +1146,18 @@ export function getCurriculumTopics(
   return apiRequest<CurriculumTopic[]>(url, {}, token);
 }
 
+export function getCurriculumSubjects(
+  token: string,
+  gradeLevel: string,
+) {
+  return apiRequest<Array<{ id: string; name: string }>>(
+    `/questionbank/curriculum/subjects?gradeLevel=${gradeLevel}`,
+    {},
+    token
+  );
+}
+
+
 export function getTeacherCalendar(token: string, startDate: string, endDate: string) {
   return apiRequest<{ events: CalendarEvent[] }>(
     `/teacher/calendar?startDate=${startDate}&endDate=${endDate}&viewType=week`,
@@ -1081,6 +1178,80 @@ export function getTeacherCoachingSessions(token: string, studentId: string) {
   return apiRequest<TeacherCoachingSession[]>(
     `/teacher/students/${studentId}/coaching`,
     {},
+    token,
+  );
+}
+
+export function getTeacherCoachingGoals(token: string, studentId: string) {
+  return apiRequest<TeacherCoachingGoal[]>(
+    `/teacher/students/${studentId}/coaching-goals`,
+    {},
+    token,
+  );
+}
+
+export function createTeacherCoachingGoal(
+  token: string,
+  studentId: string,
+  payload: {
+    title: string;
+    description?: string;
+    deadline: string;
+  },
+) {
+  return apiRequest<TeacherCoachingGoal>(
+    `/teacher/students/${studentId}/coaching-goals`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function updateTeacherCoachingGoal(
+  token: string,
+  goalId: string,
+  updates: Partial<{
+    title: string;
+    description: string;
+    deadline: string;
+    status: CoachingGoalStatus;
+  }>,
+) {
+  return apiRequest<TeacherCoachingGoal>(
+    `/teacher/coaching-goals/${goalId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    },
+    token,
+  );
+}
+
+export function getTeacherCoachingNotes(token: string, studentId: string) {
+  return apiRequest<TeacherCoachingNote[]>(
+    `/teacher/students/${studentId}/coaching-notes`,
+    {},
+    token,
+  );
+}
+
+export function createTeacherCoachingNote(
+  token: string,
+  studentId: string,
+  payload: {
+    content: string;
+    visibility?: CoachingNoteVisibility;
+    date?: string;
+  },
+) {
+  return apiRequest<TeacherCoachingNote>(
+    `/teacher/students/${studentId}/coaching-notes`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
     token,
   );
 }
@@ -1133,6 +1304,21 @@ export function deleteTeacherCoachingSession(token: string, sessionId: string) {
   return apiRequest<{ success: boolean }>(
     `/teacher/coaching/${sessionId}`,
     { method: 'DELETE' },
+    token,
+  );
+}
+
+export function updateStudentCoachingGoalStatus(
+  token: string,
+  goalId: string,
+  status: CoachingGoalStatus,
+) {
+  return apiRequest<TeacherCoachingGoal>(
+    `/student/coaching/goals/${goalId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    },
     token,
   );
 }
@@ -1226,6 +1412,7 @@ export function createTeacherMeeting(
     scheduledAt: string;
     durationMinutes: number;
     meetingUrl: string;
+    targetGrade?: string;
   },
 ) {
   return apiRequest<TeacherMeeting>(
@@ -1275,6 +1462,31 @@ export function muteAllInMeeting(token: string, meetingId: string) {
   return apiRequest<{ success: boolean; muted: number }>(
     `/teacher/meetings/${meetingId}/mute-all`,
     { method: 'POST' },
+    token,
+  );
+}
+
+/** Derse kayıtlı öğrencileri getir (yoklama modalı için) */
+export function getMeetingAttendanceStudents(token: string, meetingId: string) {
+  return apiRequest<{
+    meetingId: string;
+    meetingTitle: string;
+    students: Array<{ id: string; name: string }>;
+  }>(`/teacher/meetings/${meetingId}/attendance-students`, {}, token);
+}
+
+/** Yoklama kaydet – velilere otomatik bildirim gider */
+export function submitMeetingAttendance(
+  token: string,
+  meetingId: string,
+  attendance: Array<{ studentId: string; present: boolean }>,
+) {
+  return apiRequest<{ success: boolean; saved: number; attendance: typeof attendance }>(
+    `/teacher/meetings/${meetingId}/attendance`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ attendance }),
+    },
     token,
   );
 }

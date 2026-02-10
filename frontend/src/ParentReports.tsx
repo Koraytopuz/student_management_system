@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { apiRequest } from './api';
+import { apiRequest, getParentCoachingNotes, getParentCoachingProgress, type ParentCoachingNote, type ParentCoachingProgress } from './api';
 import { useAuth } from './AuthContext';
 
 interface ActivitySummary {
@@ -46,6 +46,8 @@ export const ParentReports: React.FC = () => {
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [weeklyReports, setWeeklyReports] = useState<WeeklyReport[]>([]);
+  const [coachingNotes, setCoachingNotes] = useState<ParentCoachingNote[]>([]);
+  const [coachingProgress, setCoachingProgress] = useState<ParentCoachingProgress | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,25 +69,37 @@ export const ParentReports: React.FC = () => {
     setLoading(true);
     setError(null);
 
-    if (activeTab === 'summary') {
-      apiRequest<ActivitySummary>(
-        `/parent/children/${selectedStudent}/activity-summary?period=${period}`,
-        {},
-        token,
-      )
-        .then(setSummary)
-        .catch((e) => setError(e.message))
-        .finally(() => setLoading(false));
-    } else if (activeTab === 'weekly') {
-      apiRequest<{ reports: WeeklyReport[] }>(
-        `/parent/children/${selectedStudent}/weekly-reports`,
-        {},
-        token,
-      )
-        .then((data) => setWeeklyReports(data.reports))
-        .catch((e) => setError(e.message))
-        .finally(() => setLoading(false));
-    }
+    const fetchData = async () => {
+      try {
+        if (activeTab === 'summary') {
+          const [summaryData, notes, progress] = await Promise.all([
+            apiRequest<ActivitySummary>(
+              `/parent/children/${selectedStudent}/activity-summary?period=${period}`,
+              {},
+              token,
+            ),
+            getParentCoachingNotes(token, selectedStudent),
+            getParentCoachingProgress(token, selectedStudent),
+          ]);
+          setSummary(summaryData);
+          setCoachingNotes(notes);
+          setCoachingProgress(progress);
+        } else if (activeTab === 'weekly') {
+          const data = await apiRequest<{ reports: WeeklyReport[] }>(
+            `/parent/children/${selectedStudent}/weekly-reports`,
+            {},
+            token,
+          );
+          setWeeklyReports(data.reports);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Veriler yüklenemedi');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData().catch(() => {});
   }, [token, selectedStudent, activeTab, period]);
 
   if (!token) {
@@ -204,6 +218,109 @@ export const ParentReports: React.FC = () => {
                     </span>
                   </div>
                 )}
+              </div>
+
+              {/* Koçluk hedef ilerlemesi ve gelişim notları */}
+              <div className="cards-grid" style={{ marginBottom: '2rem' }}>
+                <div className="card">
+                  <h3>Koçluk Hedef İlerlemesi</h3>
+                  {coachingProgress ? (
+                    <>
+                      <p style={{ marginBottom: '0.5rem' }}>
+                        Tamamlanma Oranı:{' '}
+                        <strong>%{coachingProgress.completionPercent}</strong>
+                      </p>
+                      <div
+                        style={{
+                          position: 'relative',
+                          height: 10,
+                          borderRadius: 999,
+                          background: 'var(--color-border-subtle)',
+                          overflow: 'hidden',
+                          marginBottom: '0.5rem',
+                        }}
+                      >
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            width: `${Math.min(
+                              100,
+                              Math.max(0, coachingProgress.completionPercent),
+                            )}%`,
+                            background:
+                              coachingProgress.completionPercent >= 80
+                                ? 'var(--color-success)'
+                                : 'var(--color-primary)',
+                          }}
+                        />
+                      </div>
+                      <p style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                        Hedef Sayısı: {coachingProgress.goals.length}
+                      </p>
+                      <p style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                        Tamamlanan: {coachingProgress.completedCount} · Devam Eden:{' '}
+                        {coachingProgress.pendingCount}
+                      </p>
+                      {coachingProgress.overduePendingCount > 0 && (
+                        <p
+                          style={{
+                            fontSize: '0.85rem',
+                            color: 'var(--error)',
+                          }}
+                        >
+                          Gecikmiş Hedef:{' '}
+                          {coachingProgress.overduePendingCount}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p style={{ color: 'var(--color-text-muted)' }}>
+                      Henüz koçluk hedefi bulunmuyor.
+                    </p>
+                  )}
+                </div>
+
+                <div className="card">
+                  <h3>Koçluk Gelişim Notları</h3>
+                  {coachingNotes.length === 0 ? (
+                    <p style={{ color: 'var(--color-text-muted)' }}>
+                      Henüz paylaşılmış koçluk notu bulunmuyor.
+                    </p>
+                  ) : (
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {coachingNotes.slice(0, 5).map((note) => (
+                        <li
+                          key={note.id}
+                          style={{
+                            padding: '0.5rem 0',
+                            borderBottom:
+                              '1px solid var(--color-border-subtle)',
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: '0.8rem',
+                              color: 'var(--color-text-muted)',
+                              marginBottom: 2,
+                            }}
+                          >
+                            {new Date(note.date).toLocaleString('tr-TR')} ·{' '}
+                            {note.coachName}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '0.9rem',
+                              whiteSpace: 'pre-wrap',
+                            }}
+                          >
+                            {note.content}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
 
               {summary.dailyBreakdown.length > 0 && (

@@ -27,6 +27,7 @@ import {
   StudentBadgeProgress,
 } from './types';
 import { getStudentBadgeProgress } from './services/badgeService';
+import { notifyParentsOfStudent } from './services/notificationService';
 import { createLiveKitToken, getLiveKitUrl } from './livekit';
 import { callGemini } from './ai';
 
@@ -345,6 +346,56 @@ router.get(
         updatedAt: s.updatedAt.toISOString(),
       })),
     );
+  },
+);
+
+// Öğrenci koçluk hedef durumu güncelleme (tamamlandı / geri al)
+router.patch(
+  '/coaching/goals/:goalId',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const goalId = String(req.params.goalId);
+
+    const goal = await prisma.coachingGoal.findFirst({
+      where: { id: goalId, studentId },
+    });
+    if (!goal) {
+      return res.status(404).json({ error: 'Koçluk hedefi bulunamadı' });
+    }
+
+    const { status } = req.body as Partial<{
+      status: 'pending' | 'completed' | 'missed';
+    }>;
+
+    if (
+      status !== 'pending' &&
+      status !== 'completed' &&
+      status !== 'missed'
+    ) {
+      return res
+        .status(400)
+        .json({ error: 'Geçersiz status. pending/completed/missed olmalıdır.' });
+    }
+
+    const updated = await prisma.coachingGoal.update({
+      where: { id: goalId },
+      data: { status },
+    });
+
+    return res.json({
+      id: updated.id,
+      studentId: updated.studentId,
+      coachId: updated.coachId,
+      title: updated.title,
+      description: updated.description ?? undefined,
+      deadline: updated.deadline.toISOString(),
+      status: updated.status,
+      createdAt: updated.createdAt.toISOString(),
+      isOverdue:
+        updated.status === 'pending' &&
+        updated.deadline.getTime() < Date.now(),
+    });
   },
 );
 
@@ -1013,6 +1064,21 @@ router.post(
       body.incorrectCount = incorrectCount;
       body.blankCount = blankCount;
       body.scorePercent = scorePercent;
+
+      // Senaryo A: PDF/TestAsset sınav sonuç bildirimi – velilere otomatik bildirim
+      const student = await prisma.user.findUnique({
+        where: { id: studentId },
+        select: { name: true },
+      });
+      const examTitle = (assignment as any).testAsset?.title ?? assignment.title ?? 'Test';
+      const bodyText = `Sayın Veli, öğrencimiz ${student?.name ?? 'Öğrenci'}, ${examTitle} testini tamamlamıştır. Sonuç: ${correctCount} Doğru, ${incorrectCount} Yanlış, ${blankCount} Boş. Başarı Oranı: %${scorePercent}.`;
+      notifyParentsOfStudent(studentId, {
+        type: 'exam_result_to_parent',
+        title: 'Sınav Sonucu',
+        body: bodyText,
+        relatedEntityType: 'test',
+        relatedEntityId: assignmentId,
+      }).catch(() => {});
     }
     return res.json(body);
   },
@@ -1672,6 +1738,21 @@ router.post(
       },
     });
 
+    // Senaryo A: Sınav sonuç bildirimi – velilere otomatik bildirim
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: { name: true },
+    });
+    const examTitle = assignment.title || test.title || 'Test';
+    const bodyText = `Sayın Veli, öğrencimiz ${student?.name ?? 'Öğrenci'}, ${examTitle} testini tamamlamıştır. Sonuç: ${result.correctCount} Doğru, ${result.incorrectCount} Yanlış, ${result.blankCount} Boş. Başarı Oranı: %${result.scorePercent}.`;
+    notifyParentsOfStudent(studentId, {
+      type: 'exam_result_to_parent',
+      title: 'Sınav Sonucu',
+      body: bodyText,
+      relatedEntityType: 'test',
+      relatedEntityId: result.id,
+    }).catch(() => {});
+
     const responseBody: any = {
       id: result.id,
       assignmentId: result.assignmentId,
@@ -1940,6 +2021,32 @@ router.get(
           error instanceof Error
             ? error.message
             : 'Rozetler yüklenirken bir hata oluştu',
+      });
+    }
+  },
+);
+
+// Focus Zone – odak seansı tamamlandığında XP kaydet
+router.post(
+  '/focus-session',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res) => {
+    const studentId = req.user!.id;
+    const xp = typeof req.body?.xp === 'number' ? Math.min(9999, Math.max(0, Math.round(req.body.xp))) : 50;
+
+    try {
+      const client = prisma as any;
+      if (client.studentFocusSession) {
+        await client.studentFocusSession.create({
+          data: { studentId, xpEarned: xp },
+        });
+      }
+      return res.json({ success: true, xp });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[STUDENT_FOCUS_SESSION]', error);
+      return res.status(500).json({
+        error: error instanceof Error ? error.message : 'Focus seansı kaydedilemedi',
       });
     }
   },
@@ -2241,21 +2348,6 @@ router.post(
     const isParticipant = meeting.students.some((s) => s.studentId === studentId);
     if (!isParticipant) {
       return res.status(403).json({ error: 'Bu toplantıya katılma yetkiniz yok' });
-    }
-
-    const now = Date.now();
-    const scheduledAtMs = new Date(meeting.scheduledAt).getTime();
-    const meetingEndMs = scheduledAtMs + meeting.durationMinutes * 60 * 1000;
-    const windowStartMs = scheduledAtMs - 10 * 60 * 1000; // 10 dk önce katılıma izin
-    if (now < windowStartMs) {
-      return res.status(400).json({
-        error: 'Bu seans henüz başlamadı. En erken seans saatinden 10 dakika önce katılabilirsiniz.',
-      });
-    }
-    if (now > meetingEndMs) {
-      return res.status(400).json({
-        error: 'Bu seansın katılım süresi sona erdi.',
-      });
     }
 
     // Canlı dersin açılması sadece öğretmen tarafından yapılabilsin.

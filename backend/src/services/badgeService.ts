@@ -1,17 +1,18 @@
 import { prisma } from '../db';
-import type { StudentBadgeProgress } from '../types';
+import type { BadgeCategory, StudentBadgeProgress } from '../types';
 
 export type BadgeMetricKey =
   | 'total_questions_all_time'
   | 'tests_completed_all_time'
   | 'assignments_completed_all_time'
   | 'content_completed_all_time'
-  | 'longest_active_streak_days';
+  | 'longest_active_streak_days'
+  | 'focus_xp_total';
 
 type MetricsMap = Record<BadgeMetricKey, number>;
 
 async function computeStudentMetrics(studentId: string): Promise<MetricsMap> {
-  const [questionsAgg, testsCompleted, assignmentsCompleted, contentsCompleted, resultDates, watchDates] =
+  const [questionsAgg, testsCompleted, assignmentsCompleted, contentsCompleted, resultDates, watchDates, focusXpResult] =
     await Promise.all([
     prisma.testResult.aggregate({
       where: { studentId },
@@ -46,6 +47,8 @@ async function computeStudentMetrics(studentId: string): Promise<MetricsMap> {
         where: { studentId },
         select: { lastWatchedAt: true },
     }),
+      (prisma as any).studentFocusSession?.aggregate?.({ where: { studentId }, _sum: { xpEarned: true } })
+        .catch(() => ({ _sum: { xpEarned: null } })),
   ]);
 
   const totalQuestions =
@@ -76,16 +79,25 @@ async function computeStudentMetrics(studentId: string): Promise<MetricsMap> {
     longestStreak = 1;
     const oneDayMs = 24 * 60 * 60 * 1000;
     for (let i = 1; i < sortedDays.length; i += 1) {
-      if (sortedDays[i] - sortedDays[i - 1] === oneDayMs) {
-        currentStreak += 1;
-      } else if (sortedDays[i] !== sortedDays[i - 1]) {
-        currentStreak = 1;
-      }
-      if (currentStreak > longestStreak) {
-        longestStreak = currentStreak;
+      const curr = sortedDays[i];
+      const prev = sortedDays[i - 1];
+      if (curr != null && prev != null) {
+        if (curr - prev === oneDayMs) {
+          currentStreak += 1;
+        } else if (curr !== prev) {
+          currentStreak = 1;
+        }
+        if (currentStreak > longestStreak) {
+          longestStreak = currentStreak;
+        }
       }
     }
   }
+
+  const focusXpTotal =
+    typeof focusXpResult === 'object' && focusXpResult?._sum?.xpEarned != null
+      ? Number(focusXpResult._sum.xpEarned)
+      : 0;
 
   return {
     total_questions_all_time: totalQuestions,
@@ -93,6 +105,7 @@ async function computeStudentMetrics(studentId: string): Promise<MetricsMap> {
     assignments_completed_all_time: assignmentsCompleted,
     content_completed_all_time: contentsCompleted,
     longest_active_streak_days: longestStreak,
+    focus_xp_total: focusXpTotal,
   };
 }
 
@@ -122,13 +135,27 @@ export async function getStudentBadgeProgress(studentId: string): Promise<Studen
     return [];
   }
 
-  const earnedByBadgeId = new Map(
-    earnedBadges.map((b) => [b.badgeId, b]),
+  type EarnedBadgeRow = { badgeId: string; earnedAt?: Date; id?: string; studentId?: string };
+  const earnedByBadgeId = new Map<string, EarnedBadgeRow>(
+    (earnedBadges as EarnedBadgeRow[]).map((b) => [b.badgeId, b]),
   );
+
+  type BadgeDefRow = {
+    id: string;
+    metricKey: string;
+    targetValue: number;
+    code: string;
+    title: string;
+    description: string;
+    category: string;
+    icon?: string | null;
+    color?: string | null;
+  };
+  const defs = definitions as BadgeDefRow[];
 
   // Eşiği geçmiş ama henüz kaydedilmemiş rozetleri oluştur
   const now = new Date();
-  const toCreate = definitions.filter((def) => {
+  const toCreate = defs.filter((def) => {
     const currentValue = metrics[def.metricKey as BadgeMetricKey] ?? 0;
     return !earnedByBadgeId.has(def.id) && currentValue >= def.targetValue;
   });
@@ -146,23 +173,22 @@ export async function getStudentBadgeProgress(studentId: string): Promise<Studen
     toCreate.forEach((def) => {
       if (!earnedByBadgeId.has(def.id)) {
         earnedByBadgeId.set(def.id, {
-          id: 'virtual', // burada sadece earnedAt bilgisini kullanacağız
+          id: 'virtual',
           studentId,
           badgeId: def.id,
           earnedAt: now,
-          notifiedAt: null,
-        } as any);
+        });
       }
     });
   }
 
-  const result: StudentBadgeProgress[] = definitions.map((def) => {
+  const result: StudentBadgeProgress[] = defs.map((def) => {
     const currentValue = metrics[def.metricKey as BadgeMetricKey] ?? 0;
     const target = def.targetValue || 0;
     const progressPercent =
       target <= 0 ? 100 : Math.max(0, Math.min(100, Math.round((currentValue / target) * 100)));
 
-    const earnedRow = earnedByBadgeId.get(def.id) ?? null;
+    const earnedRow = earnedByBadgeId.get(def.id);
     const earned = !!earnedRow;
 
     return {
@@ -170,7 +196,7 @@ export async function getStudentBadgeProgress(studentId: string): Promise<Studen
       code: def.code,
       title: def.title,
       description: def.description,
-      category: def.category,
+      category: def.category as BadgeCategory,
       icon: def.icon ?? undefined,
       color: def.color ?? undefined,
       targetValue: def.targetValue,

@@ -22,6 +22,7 @@ export interface Admin extends UserBase {
     role: 'admin';
 }
 export type User = Teacher | Student | Parent | Admin;
+export type BadgeCategory = 'questions_solved' | 'tests_completed' | 'assignments_completed' | 'content_watched' | 'streak' | 'mixed';
 export interface ClassGroup {
     id: string;
     name: string;
@@ -243,6 +244,21 @@ export interface StudentDashboardSummary {
         title: string;
         lastPositionSeconds: number;
     }[];
+}
+export interface StudentBadgeProgress {
+    badgeId: string;
+    code: string;
+    title: string;
+    description: string;
+    category: BadgeCategory;
+    icon?: string;
+    color?: string;
+    targetValue: number;
+    metricKey: string;
+    currentValue: number;
+    progressPercent: number;
+    earned: boolean;
+    earnedAt?: string;
 }
 export interface ParentDashboardSummaryStudentCard {
     studentId: string;

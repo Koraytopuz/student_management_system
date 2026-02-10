@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import dayjs from 'dayjs';
 import { CalendarCheck, PlusCircle, Trash2, Edit2 } from 'lucide-react';
 import { GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import {
   type TeacherStudent,
   type TeacherCoachingSession,
+  type TeacherCoachingGoal,
+  type TeacherCoachingNote,
   type TeacherStudentProfile,
   type TeacherTest,
   getTeacherCoachingSessions,
+  getTeacherCoachingGoals,
+  getTeacherCoachingNotes,
   createTeacherCoachingSession,
   updateTeacherCoachingSession,
   deleteTeacherCoachingSession,
@@ -69,6 +74,24 @@ export const CoachingTab: React.FC<{
     meetingUrl: '',
   });
 
+  const [activeDetailTab, setActiveDetailTab] = useState<'goals' | 'notes'>('goals');
+  const [goals, setGoals] = useState<TeacherCoachingGoal[]>([]);
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [goalsError, setGoalsError] = useState<string | null>(null);
+  const [goalForm, setGoalForm] = useState<{ title: string; description: string; deadline: string }>({
+    title: '',
+    description: '',
+    deadline: '',
+  });
+
+  const [notes, setNotes] = useState<TeacherCoachingNote[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [noteForm, setNoteForm] = useState<{ content: string; sharedWithParent: boolean }>({
+    content: '',
+    sharedWithParent: true,
+  });
+
   const studentsWithPresence = useMemo(() => {
     const now = Date.now();
     return students.map((s) => {
@@ -95,6 +118,44 @@ export const CoachingTab: React.FC<{
     });
   };
 
+  const refreshGoals = async () => {
+    if (!token || !selectedStudentId) {
+      setGoals([]);
+      return;
+    }
+    setGoalsLoading(true);
+    setGoalsError(null);
+    try {
+      const data = await getTeacherCoachingGoals(token, selectedStudentId);
+      setGoals(data);
+    } catch (e) {
+      setGoalsError(
+        e instanceof Error ? e.message : 'Koçluk hedefleri yüklenemedi.',
+      );
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const refreshNotes = async () => {
+    if (!token || !selectedStudentId) {
+      setNotes([]);
+      return;
+    }
+    setNotesLoading(true);
+    setNotesError(null);
+    try {
+      const data = await getTeacherCoachingNotes(token, selectedStudentId);
+      setNotes(data);
+    } catch (e) {
+      setNotesError(
+        e instanceof Error ? e.message : 'Koçluk notları yüklenemedi.',
+      );
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+
   const refresh = async () => {
     if (!token || !selectedStudentId) {
       setSessions([]);
@@ -118,7 +179,7 @@ export const CoachingTab: React.FC<{
       onSelectStudent(students[0].id);
       return;
     }
-    refresh().catch(() => {});
+    Promise.all([refresh(), refreshGoals(), refreshNotes()]).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, selectedStudentId]);
 
@@ -226,6 +287,74 @@ export const CoachingTab: React.FC<{
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Kayıt silinemedi.');
+    }
+  };
+
+  const handleCreateGoal = async () => {
+    if (!token || !selectedStudentId) return;
+    const title = goalForm.title.trim();
+    if (!title || !goalForm.deadline) {
+      setGoalsError('Lütfen başlık ve bitiş tarihini doldurun.');
+      return;
+    }
+    const deadlineIso = new Date(goalForm.deadline).toISOString();
+    setGoalsError(null);
+    setGoalsLoading(true);
+    try {
+      await createTeacherCoachingGoal(token, selectedStudentId, {
+        title,
+        description: goalForm.description.trim() || undefined,
+        deadline: deadlineIso,
+      });
+      setGoalForm({ title: '', description: '', deadline: '' });
+      await refreshGoals();
+    } catch (e) {
+      setGoalsError(
+        e instanceof Error ? e.message : 'Hedef kaydedilirken bir hata oluştu.',
+      );
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const handleToggleGoalStatus = async (goal: TeacherCoachingGoal) => {
+    if (!token) return;
+    const nextStatus: CoachingGoalStatus =
+      goal.status === 'completed' ? 'pending' : 'completed';
+    try {
+      await updateTeacherCoachingGoal(token, goal.id, { status: nextStatus });
+      await refreshGoals();
+    } catch (e) {
+      setGoalsError(
+        e instanceof Error ? e.message : 'Hedef güncellenemedi.',
+      );
+    }
+  };
+
+  const handleCreateNote = async () => {
+    if (!token || !selectedStudentId) return;
+    const content = noteForm.content.trim();
+    if (!content) {
+      setNotesError('Lütfen not içeriğini girin.');
+      return;
+    }
+    setNotesError(null);
+    setNotesLoading(true);
+    try {
+      await createTeacherCoachingNote(token, selectedStudentId, {
+        content,
+        visibility: noteForm.sharedWithParent
+          ? 'shared_with_parent'
+          : 'teacher_only',
+      });
+      setNoteForm({ content: '', sharedWithParent: true });
+      await refreshNotes();
+    } catch (e) {
+      setNotesError(
+        e instanceof Error ? e.message : 'Not kaydedilirken bir hata oluştu.',
+      );
+    } finally {
+      setNotesLoading(false);
     }
   };
 
@@ -381,7 +510,7 @@ export const CoachingTab: React.FC<{
                 value={lastSessionDate ? formatShortDate(lastSessionDate) : '-'}
                 helper={lastSessionDate ? formatTime(lastSessionDate) : 'Kayıt yok'}
                 trendLabel={lastSessionDate ? 'Güncel' : 'Beklemede'}
-                trendTone={lastSessionDate ? 'neutral' : 'warning'}
+                trendTone={lastSessionDate ? 'neutral' : 'negative'}
               >
                 <div className="metric-inline">
                   <CalendarCheck size={14} />
@@ -658,6 +787,355 @@ export const CoachingTab: React.FC<{
               </div>
             </div>
           )}
+
+          {/* Hedefler / Notlar sekmeleri */}
+          <div style={{ marginBottom: '1rem' }}>
+            <div
+              style={{
+                display: 'inline-flex',
+                borderRadius: 999,
+                padding: 4,
+                background: 'var(--color-surface-strong)',
+                border: '1px solid var(--color-border-subtle)',
+                marginBottom: '0.75rem',
+              }}
+            >
+              {[
+                { id: 'goals' as const, label: 'Hedefler' },
+                { id: 'notes' as const, label: 'Gelişim Notları' },
+              ].map((tab) => {
+                const isActive = activeDetailTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveDetailTab(tab.id)}
+                    style={{
+                      border: 'none',
+                      borderRadius: 999,
+                      padding: '0.35rem 0.9rem',
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                      background: isActive ? 'var(--color-primary-soft)' : 'transparent',
+                      color: isActive ? 'var(--color-primary-strong)' : 'var(--color-text-muted)',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeDetailTab === 'goals' && (
+              <GlassCard
+                title="Koçluk Hedefleri"
+                subtitle="Öğrenciniz için haftalık/okuma hedefleri belirleyin."
+              >
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: '0.75rem',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1.1fr)',
+                      gap: '0.75rem',
+                    }}
+                  >
+                    <div>
+                      <label
+                        htmlFor="goal-title"
+                        style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}
+                      >
+                        Hedef Başlığı
+                      </label>
+                      <input
+                        id="goal-title"
+                        type="text"
+                        value={goalForm.title}
+                        onChange={(e) =>
+                          setGoalForm((prev) => ({ ...prev, title: e.target.value }))
+                        }
+                        placeholder='Örn. "Bu hafta 200 Matematik sorusu"'
+                        style={{ width: '100%', marginTop: '0.25rem' }}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="goal-deadline"
+                        style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}
+                      >
+                        Bitiş Tarihi
+                      </label>
+                      <input
+                        id="goal-deadline"
+                        type="date"
+                        value={goalForm.deadline}
+                        onChange={(e) =>
+                          setGoalForm((prev) => ({ ...prev, deadline: e.target.value }))
+                        }
+                        style={{ width: '100%', marginTop: '0.25rem' }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="goal-desc"
+                      style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}
+                    >
+                      Açıklama (opsiyonel)
+                    </label>
+                    <textarea
+                      id="goal-desc"
+                      rows={2}
+                      value={goalForm.description}
+                      onChange={(e) =>
+                        setGoalForm((prev) => ({ ...prev, description: e.target.value }))
+                      }
+                      placeholder="Detay veya kriterler"
+                      style={{
+                        width: '100%',
+                        marginTop: '0.25rem',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+                  {goalsError && (
+                    <div
+                      style={{
+                        fontSize: '0.8rem',
+                        color: 'var(--color-danger)',
+                      }}
+                    >
+                      {goalsError}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={() => handleCreateGoal().catch(() => {})}
+                      disabled={goalsLoading || !token || !selectedStudentId}
+                    >
+                      {goalsLoading ? 'Kaydediliyor...' : 'Yeni Hedef Ekle'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="list-stack">
+                  {goalsLoading && goals.length === 0 && (
+                    <div className="empty-state">Hedefler yükleniyor...</div>
+                  )}
+                  {!goalsLoading && goals.length === 0 && (
+                    <div className="empty-state">
+                      Bu öğrenci için henüz koçluk hedefi yok.
+                    </div>
+                  )}
+                  {goals.map((goal) => {
+                    const deadlineLabel = dayjs(goal.deadline).format('DD MMM YYYY');
+                    const isOverdue = goal.isOverdue;
+                    return (
+                      <div key={goal.id} className="list-row">
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', flex: 1 }}>
+                          <input
+                            type="checkbox"
+                            checked={goal.status === 'completed'}
+                            onChange={() => handleToggleGoalStatus(goal)}
+                            style={{ marginTop: 4 }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <strong
+                              style={{
+                                display: 'block',
+                                color:
+                                  goal.status === 'completed'
+                                    ? 'var(--color-text-muted)'
+                                    : 'var(--color-text-main)',
+                                textDecoration:
+                                  goal.status === 'completed' ? 'line-through' : 'none',
+                              }}
+                            >
+                              {goal.title}
+                            </strong>
+                            {goal.description && (
+                              <small
+                                style={{
+                                  display: 'block',
+                                  marginTop: 2,
+                                  color: 'var(--color-text-muted)',
+                                }}
+                              >
+                                {goal.description}
+                              </small>
+                            )}
+                            <small
+                              style={{
+                                display: 'block',
+                                marginTop: 4,
+                                color: isOverdue
+                                  ? 'var(--color-danger)'
+                                  : 'var(--color-text-muted)',
+                              }}
+                            >
+                              Bitiş: {deadlineLabel}{' '}
+                              {isOverdue && goal.status === 'pending' ? '(Gecikmiş)' : ''}
+                            </small>
+                          </div>
+                        </div>
+                        <TagChip
+                          label={
+                            goal.status === 'completed'
+                              ? 'Tamamlandı'
+                              : goal.status === 'missed'
+                                ? 'Kaçırıldı'
+                                : isOverdue
+                                  ? 'Overdue'
+                                  : 'Devam ediyor'
+                          }
+                          tone={
+                            goal.status === 'completed'
+                              ? 'success'
+                              : isOverdue || goal.status === 'missed'
+                                ? 'warning'
+                                : 'info'
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </GlassCard>
+            )}
+
+            {activeDetailTab === 'notes' && (
+              <GlassCard
+                title="Gelişim Notları"
+                subtitle="Koçluk görüşmelerinizden kısa notlar alın."
+              >
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: '0.75rem',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <div>
+                    <label
+                      htmlFor="note-content"
+                      style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}
+                    >
+                      Not
+                    </label>
+                    <textarea
+                      id="note-content"
+                      rows={3}
+                      value={noteForm.content}
+                      onChange={(e) =>
+                        setNoteForm((prev) => ({ ...prev, content: e.target.value }))
+                      }
+                      placeholder="Bugünkü koçluk görüşmesi, öğrencinin modu, odaklanma durumu..."
+                      style={{
+                        width: '100%',
+                        marginTop: '0.25rem',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      fontSize: '0.8rem',
+                      color: 'var(--color-text-muted)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={noteForm.sharedWithParent}
+                      onChange={(e) =>
+                        setNoteForm((prev) => ({
+                          ...prev,
+                          sharedWithParent: e.target.checked,
+                        }))
+                      }
+                    />
+                    Veli görebilsin mi?
+                  </label>
+                  {notesError && (
+                    <div
+                      style={{
+                        fontSize: '0.8rem',
+                        color: 'var(--color-danger)',
+                      }}
+                    >
+                      {notesError}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={() => handleCreateNote().catch(() => {})}
+                      disabled={notesLoading || !token || !selectedStudentId}
+                    >
+                      {notesLoading ? 'Kaydediliyor...' : 'Not Ekle'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="list-stack">
+                  {notesLoading && notes.length === 0 && (
+                    <div className="empty-state">Notlar yükleniyor...</div>
+                  )}
+                  {!notesLoading && notes.length === 0 && (
+                    <div className="empty-state">
+                      Bu öğrenci için henüz gelişim notu yok.
+                    </div>
+                  )}
+                  {notes.map((note) => (
+                    <div key={note.id} className="list-row">
+                      <div style={{ flex: 1 }}>
+                        <small
+                          style={{
+                            display: 'block',
+                            marginBottom: 4,
+                            color: 'var(--color-text-muted)',
+                          }}
+                        >
+                          {dayjs(note.date).format('DD MMM YYYY · HH:mm')}
+                        </small>
+                        <div
+                          style={{
+                            whiteSpace: 'pre-wrap',
+                            fontSize: '0.9rem',
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          {note.content}
+                        </div>
+                      </div>
+                      <TagChip
+                        label={
+                          note.visibility === 'shared_with_parent'
+                            ? 'Veli ile paylaşıldı'
+                            : 'Sadece öğretmen'
+                        }
+                        tone={
+                          note.visibility === 'shared_with_parent'
+                            ? 'success'
+                            : 'warning'
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              </GlassCard>
+            )}
+          </div>
 
           {loading ? (
             <div className="empty-state">Koçluk kayıtları yükleniyor...</div>

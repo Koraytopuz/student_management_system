@@ -331,5 +331,33 @@ router.put('/complaints/:id', (0, auth_1.authenticate)('admin'), async (req, res
         closedAt: (_e = updated.closedAt) === null || _e === void 0 ? void 0 : _e.toISOString(),
     });
 });
+// Koçluk seansları - admin görünümü (sadece okuma)
+router.get('/coaching', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const { studentId, teacherId } = req.query;
+    const where = {};
+    if (studentId)
+        where.studentId = String(studentId);
+    if (teacherId)
+        where.teacherId = String(teacherId);
+    const sessions = await db_1.prisma.coachingSession.findMany({
+        where,
+        orderBy: { date: 'desc' },
+    });
+    return res.json(sessions.map((s) => {
+        var _a;
+        return ({
+            id: s.id,
+            studentId: s.studentId,
+            teacherId: s.teacherId,
+            date: s.date.toISOString(),
+            durationMinutes: (_a = s.durationMinutes) !== null && _a !== void 0 ? _a : undefined,
+            title: s.title,
+            notes: s.notes,
+            mode: s.mode,
+            createdAt: s.createdAt.toISOString(),
+            updatedAt: s.updatedAt.toISOString(),
+        });
+    }));
+});
 exports.default = router;
 //# sourceMappingURL=routes.admin.js.map

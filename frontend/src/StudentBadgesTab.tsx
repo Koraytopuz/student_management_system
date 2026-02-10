@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Award,
-  BookOpen,
   ClipboardCheck,
   ClipboardList,
   Flame,
@@ -9,6 +8,7 @@ import {
   Medal,
   PlayCircle,
   Star,
+  Target,
 } from 'lucide-react';
 import type { StudentBadgeProgress } from './api';
 import { GlassCard } from './components/DashboardPrimitives';
@@ -62,7 +62,10 @@ const getBadgeIcon = (badge: StudentBadgeProgress, size: 'sm' | 'md' | 'lg', loc
 
   let Icon: React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 
-  switch (badge.category) {
+  // Focus Zone rozetleri için Target ikonu
+  if (badge.icon === 'target' || badge.code?.startsWith('focus_')) {
+    Icon = Target;
+  } else switch (badge.category) {
     case 'questions_solved':
       // Soru çözme: madalya + kitap hissi
       Icon = Medal;
@@ -100,7 +103,6 @@ export const StudentBadgesTab: React.FC<StudentBadgesTabProps> = ({
   error,
 }) => {
   const earned = badges.filter((b) => b.earned);
-  const notEarned = badges.filter((b) => !b.earned);
 
   return (
     <div className="space-y-4">

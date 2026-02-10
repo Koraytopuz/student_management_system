@@ -227,169 +227,6 @@ router.get(
 );
 
 /**
- * GET /questionbank/:id - Tek soru detayı
- */
-router.get(
-    '/:id',
-    authenticate('teacher') as unknown as RequestHandler,
-    async (req: Request, res: Response) => {
-        const { id } = req.params;
-
-        const question = await prisma.questionBank.findUnique({
-            where: { id },
-            include: { subject: true },
-        });
-
-        if (!question) {
-            return res.status(404).json({ error: 'Soru bulunamadı' });
-        }
-
-        return res.json(question);
-    },
-);
-
-/**
- * POST /questionbank - Yeni soru oluştur
- */
-router.post(
-    '/',
-    authenticate('teacher') as unknown as RequestHandler,
-    async (req: Request, res: Response) => {
-        const authReq = req as AuthenticatedRequest;
-        const teacherId = authReq.user!.id;
-        const data = req.body as QuestionBankCreateInput;
-
-        // Validasyon
-        if (!data.subjectId || !data.gradeLevel || !data.topic || !data.text || !data.correctAnswer) {
-            return res.status(400).json({ error: 'Zorunlu alanlar eksik' });
-        }
-
-        // Ders kontrolü
-        const subject = await prisma.subject.findUnique({ where: { id: data.subjectId } });
-        if (!subject) {
-            return res.status(400).json({ error: 'Geçersiz ders ID' });
-        }
-
-        const question = await prisma.questionBank.create({
-            data: {
-                subjectId: data.subjectId,
-                gradeLevel: data.gradeLevel,
-                topic: data.topic,
-                subtopic: data.subtopic,
-                kazanimKodu: data.kazanimKodu,
-                text: data.text,
-                type: data.type as QuestionType,
-                ...(data.choices && { choices: data.choices }),
-                correctAnswer: data.correctAnswer,
-                ...(data.distractorReasons && { distractorReasons: data.distractorReasons }),
-                solutionExplanation: data.solutionExplanation,
-                difficulty: data.difficulty,
-                bloomLevel: data.bloomLevel,
-                estimatedMinutes: data.estimatedMinutes,
-                tags: data.tags || [],
-                source: 'teacher',
-                createdByTeacherId: teacherId,
-                isApproved: true, // Öğretmen tarafından eklenen sorular otomatik onaylı
-                approvedByTeacherId: teacherId,
-            },
-            include: { subject: true },
-        });
-
-
-        return res.status(201).json(question);
-    },
-);
-
-/**
- * PUT /questionbank/:id - Soru güncelle
- */
-router.put(
-    '/:id',
-    authenticate('teacher') as unknown as RequestHandler,
-    async (req: Request, res: Response) => {
-        const { id } = req.params;
-        const data = req.body as Partial<QuestionBankCreateInput>;
-
-        const existing = await prisma.questionBank.findUnique({ where: { id } });
-        if (!existing) {
-            return res.status(404).json({ error: 'Soru bulunamadı' });
-        }
-
-        const question = await prisma.questionBank.update({
-            where: { id },
-            data: {
-                ...(data.subjectId && { subjectId: data.subjectId }),
-                ...(data.gradeLevel && { gradeLevel: data.gradeLevel }),
-                ...(data.topic && { topic: data.topic }),
-                ...(data.subtopic !== undefined && { subtopic: data.subtopic }),
-                ...(data.kazanimKodu !== undefined && { kazanimKodu: data.kazanimKodu }),
-                ...(data.text && { text: data.text }),
-                ...(data.type && { type: data.type as QuestionType }),
-                ...(data.choices !== undefined && { choices: data.choices }),
-                ...(data.correctAnswer && { correctAnswer: data.correctAnswer }),
-                ...(data.distractorReasons !== undefined && { distractorReasons: data.distractorReasons }),
-                ...(data.solutionExplanation !== undefined && { solutionExplanation: data.solutionExplanation }),
-                ...(data.difficulty && { difficulty: data.difficulty }),
-                ...(data.bloomLevel !== undefined && { bloomLevel: data.bloomLevel }),
-                ...(data.estimatedMinutes !== undefined && { estimatedMinutes: data.estimatedMinutes }),
-                ...(data.tags !== undefined && { tags: data.tags }),
-            },
-            include: { subject: true },
-        });
-
-        return res.json(question);
-    },
-);
-
-/**
- * DELETE /questionbank/:id - Soru sil
- */
-router.delete(
-    '/:id',
-    authenticate('teacher') as unknown as RequestHandler,
-    async (req: Request, res: Response) => {
-        const { id } = req.params;
-
-        const existing = await prisma.questionBank.findUnique({ where: { id } });
-        if (!existing) {
-            return res.status(404).json({ error: 'Soru bulunamadı' });
-        }
-
-        await prisma.questionBank.delete({ where: { id } });
-        return res.json({ success: true, message: 'Soru silindi' });
-    },
-);
-
-/**
- * POST /questionbank/:id/approve - Soruyu onayla
- */
-router.post(
-    '/:id/approve',
-    authenticate('teacher') as unknown as RequestHandler,
-    async (req: Request, res: Response) => {
-        const authReq = req as AuthenticatedRequest;
-        const { id } = req.params;
-        const teacherId = authReq.user!.id;
-
-        const existing = await prisma.questionBank.findUnique({ where: { id } });
-        if (!existing) {
-            return res.status(404).json({ error: 'Soru bulunamadı' });
-        }
-
-        const question = await prisma.questionBank.update({
-            where: { id },
-            data: {
-                isApproved: true,
-                approvedByTeacherId: teacherId,
-            },
-            include: { subject: true },
-        });
-
-        return res.json(question);
-    },
-);
-
-/**
  * POST /questionbank/generate - AI ile soru üret
  */
 router.post(
@@ -559,7 +396,8 @@ Yanıtını sadece JSON olarak ver, başka açıklama ekleme:
  */
 router.get(
     '/subjects/list',
-    authenticate('teacher') as unknown as RequestHandler,
+    // Hem öğretmen hem de admin paneli bu listeyi kullanabildiği için rol kısıtı koymuyoruz
+    authenticate() as unknown as RequestHandler,
     async (_req: Request, res: Response) => {
         const subjects = await prisma.subject.findMany({
             orderBy: { name: 'asc' },
@@ -638,6 +476,44 @@ router.get(
 );
 
 /**
+ * GET /curriculum/subjects - Sınıfa göre dersler
+ */
+router.get(
+    '/curriculum/subjects',
+    authenticate('teacher') as unknown as RequestHandler,
+    async (req: Request, res: Response) => {
+        const { gradeLevel } = req.query;
+
+        if (!gradeLevel) {
+            return res.status(400).json({ error: 'gradeLevel parametresi zorunludur' });
+        }
+
+        // Belirtilen sınıf seviyesindeki tüm dersleri getir
+        const subjects = await prisma.curriculumTopic.findMany({
+            where: { gradeLevel: String(gradeLevel) },
+            select: {
+                subject: {
+                    select: {
+                        id: true,
+                        name: true,
+                    },
+                },
+            },
+            distinct: ['subjectId'],
+        });
+
+        // Benzersiz dersleri döndür
+        const uniqueSubjects = subjects
+            .map((item: any) => item.subject)
+            .filter((subject: any, index: number, self: any[]) =>
+                index === self.findIndex((s: any) => s.id === subject.id)
+            );
+
+        return res.json(uniqueSubjects);
+    },
+);
+
+/**
  * GET /curriculum/topics - Müfredat konuları
  */
 router.get(
@@ -659,5 +535,172 @@ router.get(
         return res.json(topics);
     },
 );
+
+
+
+/**
+ * GET /questionbank/:id - Tek soru detayı
+ */
+router.get(
+    '/:id',
+    authenticate('teacher') as unknown as RequestHandler,
+    async (req: Request, res: Response) => {
+        const { id } = req.params;
+
+        const question = await prisma.questionBank.findUnique({
+            where: { id },
+            include: { subject: true },
+        });
+
+        if (!question) {
+            return res.status(404).json({ error: 'Soru bulunamadı' });
+        }
+
+        return res.json(question);
+    },
+);
+
+/**
+ * POST /questionbank - Yeni soru oluştur
+ */
+router.post(
+    '/',
+    authenticate('teacher') as unknown as RequestHandler,
+    async (req: Request, res: Response) => {
+        const authReq = req as AuthenticatedRequest;
+        const teacherId = authReq.user!.id;
+        const data = req.body as QuestionBankCreateInput;
+
+        // Validasyon
+        if (!data.subjectId || !data.gradeLevel || !data.topic || !data.text || !data.correctAnswer) {
+            return res.status(400).json({ error: 'Zorunlu alanlar eksik' });
+        }
+
+        // Ders kontrolü
+        const subject = await prisma.subject.findUnique({ where: { id: data.subjectId } });
+        if (!subject) {
+            return res.status(400).json({ error: 'Geçersiz ders ID' });
+        }
+
+        const question = await prisma.questionBank.create({
+            data: {
+                subjectId: data.subjectId,
+                gradeLevel: data.gradeLevel,
+                topic: data.topic,
+                subtopic: data.subtopic,
+                kazanimKodu: data.kazanimKodu,
+                text: data.text,
+                type: data.type as QuestionType,
+                ...(data.choices && { choices: data.choices }),
+                correctAnswer: data.correctAnswer,
+                ...(data.distractorReasons && { distractorReasons: data.distractorReasons }),
+                solutionExplanation: data.solutionExplanation,
+                difficulty: data.difficulty,
+                bloomLevel: data.bloomLevel,
+                estimatedMinutes: data.estimatedMinutes,
+                tags: data.tags || [],
+                source: 'teacher',
+                createdByTeacherId: teacherId,
+                isApproved: true, // Öğretmen tarafından eklenen sorular otomatik onaylı
+                approvedByTeacherId: teacherId,
+            },
+            include: { subject: true },
+        });
+
+
+        return res.status(201).json(question);
+    },
+);
+
+/**
+ * PUT /questionbank/:id - Soru güncelle
+ */
+router.put(
+    '/:id',
+    authenticate('teacher') as unknown as RequestHandler,
+    async (req: Request, res: Response) => {
+        const { id } = req.params;
+        const data = req.body as Partial<QuestionBankCreateInput>;
+
+        const existing = await prisma.questionBank.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ error: 'Soru bulunamadı' });
+        }
+
+        const question = await prisma.questionBank.update({
+            where: { id },
+            data: {
+                ...(data.subjectId && { subjectId: data.subjectId }),
+                ...(data.gradeLevel && { gradeLevel: data.gradeLevel }),
+                ...(data.topic && { topic: data.topic }),
+                ...(data.subtopic !== undefined && { subtopic: data.subtopic }),
+                ...(data.kazanimKodu !== undefined && { kazanimKodu: data.kazanimKodu }),
+                ...(data.text && { text: data.text }),
+                ...(data.type && { type: data.type as QuestionType }),
+                ...(data.choices !== undefined && { choices: data.choices }),
+                ...(data.correctAnswer && { correctAnswer: data.correctAnswer }),
+                ...(data.distractorReasons !== undefined && { distractorReasons: data.distractorReasons }),
+                ...(data.solutionExplanation !== undefined && { solutionExplanation: data.solutionExplanation }),
+                ...(data.difficulty && { difficulty: data.difficulty }),
+                ...(data.bloomLevel !== undefined && { bloomLevel: data.bloomLevel }),
+                ...(data.estimatedMinutes !== undefined && { estimatedMinutes: data.estimatedMinutes }),
+                ...(data.tags !== undefined && { tags: data.tags }),
+            },
+            include: { subject: true },
+        });
+
+        return res.json(question);
+    },
+);
+
+/**
+ * DELETE /questionbank/:id - Soru sil
+ */
+router.delete(
+    '/:id',
+    authenticate('teacher') as unknown as RequestHandler,
+    async (req: Request, res: Response) => {
+        const { id } = req.params;
+
+        const existing = await prisma.questionBank.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ error: 'Soru bulunamadı' });
+        }
+
+        await prisma.questionBank.delete({ where: { id } });
+        return res.json({ success: true, message: 'Soru silindi' });
+    },
+);
+
+/**
+ * POST /questionbank/:id/approve - Soruyu onayla
+ */
+router.post(
+    '/:id/approve',
+    authenticate('teacher') as unknown as RequestHandler,
+    async (req: Request, res: Response) => {
+        const authReq = req as AuthenticatedRequest;
+        const { id } = req.params;
+        const teacherId = authReq.user!.id;
+
+        const existing = await prisma.questionBank.findUnique({ where: { id } });
+        if (!existing) {
+            return res.status(404).json({ error: 'Soru bulunamadı' });
+        }
+
+        const question = await prisma.questionBank.update({
+            where: { id },
+            data: {
+                isApproved: true,
+                approvedByTeacherId: teacherId,
+            },
+            include: { subject: true },
+        });
+
+        return res.json(question);
+    },
+);
+
+
 
 export default router;

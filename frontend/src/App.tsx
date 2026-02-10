@@ -65,31 +65,6 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const effectivePanelTitle = isAuthRoute ? null : panelTitle;
   const mainClassName = effectivePanelTitle ? 'main main--dashboard' : 'main main--auth';
 
-  React.useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/357f6865-f318-4b91-9ae0-9d949d093cc6', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        runId: 'ui-layout-1',
-        hypothesisId: 'H1',
-        location: 'App.tsx:Layout',
-        message: 'layout render state',
-        data: {
-          path: location.pathname,
-          hasUser: !!user,
-          role: user?.role ?? null,
-          panelTitle,
-          effectivePanelTitle,
-          isAuthRoute,
-          mainClassName,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-  }, [location.pathname, panelTitle, user]);
-
   return (
     <div>
       <header className="topbar">

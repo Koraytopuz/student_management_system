@@ -70,6 +70,7 @@ import {
   markTeacherMessageRead,
   type CurriculumTopic,
   getCurriculumTopics,
+  getCurriculumSubjects,
 } from './api';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -121,7 +122,13 @@ type TeacherMeetingDraft = {
   type: TeacherMeetingType;
   audience: MeetingAudience;
   selectedStudentIds: string[];
+  /** Canlı dersin hedef sınıf seviyesi ("4"–"12" veya "Mezun") */
+  targetGrade: string;
+  /** Seçilen ders (branş) – başlıkta ve UI'da kullanılır */
+  subjectName?: string;
 };
+
+const ALL_GRADES: string[] = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'];
 
 type AiGeneratedQuestion = {
   index: number;
@@ -269,6 +276,8 @@ export const TeacherDashboard: React.FC = () => {
   const [contentUploading, setContentUploading] = useState(false);
   const [curriculumTopics, setCurriculumTopics] = useState<CurriculumTopic[]>([]);
   const [curriculumTopicsLoading, setCurriculumTopicsLoading] = useState(false);
+  const [curriculumSubjects, setCurriculumSubjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [curriculumSubjectsLoading, setCurriculumSubjectsLoading] = useState(false);
   const [announcements, setAnnouncements] = useState<TeacherAnnouncement[]>([]);
   const [announcementDraft, setAnnouncementDraft] = useState({
     title: '',
@@ -306,6 +315,8 @@ export const TeacherDashboard: React.FC = () => {
     type: 'class',
     audience: 'all',
     selectedStudentIds: [],
+    targetGrade: '',
+    subjectName: '',
   });
   const [liveClass, setLiveClass] = useState<{
     url: string;
@@ -313,6 +324,35 @@ export const TeacherDashboard: React.FC = () => {
     title?: string;
     meetingId?: string;
   } | null>(null);
+
+  // Öğretmenin atanmış sınıf seviyeleri ve branşları (login yanıtından)
+  const teacherAssignedGrades: string[] = useMemo(() => {
+    if (!user || user.role !== 'teacher') return ALL_GRADES;
+
+    const fromUser = (user as any).assignedGrades as string[] | undefined;
+    const fromStudents = Array.from(
+      new Set(
+        students
+          .map((s) => s.gradeLevel)
+          .filter((g): g is string => !!g),
+      ),
+    );
+
+    const combined = [...(fromUser ?? []), ...fromStudents];
+    const normalized = Array.from(
+      new Set(
+        combined.filter((g) => ALL_GRADES.includes(g)),
+      ),
+    );
+
+    return normalized.length > 0 ? normalized : ALL_GRADES;
+  }, [user, students]);
+
+  const teacherSubjects: string[] = useMemo(() => {
+    if (!user || user.role !== 'teacher') return [];
+    const areas = (user as any).subjectAreas as string[] | undefined;
+    return areas ?? [];
+  }, [user]);
 
   // Bildirimler (öğretmen)
   const [notifications, setNotifications] = useState<TeacherNotification[]>([]);
@@ -618,6 +658,11 @@ export const TeacherDashboard: React.FC = () => {
       return;
     }
 
+    if (!meetingDraft.targetGrade) {
+      setMeetingError('Lütfen önce hedef sınıfı seçin.');
+      return;
+    }
+
     const scheduledDate = new Date(meetingDraft.scheduledAt);
     if (Number.isNaN(scheduledDate.getTime())) {
       setMeetingError('Geçerli bir tarih/saat girin.');
@@ -635,25 +680,48 @@ export const TeacherDashboard: React.FC = () => {
       return;
     }
 
+    // Hedef sınıftaki öğrencileri filtrele
+    const eligibleStudents = students.filter(
+      (s) => s.gradeLevel === meetingDraft.targetGrade,
+    );
+
+    if (eligibleStudents.length === 0) {
+      setMeetingError('Seçilen sınıfa ait kayıtlı öğrenci bulunamadı.');
+      return;
+    }
+
     let targetStudentIds: string[] = [];
     if (meetingDraft.audience === 'selected') {
-      targetStudentIds = meetingDraft.selectedStudentIds;
+      targetStudentIds = meetingDraft.selectedStudentIds.filter((id) =>
+        eligibleStudents.some((s) => s.id === id),
+      );
       if (targetStudentIds.length === 0) {
-        setMeetingError('Lütfen en az bir öğrenci seçin.');
+        setMeetingError('Lütfen bu sınıftan en az bir öğrenci seçin.');
         return;
       }
     } else {
-      targetStudentIds = students.map((s) => s.id);
-      if (targetStudentIds.length === 0) {
-        setMeetingError('Sistemde kayıtlı öğrenci bulunamadı.');
-        return;
-      }
+      targetStudentIds = eligibleStudents.map((s) => s.id);
     }
+
+    const prefixParts: string[] = [];
+    if (meetingDraft.targetGrade) {
+      prefixParts.push(
+        meetingDraft.targetGrade === 'Mezun'
+          ? 'Mezun'
+          : `${meetingDraft.targetGrade}. Sınıf`,
+      );
+    }
+    if (meetingDraft.subjectName) {
+      prefixParts.push(meetingDraft.subjectName);
+    }
+    const prefix = prefixParts.length ? `[${prefixParts.join(' · ')}] ` : '';
+
+    const baseTitle = `${prefix}${title}`;
 
     const composedTitle =
       meetingDraft.description.trim().length > 0
-        ? `${title} – ${meetingDraft.description.trim()}`
-        : title;
+        ? `${baseTitle} – ${meetingDraft.description.trim()}`
+        : baseTitle;
 
     setMeetingSaving(true);
     setMeetingError(null);
@@ -674,6 +742,7 @@ export const TeacherDashboard: React.FC = () => {
           durationMinutes: meetingDraft.durationMinutes,
           // Artık harici link kullanmıyoruz; dahili canlı ders altyapısı (LiveKit) kullanılacak.
           meetingUrl: '',
+          targetGrade: meetingDraft.targetGrade,
         });
         // Yeni oluşturulan toplantı için isteğe bağlı otomatik canlı ders başlatma
         try {
@@ -796,6 +865,36 @@ export const TeacherDashboard: React.FC = () => {
         setCurriculumTopicsLoading(false);
       });
   }, [token, contentDraft.subjectId, contentDraft.gradeLevel]);
+
+  // Sınıf seviyesi değiştiğinde o sınıfa ait dersleri getir
+  useEffect(() => {
+    if (!token || !contentDraft.gradeLevel) {
+      setCurriculumSubjects([]);
+      return;
+    }
+
+    setCurriculumSubjectsLoading(true);
+    getCurriculumSubjects(token, contentDraft.gradeLevel)
+      .then((subjects) => {
+        setCurriculumSubjects(subjects);
+        // Eğer seçili ders listede yoksa ilkini seç veya boşalt
+        if (subjects.length > 0) {
+           // Mevcut seçim listede var mı?
+           const exists = subjects.some(s => s.id === contentDraft.subjectId);
+           if (!exists) {
+             setContentDraft(prev => ({ ...prev, subjectId: subjects[0].id }));
+           }
+        } else {
+           setContentDraft(prev => ({ ...prev, subjectId: '' }));
+        }
+      })
+      .catch(() => {
+        setCurriculumSubjects([]);
+      })
+      .finally(() => {
+        setCurriculumSubjectsLoading(false);
+      });
+  }, [token, contentDraft.gradeLevel]);
 
   const handleCreateAnnouncement = async () => {
     if (!token || announcementCreating) return;
@@ -1419,6 +1518,8 @@ export const TeacherDashboard: React.FC = () => {
           uploadingVideo={contentUploading}
           curriculumTopics={curriculumTopics}
           loadingCurriculumTopics={curriculumTopicsLoading}
+          curriculumSubjects={curriculumSubjects}
+          loadingCurriculumSubjects={curriculumSubjectsLoading}
         />
       )}
       {activeTab === 'live' && (
@@ -1594,6 +1695,8 @@ export const TeacherDashboard: React.FC = () => {
             type: 'class',
             audience: 'all',
             selectedStudentIds: [],
+            targetGrade: '',
+            subjectName: '',
           });
         }}
         draft={meetingDraft}
@@ -1602,6 +1705,8 @@ export const TeacherDashboard: React.FC = () => {
         saving={meetingSaving}
         error={meetingError}
         students={students}
+        allowedGrades={teacherAssignedGrades}
+        teacherSubjects={teacherSubjects}
       />
       {liveClass && (
         <LiveClassOverlay
@@ -1610,6 +1715,7 @@ export const TeacherDashboard: React.FC = () => {
           title={liveClass.title}
           role="teacher"
           meetingId={liveClass.meetingId}
+          authToken={token}
           onClose={() => setLiveClass(null)}
         />
       )}
@@ -2224,6 +2330,10 @@ const TeacherTests: React.FC<{
   const [aiCurriculumTopics, setAiCurriculumTopics] = useState<CurriculumTopic[]>([]);
   const [aiCurriculumTopicsLoading, setAiCurriculumTopicsLoading] = useState(false);
 
+  // AI için Dersler (Subjects)
+  const [aiGenSubjects, setAiGenSubjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [aiGenSubjectsLoading, setAiGenSubjectsLoading] = useState(false);
+
   useEffect(() => {
     if (!token) return;
     if (!aiGenSubject || !aiGenGrade) {
@@ -2239,6 +2349,27 @@ const TeacherTests: React.FC<{
       .catch(() => setAiCurriculumTopics([]))
       .finally(() => setAiCurriculumTopicsLoading(false));
   }, [token, aiGenSubject, aiGenGrade]);
+
+  // Sınıf seviyesi değiştiğinde AI için dersleri getir
+  useEffect(() => {
+    if (!token || !aiGenGrade) {
+      setAiGenSubjects([]);
+      return;
+    }
+    setAiGenSubjectsLoading(true);
+    getCurriculumSubjects(token, aiGenGrade)
+      .then((subjects) => {
+        setAiGenSubjects(subjects);
+        if (subjects.length > 0) {
+           const exists = subjects.some(s => s.id === aiGenSubject);
+           if (!exists) {
+             setAiGenSubject(subjects[0].id);
+           }
+        }
+      })
+      .catch(() => setAiGenSubjects([]))
+      .finally(() => setAiGenSubjectsLoading(false));
+  }, [token, aiGenGrade]);
   const [aiGenAttachment, setAiGenAttachment] = useState<{ filename: string; mimeType: string; data: string } | null>(null);
   const [aiGenAnswerKey, setAiGenAnswerKey] = useState<Record<string, string> | null>(null);
   const [aiGenSavingAsTest, setAiGenSavingAsTest] = useState(false);
@@ -2481,10 +2612,22 @@ const TeacherTests: React.FC<{
               <option value="AYT">AYT</option>
             </select>
             <select value={aiGenSubject} onChange={(e) => setAiGenSubject(e.target.value)}>
-              <option value="sub_matematik">Matematik</option>
-              <option value="sub_fizik">Fizik</option>
-              <option value="sub_biyoloji">Biyoloji</option>
-              <option value="sub_kimya">Kimya</option>
+              {aiGenSubjectsLoading ? (
+                <option>Yükleniyor...</option>
+              ) : aiGenSubjects.length > 0 ? (
+                aiGenSubjects.map((sub) => (
+                  <option key={sub.id} value={sub.id}>
+                    {sub.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="sub_matematik">Matematik</option>
+                  <option value="sub_fizik">Fizik</option>
+                  <option value="sub_biyoloji">Biyoloji</option>
+                  <option value="sub_kimya">Kimya</option>
+                </>
+              )}
             </select>
             
             {(aiCurriculumTopics.length > 0) ? (
@@ -2509,7 +2652,7 @@ const TeacherTests: React.FC<{
             )}
 
             <select value={aiGenCount} onChange={(e) => setAiGenCount(Number(e.target.value))}>
-              {[3, 5, 10, 15, 20].map((n) => (
+              {[5, 10, 15, 20, 30, 40].map((n) => (
                 <option key={n} value={n}>{n} soru</option>
               ))}
             </select>
@@ -2999,6 +3142,8 @@ const TeacherContent: React.FC<{
   uploadingVideo?: boolean;
   curriculumTopics: CurriculumTopic[];
   loadingCurriculumTopics?: boolean;
+  curriculumSubjects?: Array<{ id: string; name: string }>;
+  loadingCurriculumSubjects?: boolean;
 }> = ({
   contents,
   draft,
@@ -3009,6 +3154,8 @@ const TeacherContent: React.FC<{
   uploadingVideo,
   curriculumTopics,
   loadingCurriculumTopics,
+  curriculumSubjects = [],
+  loadingCurriculumSubjects = false,
 }) => (
   <GlassCard title="İçerik Kütüphanesi" subtitle="Yeni içerik oluştur">
       <div className="list-stack" style={{ marginBottom: '1rem' }}>
@@ -3060,10 +3207,25 @@ const TeacherContent: React.FC<{
               fontSize: '0.9rem',
             }}
           >
-            <option value="sub_matematik">Matematik</option>
-            <option value="sub_fizik">Fizik</option>
-            <option value="sub_biyoloji">Biyoloji</option>
-            <option value="sub_kimya">Kimya</option>
+            {loadingCurriculumSubjects ? (
+              <option>Dersler yükleniyor...</option>
+            ) : curriculumSubjects.length > 0 ? (
+              <>
+                 {curriculumSubjects.map((sub) => (
+                   <option key={sub.id} value={sub.id}>
+                     {sub.name}
+                   </option>
+                 ))}
+                 {/* Fallback veya ek seçenekler istenirse buraya eklenebilir */}
+              </>
+            ) : (
+              <>
+                <option value="sub_matematik">Matematik</option>
+                <option value="sub_fizik">Fizik</option>
+                <option value="sub_biyoloji">Biyoloji</option>
+                <option value="sub_kimya">Kimya</option>
+              </>
+            )}
           </select>
 
             {draft.gradeLevel && draft.subjectId && (
@@ -3731,7 +3893,22 @@ const TeacherMeetingModal: React.FC<{
   saving: boolean;
   error: string | null;
   students: TeacherStudent[];
-}> = ({ open, onClose, draft, onDraftChange, onSubmit, saving, error, students }) => {
+  /** Öğretmenin girebildiği sınıf seviyeleri */
+  allowedGrades: string[];
+  /** Öğretmenin atanmış branşları (ders adları) */
+  teacherSubjects: string[];
+}> = ({
+  open,
+  onClose,
+  draft,
+  onDraftChange,
+  onSubmit,
+  saving,
+  error,
+  students,
+  allowedGrades,
+  teacherSubjects,
+}) => {
   if (!open) return null;
 
   const handleFieldChange = <K extends keyof TeacherMeetingDraft>(key: K, value: TeacherMeetingDraft[K]) => {
@@ -3849,6 +4026,38 @@ const TeacherMeetingModal: React.FC<{
               style={{ resize: 'vertical' }}
             />
             <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+              Hedef Sınıf:
+              <select
+                value={draft.targetGrade}
+                onChange={(event) => handleFieldChange('targetGrade', event.target.value)}
+                style={{ width: '100%', marginTop: '0.2rem' }}
+                required
+              >
+                <option value="">Seçin</option>
+                {allowedGrades.map((grade) => (
+                  <option key={grade} value={grade}>
+                    {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+              Ders / Branş:
+              <select
+                value={draft.subjectName ?? ''}
+                onChange={(event) => handleFieldChange('subjectName', event.target.value || undefined)}
+                style={{ width: '100%', marginTop: '0.2rem' }}
+                disabled={teacherSubjects.length === 0}
+              >
+                <option value="">Seçin</option>
+                {teacherSubjects.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
               Tarih ve saat:
               <input
                 type="datetime-local"
@@ -3962,6 +4171,8 @@ const TeacherMeetingModal: React.FC<{
                     <div className="empty-state">Henüz tanımlı öğrenci bulunmuyor.</div>
                   )}
                   {students.map((student) => {
+                    const sameGrade = draft.targetGrade ? student.gradeLevel === draft.targetGrade : true;
+                    if (!sameGrade) return null;
                     const checked = draft.selectedStudentIds.includes(student.id);
                     return (
                       <label

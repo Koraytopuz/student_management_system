@@ -11,6 +11,7 @@ import '@livekit/components-styles';
 import type { Participant } from 'livekit-client';
 import {
   BarChart2,
+  ClipboardList,
   Hand,
   Maximize,
   MessageCircle,
@@ -25,7 +26,7 @@ import {
   VideoOff,
   VolumeX,
 } from 'lucide-react';
-import { muteAllInMeeting } from './api';
+import { getMeetingAttendanceStudents, muteAllInMeeting, submitMeetingAttendance } from './api';
 
 // (İkon tanımları kaldırıldı, lucide-react kullanılacak)
 
@@ -35,6 +36,8 @@ type LiveClassOverlayProps = {
   title?: string;
   role?: 'teacher' | 'student';
   meetingId?: string;
+  /** Backend API için auth token (localStorage'dan bağımsız) */
+  authToken?: string;
   onClose: () => void;
 };
 
@@ -121,6 +124,7 @@ export const LiveClassOverlay: React.FC<LiveClassOverlayProps> = ({
   title,
   role,
   meetingId,
+  authToken,
   onClose,
 }) => {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -147,7 +151,7 @@ export const LiveClassOverlay: React.FC<LiveClassOverlayProps> = ({
           role={role}
           title={title}
           meetingId={meetingId}
-          token={token}
+          authToken={authToken}
           onClose={onClose}
         />
       </LiveKitRoom>
@@ -159,9 +163,9 @@ const LiveClassInner: React.FC<{
   role?: 'teacher' | 'student';
   title?: string;
   meetingId?: string;
-  token?: string;
+  authToken?: string;
   onClose: () => void;
-}> = ({ role, title, meetingId, token, onClose }) => {
+}> = ({ role, title, meetingId, authToken, onClose }) => {
   // Room context available if needed
   useRoomContext();
   const { localParticipant } = useLocalParticipant();
@@ -216,6 +220,14 @@ const LiveClassInner: React.FC<{
   const [pollCreateQuestion, setPollCreateQuestion] = useState('');
   const [pollCreateOptions, setPollCreateOptions] = useState(['', '']);
   const [participantJoinTimes, setParticipantJoinTimes] = useState<Record<string, number>>({});
+
+  // Yoklama modal state
+  const [attendanceModalOpen, setAttendanceModalOpen] = useState(false);
+  const [attendanceStudents, setAttendanceStudents] = useState<Array<{ id: string; name: string }>>([]);
+  const [attendanceMeetingTitle, setAttendanceMeetingTitle] = useState('');
+  const [attendancePresent, setAttendancePresent] = useState<Record<string, boolean>>({});
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceSaving, setAttendanceSaving] = useState(false);
 
   // Participant data
   const remoteParticipants = useMemo(
@@ -289,30 +301,36 @@ const LiveClassInner: React.FC<{
           'Authorization': `Bearer ${token}`,
         },
       });
-      if (response.ok) {
-        const data = await response.json() as Array<{
-          assignmentId: string;
-          studentId: string;
-          status: string;
-        }>;
-        
-        const stats: Record<string, { completed: number; total: number }> = {};
-        
-        // Group by student
-        data.forEach(item => {
-          if (!stats[item.studentId]) {
-            stats[item.studentId] = { completed: 0, total: 0 };
-          }
-          stats[item.studentId].total += 1;
-          if (item.status === 'completed') {
-            stats[item.studentId].completed += 1;
-          }
-        });
-        
-        setStudentStats(stats);
+      // Sadece JSON dönen ve başarılı cevapları işle
+      if (!response.ok) return;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        // Geliştirme sırasında HTML veya başka bir cevap geldiyse sessizce yok say
+        return;
       }
+
+      const data = await response.json() as Array<{
+        assignmentId: string;
+        studentId: string;
+        status: string;
+      }>;
+
+      const stats: Record<string, { completed: number; total: number }> = {};
+
+      // Group by student
+      data.forEach(item => {
+        if (!stats[item.studentId]) {
+          stats[item.studentId] = { completed: 0, total: 0 };
+        }
+        stats[item.studentId].total += 1;
+        if (item.status === 'completed') {
+          stats[item.studentId].completed += 1;
+        }
+      });
+
+      setStudentStats(stats);
     } catch (error) {
-      console.error('Failed to fetch student stats:', error);
+      // Bu istatistikler kritik değil; sessizce yok sayıyoruz
     }
   }, [role]);
 
@@ -772,12 +790,12 @@ const LiveClassInner: React.FC<{
 
   // Mute all (teacher) – LiveKit RoomService ile gerçek muting
   const muteAll = async () => {
-    if (!meetingId || !token || role !== 'teacher') {
+    if (!meetingId || !authToken || role !== 'teacher') {
       pushInfoToast('Ses kapatma işlemi yapılamadı');
       return;
     }
     try {
-      const res = await muteAllInMeeting(token, meetingId);
+      const res = await muteAllInMeeting(authToken, meetingId);
       pushInfoToast(
         res.muted > 0
           ? `${res.muted} katılımcının sesi kapatıldı`
@@ -787,6 +805,61 @@ const LiveClassInner: React.FC<{
       pushInfoToast('Ses kapatma işlemi başarısız oldu');
     }
   };
+
+  // Yoklama modal – aç ve derse kayıtlı öğrencileri getir, aktif katılımcıları varsayılan Geldi yap
+  const openAttendanceModal = useCallback(async () => {
+    if (!meetingId || role !== 'teacher') return;
+    setAttendanceModalOpen(true);
+    setAttendanceLoading(true);
+    try {
+      if (!authToken) {
+        pushInfoToast('Oturum bulunamadı');
+        setAttendanceLoading(false);
+        return;
+      }
+      const data = await getMeetingAttendanceStudents(authToken, meetingId);
+      setAttendanceStudents(data.students);
+      setAttendanceMeetingTitle(data.meetingTitle);
+
+      const activeParticipantIds = new Set(
+        remoteParticipants.map((p) => p.id),
+      );
+      const initial: Record<string, boolean> = {};
+      data.students.forEach((s) => {
+        initial[s.id] = activeParticipantIds.has(s.id);
+      });
+      setAttendancePresent(initial);
+    } catch (err) {
+      console.error('Yoklama öğrencileri yüklenemedi:', err);
+      pushInfoToast('Yoklama listesi yüklenemedi');
+    } finally {
+      setAttendanceLoading(false);
+    }
+  }, [meetingId, role, remoteParticipants, authToken, pushInfoToast]);
+
+  const saveAttendance = useCallback(async () => {
+    if (!meetingId || role !== 'teacher') return;
+    setAttendanceSaving(true);
+    try {
+      if (!authToken) {
+        pushInfoToast('Oturum bulunamadı');
+        setAttendanceSaving(false);
+        return;
+      }
+      const attendance = attendanceStudents.map((s) => ({
+        studentId: s.id,
+        present: attendancePresent[s.id] ?? true,
+      }));
+      await submitMeetingAttendance(authToken, meetingId, attendance);
+      pushInfoToast('Yoklama kaydedildi. Velilere bildirim gönderildi.');
+      setAttendanceModalOpen(false);
+    } catch (err) {
+      console.error('Yoklama kaydedilemedi:', err);
+      pushInfoToast('Yoklama kaydedilemedi');
+    } finally {
+      setAttendanceSaving(false);
+    }
+  }, [meetingId, role, attendanceStudents, attendancePresent, authToken, pushInfoToast]);
 
   // Meeting code
   const meetingCode = useMemo(() => {
@@ -1263,6 +1336,96 @@ const LiveClassInner: React.FC<{
           </div>
         )}
 
+        {/* Yoklama Modal (Teacher) */}
+        {role === 'teacher' && attendanceModalOpen && (
+          <div className="participants-panel" style={{ right: 0, left: 'auto', maxWidth: 420 }}>
+            <div className="participants-header">
+              <span className="participants-title">Yoklama Al</span>
+              <button
+                className="participants-close"
+                onClick={() => setAttendanceModalOpen(false)}
+              >
+                <span style={{ fontSize: '18px', fontWeight: 'bold' }}>✕</span>
+              </button>
+            </div>
+            <div style={{ padding: '1rem', overflowY: 'auto' }}>
+              {attendanceLoading ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: '#9aa0a6' }}>
+                  Yükleniyor...
+                </div>
+              ) : attendanceStudents.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: '#9aa0a6' }}>
+                  Bu derse kayıtlı öğrenci bulunamadı.
+                </div>
+              ) : (
+                <>
+                  <p style={{ margin: '0 0 1rem', fontSize: '0.9rem', color: '#9aa0a6' }}>
+                    {attendanceMeetingTitle}
+                  </p>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    {attendanceStudents.map((student) => (
+                      <div
+                        key={student.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '0.75rem 1rem',
+                          borderRadius: 12,
+                          background: 'rgba(15,23,42,0.6)',
+                          border: '1px solid rgba(51,65,85,0.5)',
+                        }}
+                      >
+                        <span style={{ fontWeight: 500, color: '#e2e8f0' }}>
+                          {student.name}
+                        </span>
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            color: attendancePresent[student.id] ? '#22c55e' : '#ef4444',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={attendancePresent[student.id] ?? true}
+                            onChange={(e) =>
+                              setAttendancePresent((prev) => ({
+                                ...prev,
+                                [student.id]: e.target.checked,
+                              }))
+                            }
+                            style={{ cursor: 'pointer', width: 18, height: 18 }}
+                          />
+                          {attendancePresent[student.id] !== false ? 'Geldi' : 'Gelmedi'}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={saveAttendance}
+                    disabled={attendanceSaving}
+                    style={{ marginTop: '1rem', width: '100%' }}
+                  >
+                    {attendanceSaving ? 'Kaydediliyor...' : 'Kaydet'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Private Message Modal */}
         {privateMessageTarget && (
           <div className="private-message-modal" onClick={() => setPrivateMessageTarget(null)}>
@@ -1381,6 +1544,22 @@ const LiveClassInner: React.FC<{
             title="Anket"
           >
             <BarChart2 size={24} strokeWidth={2} />
+          </button>
+        )}
+
+        {role === 'teacher' && meetingId && (
+          <button
+            className={`control-btn ${attendanceModalOpen ? 'control-btn--active' : ''}`}
+            onClick={() => {
+              if (attendanceModalOpen) {
+                setAttendanceModalOpen(false);
+              } else {
+                openAttendanceModal();
+              }
+            }}
+            title="Yoklama Al"
+          >
+            <ClipboardList size={24} strokeWidth={2} />
           </button>
         )}
 

@@ -341,7 +341,7 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
         },
         ...prev,
       ]);
-      setSelectedStudyPlanId((current) => current ?? res.planId);
+      setSelectedStudyPlanId(res.planId);
     } catch (err) {
       setStudyPlanResult(
         err instanceof Error ? err.message : 'Çalışma planı oluşturulamadı.',
@@ -1020,7 +1020,10 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
                   <button
                     type="button"
                     className="ghost-btn"
-                    onClick={handleDownloadStudyPlanPdf}
+                    onClick={() => {
+                      if (selectedStudyPlanId) handleDownloadStudyPlanPdf(selectedStudyPlanId);
+                    }}
+                    disabled={!selectedStudyPlanId}
                     style={{
                       border: '1px solid rgba(148,163,184,0.9)',
                       background: 'rgba(15,23,42,0.9)',

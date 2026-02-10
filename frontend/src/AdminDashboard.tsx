@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification } from './api';
+import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification, getSubjectsList } from './api';
 import { useAuth } from './AuthContext';
 import {
   DashboardLayout,
@@ -20,12 +20,16 @@ interface Teacher {
   id: string;
   name: string;
   email: string;
+  subjectAreas?: string[];
+  assignedGrades?: string[];
 }
 
 interface Student {
   id: string;
   name: string;
   email: string;
+   gradeLevel?: string;
+   parentPhone?: string;
 }
 
 interface Parent {
@@ -48,6 +52,28 @@ interface Complaint {
   closedAt?: string;
 }
 
+function normalizeParentPhoneInput(raw: string): string | null {
+  if (!raw) return null;
+  let digits = raw.replace(/\D+/g, '');
+  if (digits.length > 10) {
+    digits = digits.slice(-10);
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+  if (digits.length !== 10 || !digits.startsWith('5')) {
+    return null;
+  }
+  return digits;
+}
+
+function formatParentPhoneForDisplay(phone?: string): string {
+  if (!phone) return '';
+  const digits = phone.replace(/\D+/g, '');
+  if (digits.length !== 10) return phone;
+  return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 8)} ${digits.slice(8)}`;
+}
+
 export const AdminDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
   const [summary, setSummary] = useState<AdminSummary | null>(null);
@@ -60,12 +86,16 @@ export const AdminDashboard: React.FC = () => {
   const [newTeacher, setNewTeacher] = useState({
     name: '',
     email: '',
-    subjectAreas: '',
+    password: '',
+    subjectAreas: [] as string[],
+    assignedGrades: [] as string[],
   });
   const [newStudent, setNewStudent] = useState({
     name: '',
     email: '',
     gradeLevel: '',
+    parentPhone: '',
+    password: '',
   });
   const [newParent, setNewParent] = useState({
     name: '',
@@ -75,6 +105,24 @@ export const AdminDashboard: React.FC = () => {
     parentId: '',
     studentId: '',
   });
+
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editStudent, setEditStudent] = useState<{
+    name: string;
+    email: string;
+    gradeLevel: string;
+    parentPhone: string;
+    password: string;
+  }>({
+    name: '',
+    email: '',
+    gradeLevel: '',
+    parentPhone: '',
+    password: '',
+  });
+
+  const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
 
   type AdminTab = 'overview' | 'teachers' | 'students' | 'parents' | 'notifications' | 'complaints';
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
@@ -179,6 +227,31 @@ export const AdminDashboard: React.FC = () => {
     fetchAll();
   }, [token]);
 
+  // Tüm dersleri listele (branş seçimi için)
+  useEffect(() => {
+    if (!token) return;
+    setSubjectsLoading(true);
+    getSubjectsList(token)
+      .then((list) => {
+        // Aynı ders ismi birden fazla kez gelirse tekilleştir
+        // ve Sosyoloji / Mantık / Psikoloji derslerini hariç tut
+        const blocked = new Set(
+          ['sosyoloji', 'mantık', 'psikoloji'].map((n) => n.toLowerCase()),
+        );
+        const byName = new Map<string, { id: string; name: string }>();
+        list.forEach((s) => {
+          const lower = s.name.toLowerCase();
+          if (blocked.has(lower)) return;
+          if (!byName.has(lower)) {
+            byName.set(lower, { id: s.id, name: s.name });
+          }
+        });
+        setSubjects(Array.from(byName.values()));
+      })
+      .catch(() => setSubjects([]))
+      .finally(() => setSubjectsLoading(false));
+  }, [token]);
+
   useEffect(() => {
     if (!token || activeTab !== 'notifications') return;
     setAdminNotificationsLoading(true);
@@ -192,6 +265,10 @@ export const AdminDashboard: React.FC = () => {
     e.preventDefault();
     if (!token) return;
     try {
+      if (!newTeacher.password || newTeacher.password.length < 4) {
+        setError('Öğretmen şifresi en az 4 karakter olmalıdır.');
+        return;
+      }
       const created = await apiRequest<Teacher>(
         '/admin/teachers',
         {
@@ -200,12 +277,14 @@ export const AdminDashboard: React.FC = () => {
             name: newTeacher.name,
             email: newTeacher.email,
             subjectAreas: newTeacher.subjectAreas,
+            assignedGrades: newTeacher.assignedGrades,
+            password: newTeacher.password,
           }),
         },
         token,
       );
       setTeachers((prev) => [...prev, created]);
-      setNewTeacher({ name: '', email: '', subjectAreas: '' });
+      setNewTeacher({ name: '', email: '', password: '', subjectAreas: [], assignedGrades: [] });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -215,6 +294,21 @@ export const AdminDashboard: React.FC = () => {
     e.preventDefault();
     if (!token) return;
     try {
+      let normalizedParentPhone: string | undefined;
+      if (newStudent.parentPhone.trim()) {
+        const cleaned = normalizeParentPhoneInput(newStudent.parentPhone);
+        if (!cleaned) {
+          setError('Geçersiz veli telefon numarası. Lütfen 555 123 45 67 formatında girin.');
+          return;
+        }
+        normalizedParentPhone = cleaned;
+      }
+
+      if (!newStudent.password || newStudent.password.length < 4) {
+        setError('Öğrenci şifresi en az 4 karakter olmalıdır.');
+        return;
+      }
+
       const created = await apiRequest<Student>(
         '/admin/students',
         {
@@ -223,12 +317,14 @@ export const AdminDashboard: React.FC = () => {
             name: newStudent.name,
             email: newStudent.email,
             gradeLevel: newStudent.gradeLevel,
+            parentPhone: normalizedParentPhone,
+            password: newStudent.password,
           }),
         },
         token,
       );
       setStudents((prev) => [...prev, created]);
-      setNewStudent({ name: '', email: '', gradeLevel: '' });
+      setNewStudent({ name: '', email: '', gradeLevel: '', parentPhone: '', password: '' });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -245,6 +341,7 @@ export const AdminDashboard: React.FC = () => {
           body: JSON.stringify({
             name: newParent.name,
             email: newParent.email,
+            password: 'password123',
           }),
         },
         token,
@@ -271,6 +368,54 @@ export const AdminDashboard: React.FC = () => {
       setParents((prev) =>
         prev.map((p) => (p.id === updatedParent.id ? updatedParent : p)),
       );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  function startEditStudent(s: Student) {
+    setEditingStudentId(s.id);
+    setEditStudent({
+      name: s.name,
+      email: s.email,
+      gradeLevel: s.gradeLevel ?? '',
+      parentPhone: s.parentPhone ? formatParentPhoneForDisplay(s.parentPhone) : '',
+      password: '',
+    });
+  }
+
+  async function handleUpdateStudent(e: React.FormEvent) {
+    e.preventDefault();
+    if (!token || !editingStudentId) return;
+    try {
+      let normalizedParentPhone: string | undefined | null = undefined;
+      if (editStudent.parentPhone.trim()) {
+        const cleaned = normalizeParentPhoneInput(editStudent.parentPhone);
+        if (!cleaned) {
+          setError('Geçersiz veli telefon numarası. Lütfen 555 123 45 67 formatında girin.');
+          return;
+        }
+        normalizedParentPhone = cleaned;
+      } else {
+        normalizedParentPhone = null;
+      }
+
+      const updated = await apiRequest<Student>(
+        `/admin/students/${editingStudentId}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: editStudent.name,
+            email: editStudent.email,
+            gradeLevel: editStudent.gradeLevel,
+            parentPhone: normalizedParentPhone,
+            password: editStudent.password || undefined,
+          }),
+        },
+        token,
+      );
+      setStudents((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setEditingStudentId(null);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -643,16 +788,91 @@ export const AdminDashboard: React.FC = () => {
               />
             </div>
             <div className="field">
-              <span>Branşlar (virgülle)</span>
+              <span>Şifre</span>
               <input
-                value={newTeacher.subjectAreas}
+                type="password"
+                autoComplete="new-password"
+                placeholder="Örn. Ogretmen123"
+                value={newTeacher.password}
                 onChange={(e) =>
-                  setNewTeacher((t) => ({
-                    ...t,
-                    subjectAreas: e.target.value,
-                  }))
+                  setNewTeacher((t) => ({ ...t, password: e.target.value }))
                 }
+                required
               />
+            </div>
+            <div className="field">
+              <span>Hangi sınıflara giriyor?</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.25rem' }}>
+                {['4', '5', '6', '7', '8', '9', '10', '11', '12'].map((grade) => {
+                  const selected = newTeacher.assignedGrades.includes(grade);
+                  return (
+                    <button
+                      key={grade}
+                      type="button"
+                      className={selected ? 'primary-btn' : 'ghost-btn'}
+                      onClick={() =>
+                        setNewTeacher((t) => ({
+                          ...t,
+                          assignedGrades: selected
+                            ? t.assignedGrades.filter((g) => g !== grade)
+                            : [...t.assignedGrades, grade],
+                        }))
+                      }
+                      style={
+                        selected
+                          ? { padding: '0.25rem 0.6rem', fontSize: '0.8rem' }
+                          : {
+                              padding: '0.25rem 0.6rem',
+                              fontSize: '0.8rem',
+                              border: '1px solid rgba(209,213,219,0.9)',
+                              background: '#f9fafb',
+                              color: '#111827',
+                            }
+                      }
+                    >
+                      {grade}. Sınıf
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="field">
+              <span>Hangi derslere giriyor?</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.25rem' }}>
+                {subjectsLoading && <span style={{ fontSize: '0.85rem' }}>Yükleniyor...</span>}
+                {!subjectsLoading &&
+                  subjects.map((s) => {
+                    const selected = newTeacher.subjectAreas.includes(s.name);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className={selected ? 'primary-btn' : 'ghost-btn'}
+                        onClick={() =>
+                          setNewTeacher((t) => ({
+                            ...t,
+                            subjectAreas: selected
+                              ? t.subjectAreas.filter((name) => name !== s.name)
+                              : [...t.subjectAreas, s.name],
+                          }))
+                        }
+                        style={
+                          selected
+                            ? { padding: '0.25rem 0.6rem', fontSize: '0.8rem' }
+                            : {
+                                padding: '0.25rem 0.6rem',
+                                fontSize: '0.8rem',
+                                border: '1px solid rgba(209,213,219,0.9)',
+                                background: '#f9fafb',
+                                color: '#111827',
+                              }
+                        }
+                      >
+                        {s.name}
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
             <button type="submit">Öğretmen Ekle</button>
           </form>
@@ -675,7 +895,7 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'students' && (
         <GlassCard
           title="Öğrenciler"
-          subtitle="Öğrenci kayıtlarını yönetin."
+          subtitle="Öğrenci kayıtlarını yönetin. Yeni öğrenciler için şifre ve sınıf atamasını buradan yapın."
         >
           <form onSubmit={handleAddStudent} className="form" style={{ marginBottom: '0.75rem' }}>
             <div className="field">
@@ -700,8 +920,8 @@ export const AdminDashboard: React.FC = () => {
               />
             </div>
             <div className="field">
-              <span>Sınıf (ör. 9A)</span>
-              <input
+              <span>Sınıf</span>
+              <select
                 value={newStudent.gradeLevel}
                 onChange={(e) =>
                   setNewStudent((s) => ({
@@ -709,22 +929,171 @@ export const AdminDashboard: React.FC = () => {
                     gradeLevel: e.target.value,
                   }))
                 }
+                required
+              >
+                <option value="">Seçin</option>
+                {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'].map((grade) => (
+                  <option key={grade} value={grade}>
+                    {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <span>Veli Telefonu</span>
+              <input
+                placeholder="555 123 45 67"
+                value={newStudent.parentPhone}
+                onChange={(e) =>
+                  setNewStudent((s) => ({
+                    ...s,
+                    parentPhone: e.target.value.replace(/[^\d\s]/g, ''),
+                  }))
+                }
+              />
+            </div>
+            <div className="field">
+              <span>Şifre</span>
+              <input
+                type="password"
+                value={newStudent.password}
+                onChange={(e) =>
+                  setNewStudent((s) => ({
+                    ...s,
+                    password: e.target.value,
+                  }))
+                }
+                required
               />
             </div>
             <button type="submit">Öğrenci Ekle</button>
           </form>
-          <div className="list-stack">
-            {students.length === 0 && (
-              <div className="empty-state">Henüz öğrenci kaydı yok.</div>
-            )}
-            {students.map((s) => (
-              <div key={s.id} className="list-row">
-                <div>
-                  <strong>{s.name}</strong>
-                  <small>{s.email}</small>
+          <div className="dual-grid">
+            <div className="list-stack">
+              {students.length === 0 && (
+                <div className="empty-state">Henüz öğrenci kaydı yok.</div>
+              )}
+              {students.map((s) => {
+                const phoneDisplay = s.parentPhone ? formatParentPhoneForDisplay(s.parentPhone) : '—';
+                return (
+                  <div key={s.id} className="list-row">
+                    <div>
+                      <strong>{s.name}</strong>
+                      <small>{s.email}</small>
+                      <div style={{ fontSize: '0.8rem', marginTop: '0.2rem', opacity: 0.9 }}>
+                        Sınıf: {s.gradeLevel || '—'}
+                      </div>
+                      <div
+                        style={{ fontSize: '0.8rem', marginTop: '0.1rem', opacity: 0.9 }}
+                        title={s.parentPhone ? `Veli Tel: ${phoneDisplay}` : 'Veli telefonu girilmemiş'}
+                      >
+                        Veli Tel:{' '}
+                        <span style={{ filter: 'blur(2px)' }}>
+                          {phoneDisplay}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => startEditStudent(s)}
+                    >
+                      Düzenle
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div>
+              <h3 style={{ marginBottom: '0.5rem' }}>Öğrenci Düzenle</h3>
+              {editingStudentId ? (
+                <form onSubmit={handleUpdateStudent} className="form">
+                  <div className="field">
+                    <span>İsim</span>
+                    <input
+                      value={editStudent.name}
+                      onChange={(e) =>
+                        setEditStudent((s) => ({ ...s, name: e.target.value }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <span>E-posta</span>
+                    <input
+                      type="email"
+                      value={editStudent.email}
+                      onChange={(e) =>
+                        setEditStudent((s) => ({ ...s, email: e.target.value }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <span>Sınıf</span>
+                    <select
+                      value={editStudent.gradeLevel}
+                      onChange={(e) =>
+                        setEditStudent((s) => ({
+                          ...s,
+                          gradeLevel: e.target.value,
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Seçin</option>
+                      {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'].map((grade) => (
+                        <option key={grade} value={grade}>
+                          {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <span>Veli Telefonu</span>
+                    <input
+                      placeholder="555 123 45 67"
+                      value={editStudent.parentPhone}
+                      onChange={(e) =>
+                        setEditStudent((s) => ({
+                          ...s,
+                          parentPhone: e.target.value.replace(/[^\d\s]/g, ''),
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="field">
+                    <span>Yeni Şifre (opsiyonel)</span>
+                    <input
+                      type="password"
+                      value={editStudent.password}
+                      onChange={(e) =>
+                        setEditStudent((s) => ({
+                          ...s,
+                          password: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button type="submit" className="primary-btn">
+                      Kaydet
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => setEditingStudentId(null)}
+                    >
+                      İptal
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="empty-state">
+                  Düzenlemek için listeden bir öğrenci seçin.
                 </div>
-              </div>
-            ))}
+              )}
+            </div>
           </div>
         </GlassCard>
       )}
@@ -732,7 +1101,7 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'parents' && (
         <GlassCard
           title="Veliler & Öğrenci Atama"
-          subtitle="Veli hesapları oluşturun ve öğrenci atamalarını yönetin."
+          subtitle="Veli hesapları oluşturun ve öğrenci atamalarını yönetin. Yeni velilerin varsayılan şifresi: password123"
         >
           <form onSubmit={handleAddParent} className="form" style={{ marginBottom: '0.75rem' }}>
             <div className="field">
@@ -802,19 +1171,29 @@ export const AdminDashboard: React.FC = () => {
             {parents.length === 0 && (
               <div className="empty-state">Henüz veli kaydı yok.</div>
             )}
-            {parents.map((p) => (
-              <div key={p.id} className="list-row">
-                <div>
-                  <strong>{p.name}</strong>
-                  <small>{p.email}</small>
-                  {p.studentIds.length > 0 && (
-                    <div style={{ fontSize: '0.8rem', marginTop: '0.2rem' }}>
-                      Öğrenciler: {p.studentIds.join(', ')}
-                    </div>
-                  )}
+            {parents.map((p) => {
+              const linkedStudentNames = p.studentIds
+                .map((id) => students.find((s) => s.id === id)?.name)
+                .filter((name): name is string => !!name);
+              const label =
+                linkedStudentNames.length > 0
+                  ? linkedStudentNames.join(', ')
+                  : p.studentIds.join(', ');
+
+              return (
+                <div key={p.id} className="list-row">
+                  <div>
+                    <strong>{p.name}</strong>
+                    <small>{p.email}</small>
+                    {p.studentIds.length > 0 && (
+                      <div style={{ fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                        Öğrenciler: {label}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </GlassCard>
       )}

@@ -2,6 +2,8 @@
   "dependencies": {
     "@google/genai": "^1.39.0",
     "@google/generative-ai": "^0.24.1",
+    "axios": "^1.13.5",
+    "dotenv": "^17.2.4",
     "lucide-react": "^0.563.0"
   }
 }

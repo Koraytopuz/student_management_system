@@ -79,6 +79,8 @@ enum NotificationType {
   help_response_ready
   help_response_played
   complaint_created
+  exam_result_to_parent
+  live_class_attendance
 }
 
 enum RelatedEntityType {
@@ -92,6 +94,7 @@ enum RelatedEntityType {
   help_response
   complaint
   teacher_feedback
+  attendance
 }
 
 enum HelpRequestStatus {
@@ -161,6 +164,17 @@ enum CoachingMode {
   video
 }
 
+enum CoachingGoalStatus {
+  pending
+  completed
+  missed
+}
+
+enum CoachingNoteVisibility {
+  teacher_only
+  shared_with_parent
+}
+
 enum BadgeCategory {
   questions_solved
   tests_completed
@@ -181,10 +195,13 @@ model User {
 
   // Teacher-specific
   subjectAreas String[] @default([]) @map("subject_areas")
+  /// Öğretmenin yetkili olduğu sınıflar (örn. "4", "5", ..., "12")
+  teacherGrades String[] @default([]) @map("teacher_grades")
 
   // Student-specific
-  gradeLevel String? @map("grade_level")
-  classId    String? @map("class_id")
+  gradeLevel  String? @map("grade_level")
+  classId     String? @map("class_id")
+  parentPhone String? @map("parent_phone")
 
   // Relations
   classGroupsAsTeacher  ClassGroup[]         @relation("ClassGroupTeacher")
@@ -196,6 +213,7 @@ model User {
   watchRecords          WatchRecord[]
   meetingStudents       MeetingStudent[]
   meetingParents        MeetingParent[]
+  meetingAttendances    MeetingAttendance[]
   assignmentsCreated    Assignment[]         @relation("AssignmentCreatedByTeacher")
 
   testAssetsCreated      TestAsset[]         @relation("TestAssetTeacher")
@@ -206,7 +224,12 @@ model User {
   complaintsAboutTeacher Complaint[]         @relation("ComplaintAboutTeacher")
   coachingSessionsAsStudent CoachingSession[] @relation("CoachingSessionsStudent")
   coachingSessionsAsTeacher CoachingSession[] @relation("CoachingSessionsTeacher")
+  coachingGoalsAsStudent   CoachingGoal[]     @relation("CoachingGoalsStudent")
+  coachingGoalsAsCoach     CoachingGoal[]     @relation("CoachingGoalsCoach")
+  coachingNotesAsStudent   CoachingNote[]     @relation("CoachingNotesStudent")
+  coachingNotesAsCoach     CoachingNote[]     @relation("CoachingNotesCoach")
   studentBadges            StudentBadge[]
+  focusSessions            StudentFocusSession[]
 
   @@unique([email, role])
   @@map("users")
@@ -510,6 +533,8 @@ model Meeting {
   scheduledAt      DateTime   @map("scheduled_at")
   durationMinutes  Int        @map("duration_minutes")
   meetingUrl       String     @map("meeting_url")
+  /// Canlı dersin hedef sınıf seviyesi (örn. "4", "5", ..., "12")
+  targetGrade      String?    @map("target_grade")
   /// Canlı ders sağlayıcısı (ör. internal_webrtc, zoom, meet)
   provider         String?    @default("internal_webrtc")
   /// Katılım modu: platform içi oda mı, harici link mi
@@ -524,8 +549,9 @@ model Meeting {
   recordingEndedAt   DateTime? @map("recording_ended_at")
   createdAt        DateTime   @default(now())
 
-  students MeetingStudent[]
-  parents  MeetingParent[]
+  students     MeetingStudent[]
+  parents      MeetingParent[]
+  attendances  MeetingAttendance[]
   coachingSessions CoachingSession[]
 
   @@map("meetings")
@@ -549,6 +575,22 @@ model MeetingParent {
 
   @@id([meetingId, parentId])
   @@map("meeting_parents")
+}
+
+/// Canlı ders yoklama kaydı – öğretmen yoklama aldığında oluşturulur
+model MeetingAttendance {
+  id        String   @id @default(cuid())
+  meetingId String   @map("meeting_id")
+  studentId String   @map("student_id")
+  present   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  student User    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, studentId])
+  @@index([meetingId])
+  @@map("meeting_attendances")
 }
 
 model Message {
@@ -797,6 +839,40 @@ model CoachingSession {
   @@map("coaching_sessions")
 }
 
+model CoachingGoal {
+  id          String             @id @default(cuid())
+  studentId   String             @map("student_id")
+  coachId     String             @map("coach_id")
+  title       String
+  description String?
+  deadline    DateTime
+  status      CoachingGoalStatus @default(pending)
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  student User @relation("CoachingGoalsStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  coach   User @relation("CoachingGoalsCoach", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, deadline])
+  @@index([coachId, deadline])
+  @@map("coaching_goals")
+}
+
+model CoachingNote {
+  id        String                @id @default(cuid())
+  studentId String                @map("student_id")
+  coachId   String                @map("coach_id")
+  content   String
+  visibility CoachingNoteVisibility @default(shared_with_parent)
+  date      DateTime              @default(now())
+
+  student User @relation("CoachingNotesStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  coach   User @relation("CoachingNotesCoach", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, date])
+  @@index([coachId, date])
+  @@map("coaching_notes")
+}
+
 model StudyPlan {
   id          String   @id @default(cuid())
   studentId   String   @map("student_id")
@@ -841,4 +917,16 @@ model StudentBadge {
 
   @@unique([studentId, badgeId])
   @@map("student_badges")
+}
+
+model StudentFocusSession {
+  id          String   @id @default(cuid())
+  studentId   String   @map("student_id")
+  xpEarned    Int      @map("xp_earned")
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("student_focus_sessions")
 }
