@@ -52,7 +52,7 @@ import { LiveClassOverlay } from './LiveClassOverlay';
 import { PdfTestOverlay, type PdfTestAssignment } from './PdfTestOverlay';
 import { useSearchParams } from 'react-router-dom';
 import { StudentQuestionBankTab } from './StudentQuestionBankTab';
-import { StudentBadgesTab } from './StudentBadgesTab';
+import { StudentBadgesTab } from './StudentBadges';
 import { FocusZone } from './components/FocusZone';
 
 type StudentTab =
