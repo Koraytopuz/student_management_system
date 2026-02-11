@@ -1268,7 +1268,7 @@ router.post(
         title: `Soru Bankası Testi – ${topic}`,
         subjectId: subject.id,
         topic,
-        createdByTeacherId,
+        createdByTeacherId: createdByTeacherId ?? studentId,
         questions: {
           create: selected.map((q: any, index: number) => ({
             text: q.text,

@@ -1021,7 +1021,7 @@ router.post('/questionbank/start-test', (0, auth_1.authenticate)('student'), asy
             title: `Soru Bankası Testi – ${topic}`,
             subjectId: subject.id,
             topic,
-            createdByTeacherId,
+            createdByTeacherId: createdByTeacherId !== null && createdByTeacherId !== void 0 ? createdByTeacherId : studentId,
             questions: {
                 create: selected.map((q, index) => ({
                     text: q.text,

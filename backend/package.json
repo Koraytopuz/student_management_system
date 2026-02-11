@@ -30,6 +30,14 @@
     "@google/genai": "^1.39.0",
     "@prisma/adapter-pg": "^7.3.0",
     "@prisma/client": "^7.3.0",
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^25.2.0",
+    "@types/pdfkit": "^0.17.4",
+    "@types/pg": "^8.16.0",
     "axios": "^1.13.5",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
@@ -43,18 +51,10 @@
     "pg": "^8.18.0",
     "prisma": "^7.3.0",
     "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/bcrypt": "^6.0.0",
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/jsonwebtoken": "^9.0.10",
-    "@types/multer": "^2.0.0",
-    "@types/node": "^25.2.0",
-    "@types/pdfkit": "^0.17.4",
-    "@types/pg": "^8.16.0",
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.3"
+    "ts-node-dev": "^2.0.0"
   }
 }
