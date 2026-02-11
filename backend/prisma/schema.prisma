@@ -410,9 +410,10 @@ model HelpRequest {
   id            String            @id @default(cuid())
   studentId     String            @map("student_id")
   teacherId     String            @map("teacher_id")
-  assignmentId  String            @map("assignment_id")
+  assignmentId  String?           @map("assignment_id")
   questionId    String?           @map("question_id")
   studentAnswer String?           @map("student_answer")
+  imageUrl      String?           @map("image_url")
   message       String?
   status        HelpRequestStatus @default(open)
   createdAt   DateTime          @default(now())
@@ -420,7 +421,7 @@ model HelpRequest {
 
   student     User              @relation("HelpRequestStudent", fields: [studentId], references: [id], onDelete: Cascade)
   teacher     User              @relation("HelpRequestTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
-  assignment  Assignment        @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  assignment  Assignment?       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   question    Question?         @relation(fields: [questionId], references: [id], onDelete: SetNull)
   response    HelpResponse?
 

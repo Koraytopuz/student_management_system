@@ -3,6 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+import multer from 'multer';
 import { authenticate, AuthenticatedRequest } from './auth';
 import { prisma } from './db';
 import {
@@ -32,6 +33,20 @@ import { createLiveKitToken, getLiveKitUrl } from './livekit';
 import { callGemini } from './ai';
 
 const router = express.Router();
+
+// Yüklenen dosyalar için klasörler
+const uploadsHelpDir = path.join(__dirname, '..', 'uploads', 'help-requests');
+const uploadsTmpDir = path.join(__dirname, '..', 'uploads', 'tmp');
+[uploadsHelpDir, uploadsTmpDir].forEach((dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+const helpRequestUpload = multer({
+  dest: uploadsTmpDir,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
 
 // Basit metin PDF'i üretmek için yardımcı fonksiyon
 async function generateFeedbackPdf(text: string): Promise<Buffer> {
@@ -252,7 +267,7 @@ function isModelNotFoundError(error: unknown) {
 router.get(
   '/dashboard',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
 
     const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -308,7 +323,7 @@ router.get(
 router.get(
   '/coaching',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
 
     const sessions = await prisma.$queryRaw<StudentCoachingRow[]>`
@@ -353,11 +368,11 @@ router.get(
 router.patch(
   '/coaching/goals/:goalId',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const goalId = String(req.params.goalId);
 
-    const goal = await prisma.coachingGoal.findFirst({
+    const goal = await (prisma as any).coachingGoal.findFirst({
       where: { id: goalId, studentId },
     });
     if (!goal) {
@@ -378,7 +393,7 @@ router.patch(
         .json({ error: 'Geçersiz status. pending/completed/missed olmalıdır.' });
     }
 
-    const updated = await prisma.coachingGoal.update({
+    const updated = await (prisma as any).coachingGoal.update({
       where: { id: goalId },
       data: { status },
     });
@@ -402,7 +417,7 @@ router.patch(
 router.post(
   '/ai/chat',
   // authenticate('student'), // Chatbot temporarily disabled for students
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     return res.status(404).json({ error: 'Chatbot service not available for students' });
     /*
     const { message, history, imageBase64, imageMimeType } = req.body as {
@@ -429,7 +444,7 @@ router.post(
 router.post(
   '/ai/study-plan',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const {
       focusTopic,
@@ -526,7 +541,7 @@ Planı şu formatta ver:
 router.post(
   '/ai/summarize',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const { text, maxLength = 'orta' } = req.body as { text?: string; maxLength?: string };
     if (!text || !String(text).trim()) {
       return res.status(400).json({ error: 'Metin alanı zorunludur' });
@@ -557,7 +572,7 @@ router.post(
 router.get(
   '/questionbank/meta',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const student = await prisma.user.findUnique({
       where: { id: studentId },
@@ -659,7 +674,7 @@ router.get(
 router.post(
   '/ai/test-feedback',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const { testResultId, format } = req.body as {
       testResultId?: string;
@@ -796,7 +811,7 @@ ${context}
 router.get(
   '/study-plans',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const plans = await prisma.studyPlan.findMany({
       where: { studentId },
@@ -822,7 +837,7 @@ router.get(
 router.get(
   '/study-plans/:id/pdf',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const plan = await prisma.studyPlan.findFirst({
@@ -859,7 +874,7 @@ router.get(
 router.get(
   '/assignments',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
 
     // Sadece pending durumundaki assignmentları getir
@@ -915,7 +930,7 @@ router.get(
 router.get(
   '/assignments/pending',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const now = new Date();
 
@@ -977,7 +992,7 @@ router.get(
 router.post(
   '/assignments/:id/complete',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const assignmentId = String(req.params.id);
     const { submittedInLiveClass, answers: rawAnswers } = req.body as {
@@ -1078,7 +1093,7 @@ router.post(
         body: bodyText,
         relatedEntityType: 'test',
         relatedEntityId: assignmentId,
-      }).catch(() => {});
+      }).catch(() => { });
     }
     return res.json(body);
   },
@@ -1088,7 +1103,7 @@ router.post(
 router.get(
   '/assignments/:id',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const assignment = await prisma.assignment.findFirst({
@@ -1158,7 +1173,7 @@ router.get(
 router.post(
   '/questionbank/start-test',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const {
       subjectId,
@@ -1334,11 +1349,12 @@ router.post(
   },
 );
 
-// Öğretmene sor (yardım talebi) - test veya PDF test içindeki soru için
+// Öğretmene sor (yardım talebi) - test, PDF test veya genel fotoğraf ile
 router.post(
   '/help-requests',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  helpRequestUpload.single('image'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const { assignmentId, questionId, message, studentAnswer } = req.body as {
       assignmentId?: string;
@@ -1347,68 +1363,93 @@ router.post(
       studentAnswer?: string;
     };
 
-    if (!assignmentId) {
-      return res.status(400).json({ error: 'assignmentId zorunludur' });
-    }
-    if (!questionId) {
-      return res.status(400).json({ error: 'questionId zorunludur' });
+    let teacherId: string | null = null;
+    let notificationBody = '';
+
+    // Görsel yüklendiyse taşı
+    let imageUrl: string | undefined;
+    if (req.file) {
+      const ext = path.extname(req.file.originalname) || '.png';
+      const fileName = `help-${studentId}-${Date.now()}${ext}`;
+      const finalPath = path.join(uploadsHelpDir, fileName);
+      fs.renameSync(req.file.path, finalPath);
+      imageUrl = `/uploads/help-requests/${fileName}`;
     }
 
-    const assignment = await prisma.assignment.findFirst({
-      where: { id: assignmentId, students: { some: { studentId } } },
-      include: { test: true, testAsset: true },
-    });
-    if (!assignment) {
-      return res.status(404).json({ error: 'Görev bulunamadı' });
-    }
+    if (assignmentId) {
+      const assignment = await prisma.assignment.findFirst({
+        where: { id: assignmentId, students: { some: { studentId } } },
+        include: { test: true, testAsset: true },
+      });
+      if (!assignment) {
+        return res.status(404).json({ error: 'Görev bulunamadı' });
+      }
 
-    const teacherId =
-      (assignment as any).createdByTeacherId ??
-      (assignment.classId
-        ? (await prisma.classGroup.findUnique({ where: { id: assignment.classId } }))?.teacherId
-        : null);
+      teacherId =
+        (assignment as any).createdByTeacherId ??
+        (assignment.classId
+          ? (await prisma.classGroup.findUnique({ where: { id: assignment.classId } }))?.teacherId
+          : null);
+
+      const testTitle =
+        assignment.test?.title ??
+        (assignment as any).testAsset?.title ??
+        assignment.title;
+
+      if (questionId) {
+        // PDF test (testAsset) – questionId "pdf-page-N" formatında
+        const pdfPageMatch = /^pdf-page-(\d+)$/.exec(questionId);
+        const isPdfTest = !!(assignment as any).testAssetId && !assignment.testId;
+
+        if (isPdfTest && pdfPageMatch && pdfPageMatch[1]) {
+          const pageNum = parseInt(pdfPageMatch[1], 10);
+          notificationBody = `${req.user!.name} "${testTitle}" PDF testinde ${pageNum}. soruda takıldı.`;
+        } else {
+          const question = await prisma.question.findUnique({ where: { id: questionId } });
+          if (question) {
+            const questionNumber = (question.orderIndex ?? 0) + 1;
+            notificationBody = `${req.user!.name} "${testTitle}" testinde ${questionNumber}. soruda takıldı.`;
+          } else {
+            notificationBody = `${req.user!.name} "${testTitle}" adlı sınavda bir soruda takıldı.`;
+          }
+        }
+      } else {
+        notificationBody = `${req.user!.name} "${testTitle}" adlı çalışmada takıldığı bir soru gönderdi.`;
+      }
+    } else {
+      // Genel soru (Fotoğraflı veya mesajlı)
+      const student = await prisma.user.findUnique({
+        where: { id: studentId },
+        select: { classId: true },
+      });
+
+      if (student?.classId) {
+        const classGroup = await prisma.classGroup.findUnique({ where: { id: student.classId } });
+        teacherId = classGroup?.teacherId ?? null;
+      }
+
+      if (!teacherId) {
+        // Eğer sınıfı yoksa rastgele bir öğretmen seç (veya hata ver, ama burada ilk öğretmeni bulalım)
+        const anyTeacher = await prisma.user.findFirst({ where: { role: 'teacher' } });
+        teacherId = anyTeacher?.id ?? null;
+      }
+
+      notificationBody = `${req.user!.name} size yeni bir soru gönderdi (Soru Havuzu / Genel).`;
+    }
 
     if (!teacherId) {
-      return res.status(409).json({ error: 'Bu görev için öğretmen bilgisi bulunamadı' });
+      return res.status(409).json({ error: 'Yardım talebi için öğretmen bulunamadı' });
     }
 
-    const testTitle =
-      assignment.test?.title ??
-      (assignment as any).testAsset?.title ??
-      assignment.title;
-
-    // PDF test (testAsset) – questionId "pdf-page-N" formatında
-    const pdfPageMatch = /^pdf-page-(\d+)$/.exec(questionId);
-    const isPdfTest = !!(assignment as any).testAssetId && !assignment.testId;
-
-    let notificationBody: string;
-    let dbQuestionId: string | null;
-
-    if (isPdfTest && pdfPageMatch && pdfPageMatch[1]) {
-      const pageNum = parseInt(pdfPageMatch[1], 10);
-      dbQuestionId = null;
-      notificationBody = `${req.user!.name} "${testTitle}" PDF testinde ${pageNum}. soruda takıldı.`;
-    } else {
-      const question = await prisma.question.findUnique({ where: { id: questionId } });
-      if (!question) {
-        return res.status(404).json({ error: 'Soru bulunamadı' });
-      }
-      if (assignment.testId && question.testId !== assignment.testId) {
-        return res.status(400).json({ error: 'Soru bu teste ait değil' });
-      }
-      dbQuestionId = questionId;
-      const questionNumber = (question.orderIndex ?? 0) + 1;
-      notificationBody = `${req.user!.name} "${testTitle}" testinde ${questionNumber}. soruda takıldı.`;
-    }
-
-    const created = await prisma.helpRequest.create({
+    const created = await (prisma.helpRequest as any).create({
       data: {
         studentId,
         teacherId,
-        assignmentId: assignment.id,
-        questionId: dbQuestionId,
+        assignmentId: assignmentId || null,
+        questionId: (assignmentId && questionId && !questionId.startsWith('pdf-')) ? questionId : null,
         studentAnswer: studentAnswer?.trim() ? studentAnswer.trim().toUpperCase().slice(0, 1) : undefined,
         message: message?.trim() ? message.trim() : undefined,
+        imageUrl,
         status: 'open',
       },
     });
@@ -1425,15 +1466,17 @@ router.post(
       },
     });
 
+    const r = created as any;
     return res.status(201).json({
-      id: created.id,
-      studentId: created.studentId,
-      teacherId: created.teacherId,
-      assignmentId: created.assignmentId,
-      questionId: created.questionId ?? undefined,
-      message: created.message ?? undefined,
-      status: created.status,
-      createdAt: created.createdAt.toISOString(),
+      id: r.id,
+      studentId: r.studentId,
+      teacherId: r.teacherId,
+      assignmentId: r.assignmentId ?? undefined,
+      questionId: r.questionId ?? undefined,
+      imageUrl: r.imageUrl ?? undefined,
+      message: r.message ?? undefined,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
     });
   },
 );
@@ -1442,7 +1485,7 @@ router.post(
 router.get(
   '/help-requests',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const status = req.query.status ? String(req.query.status) : undefined;
     const list = await prisma.helpRequest.findMany({
@@ -1482,7 +1525,7 @@ router.get(
 router.get(
   '/help-requests/:id',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const r = await prisma.helpRequest.findFirst({
@@ -1518,7 +1561,7 @@ router.get(
 router.post(
   '/help-requests/:id/response-played',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const helpRequestId = String(req.params.id);
 
@@ -1585,7 +1628,7 @@ router.post(
 router.post(
   '/complaints',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const { subject, body, aboutTeacherId } = req.body as {
       subject?: string;
@@ -1648,7 +1691,7 @@ router.post(
 router.post(
   '/assignments/:id/submit',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const assignment = await prisma.assignment.findFirst({
@@ -1751,7 +1794,7 @@ router.post(
       body: bodyText,
       relatedEntityType: 'test',
       relatedEntityId: result.id,
-    }).catch(() => {});
+    }).catch(() => { });
 
     const responseBody: any = {
       id: result.id,
@@ -1892,7 +1935,7 @@ router.post(
 router.get(
   '/progress/topics',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
 
     const [studentResults, testsData, subjectsData] = await Promise.all([
@@ -2007,7 +2050,7 @@ router.get(
 router.get(
   '/badges',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
 
     try {
@@ -2030,7 +2073,7 @@ router.get(
 router.post(
   '/focus-session',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const xp = typeof req.body?.xp === 'number' ? Math.min(9999, Math.max(0, Math.round(req.body.xp))) : 50;
 
@@ -2056,7 +2099,7 @@ router.post(
 router.get(
   '/contents',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const availableContents = await prisma.contentItem.findMany({
       include: {
@@ -2101,7 +2144,7 @@ router.get(
 router.post(
   '/contents/:id/watch',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const contentId = String(req.params.id);
     const content = await prisma.contentItem.findUnique({ where: { id: contentId } });
@@ -2145,7 +2188,7 @@ router.post(
 router.get(
   '/progress/charts',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const now = new Date();
     const days = 7;
@@ -2209,7 +2252,7 @@ router.get(
 router.get(
   '/messages',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const messagesData = await prisma.message.findMany({
       where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
@@ -2243,7 +2286,7 @@ router.get(
 router.get(
   '/teachers',
   authenticate('student'),
-  async (_req: AuthenticatedRequest, res) => {
+  async (_req: AuthenticatedRequest, res: express.Response) => {
     const teachersData = await prisma.user.findMany({
       where: { role: 'teacher' },
       select: { id: true, name: true, email: true },
@@ -2256,7 +2299,7 @@ router.get(
 router.post(
   '/messages',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const fromUserId = req.user!.id;
     const { toUserId, text } = req.body as { toUserId?: string; text?: string };
 
@@ -2295,7 +2338,7 @@ router.post(
 router.get(
   '/meetings',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const userMeetings = await prisma.meeting.findMany({
       where: {
@@ -2332,7 +2375,7 @@ router.get(
 router.post(
   '/meetings/:id/join-live',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -2381,7 +2424,7 @@ router.post(
 router.get(
   '/notifications',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const readFilter = req.query.read;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
@@ -2414,7 +2457,7 @@ router.get(
 router.get(
   '/notifications/unread-count',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const count = await prisma.notification.count({
       where: { userId, read: false },
@@ -2426,7 +2469,7 @@ router.get(
 router.put(
   '/notifications/:id/read',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const id = String(req.params.id);
     const notification = await prisma.notification.findFirst({
@@ -2457,7 +2500,7 @@ router.put(
 router.put(
   '/notifications/read-all',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const result = await prisma.notification.updateMany({
       where: { userId, read: false },
@@ -2471,7 +2514,7 @@ router.put(
 router.get(
   '/todos',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const studentTodos = await prisma.todoItem.findMany({
       where: { studentId },
@@ -2592,7 +2635,7 @@ async function computeGoalProgressInternal(
 router.get(
   '/goals',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const studentGoals = await prisma.goal.findMany({ where: { studentId } });
     const withComputed: GoalWithComputed[] = [];
@@ -2607,7 +2650,7 @@ router.get(
 router.post(
   '/goals',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const { type, targetValue, startDate, endDate, topic } = req.body as {
       type?: Goal['type'];
@@ -2644,7 +2687,7 @@ router.post(
 router.put(
   '/goals/:id',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const goal = await prisma.goal.findFirst({ where: { id, studentId } });
@@ -2676,7 +2719,7 @@ router.put(
 router.delete(
   '/goals/:id',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const goal = await prisma.goal.findFirst({ where: { id, studentId } });
@@ -2695,7 +2738,7 @@ router.delete(
 router.get(
   '/goals/:id/progress',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const goal = await prisma.goal.findFirst({ where: { id, studentId } });
@@ -2710,7 +2753,7 @@ router.get(
 router.post(
   '/todos',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const {
       title,
@@ -2762,7 +2805,7 @@ router.post(
 router.put(
   '/todos/:id',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const todo = await prisma.todoItem.findFirst({ where: { id, studentId } });
@@ -2813,7 +2856,7 @@ router.put(
 router.put(
   '/todos/:id/complete',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const todo = await prisma.todoItem.findFirst({ where: { id, studentId } });
@@ -2843,7 +2886,7 @@ router.put(
 router.delete(
   '/todos/:id',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const id = String(req.params.id);
     const todo = await prisma.todoItem.findFirst({ where: { id, studentId } });
@@ -2871,7 +2914,7 @@ router.delete(
 router.get(
   '/calendar',
   authenticate('student'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
     const startDate = req.query.startDate
       ? new Date(String(req.query.startDate))

@@ -16,6 +16,7 @@ export interface Student extends UserBase {
     gradeLevel: string;
     classId: string;
     parentPhone?: string;
+    profilePictureUrl?: string;
 }
 export interface Parent extends UserBase {
     role: 'parent';
@@ -276,6 +277,7 @@ export interface ParentDashboardSummaryStudentCard {
     status: 'active' | 'inactive';
     pendingAssignmentsCount: number;
     overdueAssignmentsCount: number;
+    profilePictureUrl?: string;
 }
 export type CalendarEventType = 'assignment' | 'meeting' | 'exam';
 export interface CalendarEvent {
@@ -576,5 +578,6 @@ export interface StudentDetailSummary {
         date: string;
     }[];
     upcomingAssignments: AssignmentActivityItem[];
+    profilePictureUrl?: string;
 }
 //# sourceMappingURL=types.d.ts.map

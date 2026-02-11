@@ -149,7 +149,7 @@ router.get('/parents', authenticate('admin'), async (_req, res) => {
   );
 });
 
-router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const { name, email, subjectAreas, assignedGrades, password } = req.body as {
     name?: string;
     email?: string;
@@ -201,7 +201,7 @@ router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest
   return res.status(201).json(toTeacher(created));
 });
 
-router.delete('/teachers/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.delete('/teachers/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const id = String(req.params.id);
   const existing = await prisma.user.findFirst({ where: { id, role: 'teacher' } });
   if (!existing) {
@@ -211,7 +211,7 @@ router.delete('/teachers/:id', authenticate('admin'), async (req: AuthenticatedR
   return res.json(toTeacher(existing));
 });
 
-router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body as {
     name?: string;
     email?: string;
@@ -275,7 +275,7 @@ router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest
   return res.status(201).json(toStudent(created as any));
 });
 
-router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const id = String(req.params.id);
   const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body as {
     name?: string;
@@ -369,7 +369,7 @@ router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequ
   return res.json(toStudent(updated as any));
 });
 
-router.delete('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.delete('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const id = String(req.params.id);
   const existing = await prisma.user.findFirst({ where: { id, role: 'student' } });
   if (!existing) {
@@ -380,7 +380,7 @@ router.delete('/students/:id', authenticate('admin'), async (req: AuthenticatedR
   return res.json(toStudent(existing as any));
 });
 
-router.post('/parents', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.post('/parents', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const { name, email, password } = req.body as {
     name?: string;
     email?: string;
@@ -412,7 +412,7 @@ router.post('/parents', authenticate('admin'), async (req: AuthenticatedRequest,
   return res.status(201).json(toParent(created, []));
 });
 
-router.delete('/parents/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.delete('/parents/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const id = String(req.params.id);
   const existing = await prisma.user.findFirst({
     where: { id, role: 'parent' },
@@ -430,7 +430,7 @@ router.delete('/parents/:id', authenticate('admin'), async (req: AuthenticatedRe
 router.post(
   '/parents/:id/assign-student',
   authenticate('admin'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = String(req.params.id);
     const { studentId } = req.body as { studentId?: string };
 
@@ -474,7 +474,7 @@ router.post(
 router.post(
   '/parents/:id/unassign-student',
   authenticate('admin'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = String(req.params.id);
     const { studentId } = req.body as { studentId?: string };
 
@@ -505,7 +505,7 @@ router.post(
 );
 
 // Şikayet / öneriler (öğrenci + veli)
-router.get('/complaints', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.get('/complaints', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const status = req.query.status ? String(req.query.status) : undefined;
   const list = await prisma.complaint.findMany({
     where: status ? { status: status as any } : undefined,
@@ -533,7 +533,7 @@ router.get('/complaints', authenticate('admin'), async (req: AuthenticatedReques
 });
 
 // Bildirimler (şikayet/öneri vb.)
-router.get('/notifications', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.get('/notifications', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const userId = req.user!.id;
   const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
   const list = await prisma.notification.findMany({
@@ -557,7 +557,7 @@ router.get('/notifications', authenticate('admin'), async (req: AuthenticatedReq
   );
 });
 
-router.put('/notifications/:id/read', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.put('/notifications/:id/read', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const userId = req.user!.id;
   const id = String(req.params.id);
   const n = await prisma.notification.findFirst({ where: { id, userId } });
@@ -573,7 +573,7 @@ router.put('/notifications/:id/read', authenticate('admin'), async (req: Authent
   });
 });
 
-router.put('/complaints/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
+router.put('/complaints/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const id = String(req.params.id);
   const { status } = req.body as { status?: 'open' | 'reviewed' | 'closed' };
   if (!status) {
@@ -614,7 +614,7 @@ router.put('/complaints/:id', authenticate('admin'), async (req: AuthenticatedRe
 router.get(
   '/coaching',
   authenticate('admin'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const { studentId, teacherId } = req.query as {
       studentId?: string;
       teacherId?: string;
@@ -654,7 +654,7 @@ router.post(
   '/upload/student-image',
   authenticate('admin'),
   upload.single('file'),
-  (req: AuthenticatedRequest, res) => {
+  (req: AuthenticatedRequest, res: express.Response) => {
     if (!req.file) {
       return res.status(400).json({ error: 'Dosya yüklenemedi' });
     }

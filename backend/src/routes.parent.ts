@@ -82,7 +82,7 @@ async function getAssignmentStatus(
 router.get(
   '/dashboard',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const parent = await prisma.user.findFirst({
       where: { id: parentId, role: 'parent' },
@@ -175,7 +175,7 @@ router.get(
 router.get(
   '/children/:id/summary',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -295,7 +295,7 @@ router.get(
 router.get(
   '/children/:id/activity-time',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -420,7 +420,7 @@ router.get(
 router.get(
   '/children/:id/assignments',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -521,7 +521,7 @@ router.get(
 router.get(
   '/children/:id/content-usage',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -626,7 +626,7 @@ router.get(
 router.get(
   '/messages',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const messagesData = await prisma.message.findMany({
       where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
@@ -660,7 +660,7 @@ router.get(
 router.get(
   '/messages/conversations',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const userMessages = await prisma.message.findMany({
       where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
@@ -718,7 +718,7 @@ router.get(
 router.get(
   '/messages/conversation/:userId',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const otherUserId = String(req.params.userId);
     const studentId = req.query.studentId as string | undefined;
@@ -755,7 +755,7 @@ router.get(
 router.get(
   '/teachers',
   authenticate('parent'),
-  async (_req: AuthenticatedRequest, res) => {
+  async (_req: AuthenticatedRequest, res: express.Response) => {
     const teachersData = await prisma.user.findMany({
       where: { role: 'teacher' },
       select: { id: true, name: true, email: true },
@@ -805,7 +805,7 @@ router.post('/messages', authenticate('parent'), async (req, res) => {
 router.put(
   '/messages/:id/read',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const messageId = String(req.params.id);
     const message = await prisma.message.findUnique({ where: { id: messageId } });
 
@@ -840,7 +840,7 @@ router.put(
 router.get(
   '/meetings',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const userMeetings = await prisma.meeting.findMany({
       where: { parents: { some: { parentId: userId } } },
@@ -883,7 +883,7 @@ router.get(
 router.get(
   '/meetings/:id',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const meetingId = String(req.params.id);
     const meeting = await prisma.meeting.findUnique({
@@ -932,7 +932,7 @@ router.get(
 router.post(
   '/meetings/:id/join',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const meetingId = String(req.params.id);
     const meeting = await prisma.meeting.findUnique({
@@ -971,7 +971,7 @@ router.post(
 router.get(
   '/notifications',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const readFilter = req.query.read;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
@@ -1004,7 +1004,7 @@ router.get(
 router.get(
   '/notifications/unread-count',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const count = await prisma.notification.count({
       where: { userId, read: false },
@@ -1016,7 +1016,7 @@ router.get(
 router.put(
   '/notifications/:id/read',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
     const notification = await prisma.notification.findFirst({
@@ -1048,7 +1048,7 @@ router.put(
 router.put(
   '/notifications/read-all',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     await prisma.notification.updateMany({
       where: { userId, read: false },
@@ -1061,7 +1061,7 @@ router.put(
 router.delete(
   '/notifications/:id',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
     const notification = await prisma.notification.findFirst({
@@ -1079,7 +1079,7 @@ router.delete(
 router.get(
   '/children/:id/feedback',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1115,7 +1115,7 @@ router.get(
 router.get(
   '/feedback',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const parent = await prisma.user.findFirst({
       where: { id: parentId, role: 'parent' },
@@ -1152,7 +1152,7 @@ router.get(
 router.put(
   '/feedback/:id/read',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const feedbackId = String(req.params.id);
     const feedback = await prisma.teacherFeedback.findUnique({
@@ -1191,7 +1191,7 @@ router.put(
 router.get(
   '/children/:id/alerts',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1225,7 +1225,7 @@ router.get(
 router.put(
   '/alerts/:id/resolve',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const alertId = String(req.params.id);
     const alert = await prisma.alert.findUnique({ where: { id: alertId } });
@@ -1260,7 +1260,7 @@ router.put(
 router.put(
   '/alerts/:id/dismiss',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const alertId = String(req.params.id);
     const alert = await prisma.alert.findUnique({ where: { id: alertId } });
@@ -1295,7 +1295,7 @@ router.put(
 router.get(
   '/children/:id/activity-summary',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1415,7 +1415,7 @@ router.get(
 router.get(
   '/children/:id/weekly-reports',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1451,7 +1451,7 @@ router.get(
 router.get(
   '/children/:id/goals',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1505,7 +1505,7 @@ router.get(
 router.post(
   '/children/:id/goals',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1552,7 +1552,7 @@ router.post(
 router.get(
   '/children/:id/coaching-notes',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1591,7 +1591,7 @@ router.get(
 router.get(
   '/children/:id/coaching-progress',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -1658,7 +1658,7 @@ router.get(
 router.get(
   '/calendar',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const parent = await prisma.user.findFirst({
       where: { id: parentId, role: 'parent' },
@@ -1778,7 +1778,7 @@ router.get(
 router.post(
   '/complaints',
   authenticate('parent'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const parentId = req.user!.id;
     const { subject, body, aboutTeacherId } = req.body as {
       subject?: string;

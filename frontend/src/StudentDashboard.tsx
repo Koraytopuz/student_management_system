@@ -1254,7 +1254,7 @@ export const StudentDashboard: React.FC = () => {
             setPdfTestStartedAtMs(null);
             setPdfTestRemainingSeconds(null);
           }}
-          onAskTeacher={async (questionId, message, studentAnswer) => {
+          onAskTeacher={async (questionId, message, studentAnswer, image) => {
             if (!token) return;
             try {
               await createStudentHelpRequest(token, {
@@ -1262,6 +1262,7 @@ export const StudentDashboard: React.FC = () => {
                 questionId,
                 message: message || undefined,
                 studentAnswer: studentAnswer || undefined,
+                image,
               });
               // eslint-disable-next-line no-alert
               alert('Öğretmenine bildirim gönderildi. Sesli veya görüntülü çözümle en kısa sürede dönüş yapılacak.');

@@ -587,6 +587,7 @@ export interface StudentHelpRequest {
   assignmentId: string;
   questionId?: string;
   message?: string;
+  imageUrl?: string;
   status: 'open' | 'in_progress' | 'resolved' | 'cancelled';
   createdAt: string;
   resolvedAt?: string;
@@ -608,6 +609,7 @@ export interface TeacherHelpRequestItem {
   testAssetFileUrl?: string;
   testAssetId?: string;
   message?: string;
+  imageUrl?: string;
   status: 'open' | 'in_progress' | 'resolved' | 'cancelled';
   createdAt: string;
   resolvedAt?: string;
@@ -645,9 +647,12 @@ export async function apiRequest<T>(
   token?: string,
 ): Promise<T> {
   const headers: HeadersInit = {
-    'Content-Type': 'application/json',
     ...(options.headers || {}),
   };
+  // If body is not FormData, default to application/json
+  if (!(options.body instanceof FormData)) {
+    (headers as Record<string, string>)['Content-Type'] = 'application/json';
+  }
   if (token) {
     (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
   }
@@ -893,11 +898,24 @@ export function completeStudentAssignment(
 
 export function createStudentHelpRequest(
   token: string,
-  payload: { assignmentId: string; questionId: string; message?: string; studentAnswer?: string },
+  payload: {
+    assignmentId?: string;
+    questionId?: string;
+    message?: string;
+    studentAnswer?: string;
+    image?: File;
+  },
 ) {
+  const formData = new FormData();
+  if (payload.assignmentId) formData.append('assignmentId', payload.assignmentId);
+  if (payload.questionId) formData.append('questionId', payload.questionId);
+  if (payload.message) formData.append('message', payload.message);
+  if (payload.studentAnswer) formData.append('studentAnswer', payload.studentAnswer);
+  if (payload.image) formData.append('image', payload.image);
+
   return apiRequest<StudentHelpRequest>(
     '/student/help-requests',
-    { method: 'POST', body: JSON.stringify(payload) },
+    { method: 'POST', body: formData },
     token,
   );
 }

@@ -2109,10 +2109,10 @@ const TeacherSupport: React.FC<{
             <div key={r.id} className="list-row" style={{ alignItems: 'flex-start' }}>
               <div style={{ flex: 1 }}>
                 <strong style={{ display: 'block' }}>
-                  {r.studentName} · {r.assignmentTitle}
+                  {r.studentName} · {r.assignmentTitle || 'Genel Soru'}
                 </strong>
                 <small style={{ display: 'block', marginTop: '0.15rem' }}>
-                  {r.questionNumber ? `${r.questionNumber}. soru` : 'Soru'} {r.message ? `— ${r.message}` : ''}
+                  {r.questionNumber ? `${r.questionNumber}. soru` : 'Soru Havuzu'} {r.message ? `— ${r.message}` : ''}
                 </small>
                 {(r.correctAnswer != null || r.studentAnswer != null) && (
                   <small style={{ display: 'block', marginTop: '0.2rem', opacity: 0.9 }}>
@@ -2188,12 +2188,26 @@ const TeacherSupport: React.FC<{
           subtitle={`${activeRequest.studentName} · ${activeRequest.assignmentTitle} · ${activeRequest.questionNumber ?? '-'}. soru${(activeRequest.correctAnswer != null || activeRequest.studentAnswer != null) ? ` · Doğru: ${activeRequest.correctAnswer ?? '-'} · Öğrenci: ${activeRequest.studentAnswer ?? 'boş'}` : ''}`}
         >
           <div style={{ display: 'grid', gap: '0.75rem' }}>
-            {(pdfPageImage || activeRequest.questionText) && (
+            {(pdfPageImage || activeRequest.questionText || activeRequest.imageUrl) && (
               <div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
                   Soru önizlemesi
                 </div>
-                {pdfPageImage ? (
+                {activeRequest.imageUrl ? (
+                  <img
+                    src={resolveContentUrl(activeRequest.imageUrl)}
+                    alt="Öğrenci fotoğrafı"
+                    style={{
+                      maxWidth: '100%',
+                      maxHeight: 520,
+                      objectFit: 'contain',
+                      borderRadius: 16,
+                      border: '2px solid rgba(99,102,241,0.2)',
+                      background: '#020617',
+                      boxShadow: '0 10px 30px -10px rgba(0,0,0,0.5)',
+                    }}
+                  />
+                ) : pdfPageImage ? (
                   <img
                     src={pdfPageImage}
                     alt={`Soru ${activeRequest.questionNumber ?? ''}`}

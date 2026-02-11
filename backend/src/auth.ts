@@ -8,9 +8,7 @@ import type { User as PrismaUser } from '@prisma/client';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-student-management-secret';
 
-export interface AuthenticatedRequest extends express.Request {
-  user?: User;
-}
+export type AuthenticatedRequest = express.Request & { user?: User };
 
 export const loginSchema = z.object({
   email: z.string().email(),
@@ -52,57 +50,66 @@ function prismaUserToApiUser(dbUser: PrismaUser, studentIds?: string[]): User {
 }
 
 export const loginHandler: express.RequestHandler = async (req, res) => {
-  const parseResult = loginSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ error: 'Geçersiz giriş verisi', details: parseResult.error.flatten() });
-  }
+  try {
+    const parseResult = loginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: 'Geçersiz giriş verisi', details: parseResult.error.flatten() });
+    }
 
-  const { email, password, role } = parseResult.data;
+    const { email, password, role } = parseResult.data;
 
-  const dbUser = await prisma.user.findFirst({
-    where: { email, role },
-    include: {
-      parentStudents: role === 'parent' ? { select: { studentId: true } } : false,
-    },
-  });
+    const dbUser = await prisma.user.findFirst({
+      where: { email, role },
+      include: {
+        parentStudents: role === 'parent' ? { select: { studentId: true } } : false,
+      },
+    });
 
-  if (!dbUser) {
-    return res.status(401).json({ error: 'E-posta veya rol hatalı' });
-  }
+    if (!dbUser) {
+      return res.status(401).json({ error: 'E-posta veya rol hatalı' });
+    }
 
-  const ok = await bcrypt.compare(password, dbUser.passwordHash);
-  if (!ok) {
-    return res.status(401).json({ error: 'Şifre hatalı' });
-  }
+    const ok = await bcrypt.compare(password, dbUser.passwordHash);
+    if (!ok) {
+      return res.status(401).json({ error: 'Şifre hatalı' });
+    }
 
-  const studentIds =
-    dbUser.role === 'parent' && dbUser.parentStudents
-      ? dbUser.parentStudents.map((ps) => ps.studentId)
-      : undefined;
+    const studentIds =
+      dbUser.role === 'parent' && dbUser.parentStudents
+        ? dbUser.parentStudents.map((ps) => ps.studentId)
+        : undefined;
 
-  const user = prismaUserToApiUser(dbUser, studentIds);
+    const user = prismaUserToApiUser(dbUser, studentIds);
 
-  const token = jwt.sign(
-    {
-      sub: user.id,
-      role: user.role,
-    },
-    JWT_SECRET,
-    { expiresIn: '8h' },
-  );
+    const token = jwt.sign(
+      {
+        sub: user.id,
+        role: user.role,
+      },
+      JWT_SECRET,
+      { expiresIn: '8h' },
+    );
 
-  const response: { token: string; user: User; demoInfo?: Record<string, string> } = {
-    token,
-    user,
-  };
-
-  if (process.env.NODE_ENV !== 'production') {
-    response.demoInfo = {
-      hint: 'Geliştirme modu - demo kullanıcılar için seed çalıştırın',
+    const response: { token: string; user: User; demoInfo?: Record<string, string> } = {
+      token,
+      user,
     };
-  }
 
-  return res.json(response);
+    if (process.env.NODE_ENV !== 'production') {
+      response.demoInfo = {
+        hint: 'Geliştirme modu - demo kullanıcılar için seed çalıştırın',
+      };
+    }
+
+    return res.json(response);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[auth/login] Error:', err);
+    return res.status(500).json({
+      error: 'Sunucu hatası',
+      ...(process.env.NODE_ENV !== 'production' && { debug: message }),
+    });
+  }
 };
 
 export function authenticate(requiredRole?: UserRole): express.RequestHandler {

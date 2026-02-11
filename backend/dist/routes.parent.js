@@ -59,7 +59,7 @@ async function getAssignmentStatus(assignment, studentId) {
 }
 // Veli dashboard özeti
 router.get('/dashboard', (0, auth_1.authenticate)('parent'), async (req, res) => {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const parentId = req.user.id;
     const parent = await db_1.prisma.user.findFirst({
         where: { id: parentId, role: 'parent' },
@@ -75,7 +75,7 @@ router.get('/dashboard', (0, auth_1.authenticate)('parent'), async (req, res) =>
     const cards = [];
     for (const sid of studentIds) {
         const [student, studentResults, allResults, watchRecs, studentAssignments] = await Promise.all([
-            db_1.prisma.user.findFirst({ where: { id: sid, role: 'student' } }),
+            db_1.prisma.user.findFirst({ where: { id: sid, role: 'student' }, select: { id: true, name: true, gradeLevel: true, classId: true, profilePictureUrl: true } }),
             db_1.prisma.testResult.findMany({
                 where: { studentId: sid, completedAt: { gte: sevenDaysAgo } },
             }),
@@ -97,14 +97,14 @@ router.get('/dashboard', (0, auth_1.authenticate)('parent'), async (req, res) =>
         const studyMinutes = watchRecs.reduce((s, w) => s + w.watchedSeconds, 0) / 60;
         const lastResult = allResults[allResults.length - 1];
         const lastWatch = watchRecs.sort((a, b) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())[0];
-        const lastActivity = (_a = lastResult === null || lastResult === void 0 ? void 0 : lastResult.completedAt.toISOString()) !== null && _a !== void 0 ? _a : lastWatch === null || lastWatch === void 0 ? void 0 : lastWatch.lastWatchedAt.toISOString();
+        const lastActivity = (_b = (_a = lastResult === null || lastResult === void 0 ? void 0 : lastResult.completedAt) === null || _a === void 0 ? void 0 : _a.toISOString()) !== null && _b !== void 0 ? _b : (_c = lastWatch === null || lastWatch === void 0 ? void 0 : lastWatch.lastWatchedAt) === null || _c === void 0 ? void 0 : _c.toISOString();
         const status = lastActivity && new Date(lastActivity) >= threeDaysAgo ? 'active' : 'inactive';
         cards.push({
             studentId: sid,
-            studentName: (_b = student === null || student === void 0 ? void 0 : student.name) !== null && _b !== void 0 ? _b : 'Bilinmeyen öğrenci',
-            gradeLevel: (_c = student === null || student === void 0 ? void 0 : student.gradeLevel) !== null && _c !== void 0 ? _c : '',
-            classId: (_d = student === null || student === void 0 ? void 0 : student.classId) !== null && _d !== void 0 ? _d : '',
-            className: (_e = (await getStudentClassName(sid))) !== null && _e !== void 0 ? _e : undefined,
+            studentName: (_d = student === null || student === void 0 ? void 0 : student.name) !== null && _d !== void 0 ? _d : 'Bilinmeyen öğrenci',
+            gradeLevel: (_e = student === null || student === void 0 ? void 0 : student.gradeLevel) !== null && _e !== void 0 ? _e : '',
+            classId: (_f = student === null || student === void 0 ? void 0 : student.classId) !== null && _f !== void 0 ? _f : '',
+            className: (_g = (await getStudentClassName(sid))) !== null && _g !== void 0 ? _g : undefined,
             testsSolvedLast7Days: studentResults.length,
             averageScorePercent: allResults.length === 0
                 ? 0
@@ -114,6 +114,7 @@ router.get('/dashboard', (0, auth_1.authenticate)('parent'), async (req, res) =>
             status,
             pendingAssignmentsCount: pendingCount,
             overdueAssignmentsCount: overdueCount,
+            profilePictureUrl: (_h = student === null || student === void 0 ? void 0 : student.profilePictureUrl) !== null && _h !== void 0 ? _h : undefined,
         });
     }
     const totalTestsSolved = cards.reduce((sum, c) => sum + c.testsSolvedLast7Days, 0);
@@ -131,7 +132,7 @@ router.get('/dashboard', (0, auth_1.authenticate)('parent'), async (req, res) =>
 });
 // Öğrenci detay özeti
 router.get('/children/:id/summary', (0, auth_1.authenticate)('parent'), async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     const parentId = req.user.id;
     const studentId = String(req.params.id);
     const access = await checkParentAccess(parentId, studentId);
@@ -141,7 +142,7 @@ router.get('/children/:id/summary', (0, auth_1.authenticate)('parent'), async (r
         });
     }
     const [student, studentResults, allResults, watchRecs, studentAssignments, contentsData, testsData, subjectsData] = await Promise.all([
-        db_1.prisma.user.findFirst({ where: { id: studentId, role: 'student' } }),
+        db_1.prisma.user.findFirst({ where: { id: studentId, role: 'student' }, select: { id: true, name: true, gradeLevel: true, classId: true, profilePictureUrl: true } }),
         db_1.prisma.testResult.findMany({
             where: {
                 studentId,
@@ -224,6 +225,7 @@ router.get('/children/:id/summary', (0, auth_1.authenticate)('parent'), async (r
         },
         recentActivities,
         upcomingAssignments: upcoming.slice(0, 5),
+        profilePictureUrl: (_k = student.profilePictureUrl) !== null && _k !== void 0 ? _k : undefined,
     });
 });
 // Aktivite zaman takibi
@@ -514,7 +516,7 @@ router.get('/messages', (0, auth_1.authenticate)('parent'), async (req, res) => 
 });
 // Konuşmalar listesi
 router.get('/messages/conversations', (0, auth_1.authenticate)('parent'), async (req, res) => {
-    var _a;
+    var _a, _b;
     const userId = req.user.id;
     const userMessages = await db_1.prisma.message.findMany({
         where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
@@ -522,7 +524,7 @@ router.get('/messages/conversations', (0, auth_1.authenticate)('parent'), async 
     const otherUserIds = [...new Set(userMessages.map((m) => (m.fromUserId === userId ? m.toUserId : m.fromUserId)))];
     const users = await db_1.prisma.user.findMany({
         where: { id: { in: otherUserIds } },
-        select: { id: true, name: true, role: true },
+        select: { id: true, name: true, role: true, profilePictureUrl: true },
     });
     const userMap = new Map(users.map((u) => [u.id, u]));
     const studentsData = await db_1.prisma.user.findMany({
@@ -543,6 +545,7 @@ router.get('/messages/conversations', (0, auth_1.authenticate)('parent'), async 
                 userRole: otherUser.role,
                 studentId: (_a = msg.studentId) !== null && _a !== void 0 ? _a : undefined,
                 studentName: msg.studentId ? studentMap.get(msg.studentId) : undefined,
+                profilePictureUrl: (_b = otherUser.profilePictureUrl) !== null && _b !== void 0 ? _b : undefined,
                 unreadCount: 0,
             });
         }
@@ -1368,7 +1371,7 @@ router.get('/calendar', (0, auth_1.authenticate)('parent'), async (req, res) => 
         db_1.prisma.meeting.findMany({
             where: {
                 OR: [
-                    { students: { some: { studentId: { in: studentIds } } } },
+                    { students: { some: { studentId: { in: studentIds } } }, },
                     { parents: { some: { parentId } } },
                 ],
             },

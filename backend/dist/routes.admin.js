@@ -7,6 +7,24 @@ const express_1 = __importDefault(require("express"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const auth_1 = require("./auth");
 const db_1 = require("./db");
+const multer_1 = __importDefault(require("multer"));
+const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
+// Multer Setup
+const uploadDir = 'uploads/profiles';
+if (!fs_1.default.existsSync(uploadDir)) {
+    fs_1.default.mkdirSync(uploadDir, { recursive: true });
+}
+const storage = multer_1.default.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+        cb(null, 'profile-' + uniqueSuffix + path_1.default.extname(file.originalname));
+    },
+});
+const upload = (0, multer_1.default)({ storage });
 const router = express_1.default.Router();
 // Sistem genelinde kullanılacak sabit sınıf seviyeleri
 // Öğrenci ve soru bankası tarafındaki gradeLevel alanlarıyla uyumlu tutulmalıdır.
@@ -43,7 +61,7 @@ function normalizeParentPhone(raw) {
     return digits;
 }
 function toStudent(u) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     return {
         id: u.id,
         name: u.name,
@@ -52,6 +70,7 @@ function toStudent(u) {
         gradeLevel: (_a = u.gradeLevel) !== null && _a !== void 0 ? _a : '',
         classId: (_b = u.classId) !== null && _b !== void 0 ? _b : '',
         parentPhone: (_c = u.parentPhone) !== null && _c !== void 0 ? _c : undefined,
+        profilePictureUrl: (_d = u.profilePictureUrl) !== null && _d !== void 0 ? _d : undefined,
     };
 }
 function toParent(u, studentIds) {
@@ -89,9 +108,10 @@ router.get('/students', (0, auth_1.authenticate)('admin'), async (_req, res) => 
             gradeLevel: true,
             classId: true,
             parentPhone: true,
+            profilePictureUrl: true,
         },
     });
-    res.json(list.map(toStudent));
+    res.json(list.map((u) => toStudent(u)));
 });
 router.get('/parents', (0, auth_1.authenticate)('admin'), async (_req, res) => {
     const list = await db_1.prisma.user.findMany({
@@ -148,7 +168,7 @@ router.delete('/teachers/:id', (0, auth_1.authenticate)('admin'), async (req, re
     return res.json(toTeacher(existing));
 });
 router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => {
-    const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body;
+    const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body;
     if (!name || !email) {
         return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
     }
@@ -184,6 +204,7 @@ router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => 
             gradeLevel: gradeLevel !== null && gradeLevel !== void 0 ? gradeLevel : '',
             classId: classId !== null && classId !== void 0 ? classId : '',
             parentPhone,
+            profilePictureUrl,
         },
         select: {
             id: true,
@@ -192,13 +213,14 @@ router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => 
             gradeLevel: true,
             classId: true,
             parentPhone: true,
+            profilePictureUrl: true,
         },
     });
     return res.status(201).json(toStudent(created));
 });
 router.put('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
     const id = String(req.params.id);
-    const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body;
+    const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body;
     const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'student' } });
     if (!existing) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
@@ -207,8 +229,10 @@ router.put('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) 
         email === undefined &&
         gradeLevel === undefined &&
         classId === undefined &&
+        classId === undefined &&
         parentPhoneRaw === undefined &&
-        password === undefined) {
+        password === undefined &&
+        profilePictureUrl === undefined) {
         return res
             .status(400)
             .json({ error: 'Güncellenecek en az bir alan gönderilmelidir' });
@@ -246,9 +270,12 @@ router.put('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) 
         }
         data.passwordHash = await bcrypt_1.default.hash(password, 10);
     }
+    if (profilePictureUrl !== undefined) {
+        data.profilePictureUrl = profilePictureUrl;
+    }
     const updated = await db_1.prisma.user.update({
         where: { id },
-        data,
+        data: data,
         select: {
             id: true,
             name: true,
@@ -256,6 +283,7 @@ router.put('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) 
             gradeLevel: true,
             classId: true,
             parentPhone: true,
+            profilePictureUrl: true,
         },
     });
     return res.json(toStudent(updated));
@@ -494,6 +522,16 @@ router.get('/coaching', (0, auth_1.authenticate)('admin'), async (req, res) => {
             updatedAt: s.updatedAt.toISOString(),
         });
     }));
+});
+router.post('/upload/student-image', (0, auth_1.authenticate)('admin'), upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'Dosya yüklenemedi' });
+    }
+    // relative path döndür
+    // src/uploads/profiles/... -> frontend'den erişim için /uploads/profiles/...
+    // backend static serve ayarı lazım, varsayılan olarak /uploads serve ediliyorsa:
+    const url = `/uploads/profiles/${req.file.filename}`;
+    return res.json({ url });
 });
 exports.default = router;
 //# sourceMappingURL=routes.admin.js.map

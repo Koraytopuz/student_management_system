@@ -243,7 +243,7 @@ const helpSolutionUpload = multer({
 router.get(
   '/dashboard',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const teacherClasses = await prisma.classGroup.findMany({
       where: { teacherId },
@@ -325,7 +325,7 @@ router.get(
 router.post(
   '/ai/chat',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const { message, history, format } = req.body as {
       message?: string;
       history?: AiChatMessage[];
@@ -450,7 +450,7 @@ router.post(
 router.post(
   '/ai/generate-questions',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const { gradeLevel, topic, count = 5, difficulty = 'orta', format } = req.body as {
       gradeLevel?: string;
       topic?: string;
@@ -543,7 +543,7 @@ Cevap Anahtarı: 1-D, 2-C, 3-A, ...`;
 router.post(
   '/ai/evaluate-answer',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const { questionText, correctAnswer, studentAnswer, questionType = 'open' } = req.body as {
       questionText?: string;
       correctAnswer?: string;
@@ -588,7 +588,7 @@ Değerlendirmeni şu formatta ver (Türkçe):
 router.post(
   '/ai/summarize',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const { text, maxLength = 'orta' } = req.body as { text?: string; maxLength?: string };
     if (!text || !String(text).trim()) {
       return res.status(400).json({ error: 'Metin alanı zorunludur' });
@@ -616,7 +616,7 @@ router.post(
 router.get(
   '/announcements',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const items = await prisma.teacherAnnouncement.findMany({
       where: { teacherId },
@@ -639,7 +639,7 @@ router.get(
 router.post(
   '/announcements',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const { title, message, scheduledDate } = req.body as {
       title?: string;
@@ -676,7 +676,7 @@ router.post(
 router.get(
   '/students',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const teacherClasses = await prisma.classGroup.findMany({
       where: { teacherId },
@@ -713,7 +713,7 @@ router.get(
 router.get(
   '/parents',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const teacherClasses = await prisma.classGroup.findMany({
       where: { teacherId },
@@ -747,7 +747,7 @@ router.get(
 router.get(
   '/students/:id',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const id = String(req.params.id);
     const student = await prisma.user.findFirst({
       where: { id, role: 'student' },
@@ -822,7 +822,7 @@ router.get(
 router.post(
   '/feedback',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const teacherName = req.user!.name;
     const { studentId, type, title, content, relatedTestId, relatedAssignmentId } = req.body as {
@@ -881,7 +881,7 @@ router.post(
 router.get(
   '/contents',
   authenticate('teacher'),
-  async (_req: AuthenticatedRequest, res) => {
+  async (_req: AuthenticatedRequest, res: express.Response) => {
     try {
       const list = await prisma.contentItem.findMany({
         include: {
@@ -916,7 +916,7 @@ router.get(
 router.get(
   '/tests',
   authenticate('teacher'),
-  async (_req: AuthenticatedRequest, res) => {
+  async (_req: AuthenticatedRequest, res: express.Response) => {
     const list = await prisma.test.findMany({
       include: { questions: { select: { id: true }, orderBy: { orderIndex: 'asc' } } },
     });
@@ -937,7 +937,7 @@ router.get(
 router.post(
   '/tests/structured',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const { title, subjectId, topic, questions } = req.body as {
       title?: string;
@@ -1014,7 +1014,7 @@ router.post(
   '/test-assets/upload',
   authenticate('teacher'),
   testAssetUpload.single('file'),
-  (req: AuthenticatedRequest, res) => {
+  (req: AuthenticatedRequest, res: express.Response) => {
     const uploadedFile = (req as AuthenticatedRequest & { file?: Express.Multer.File }).file;
     if (!uploadedFile) {
       return res.status(400).json({ error: 'Dosya gereklidir' });
@@ -1043,7 +1043,7 @@ router.post(
 router.get(
   '/test-assets',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const list = await prisma.testAsset.findMany({
       where: { teacherId },
@@ -1069,7 +1069,7 @@ router.get(
 router.post(
   '/test-assets',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const { title, subjectId, topic, gradeLevel, fileUrl, fileName, mimeType, answerKeyJson } = req.body as {
       title?: string;
@@ -1143,7 +1143,7 @@ router.post(
 router.delete(
   '/test-assets/:id',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const id = String(req.params.id);
     const existing = await prisma.testAsset.findUnique({ where: { id } });
@@ -1162,7 +1162,7 @@ router.delete(
 router.get(
   '/help-requests',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     try {
       const teacherId = req.user!.id;
       const status = req.query.status ? String(req.query.status) : undefined;
@@ -1223,6 +1223,7 @@ router.get(
             testAssetFileUrl: pdfMatch ? testAsset?.fileUrl ?? undefined : undefined,
             testAssetId: pdfMatch ? (r.assignment as any)?.testAssetId ?? undefined : undefined,
             message: r.message ?? undefined,
+            imageUrl: (r as any).imageUrl ?? undefined,
             status: r.status,
             createdAt: r.createdAt.toISOString(),
             resolvedAt: r.resolvedAt?.toISOString(),
@@ -1254,7 +1255,7 @@ router.post(
   '/help-requests/:id/respond',
   authenticate('teacher'),
   helpSolutionUpload.single('file'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const teacherName = req.user!.name;
     const helpRequestId = String(req.params.id);
@@ -1355,7 +1356,7 @@ router.post(
 router.delete(
   '/help-requests/:id/response',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const helpRequestId = String(req.params.id);
 
@@ -1401,7 +1402,7 @@ router.delete(
 router.get(
   '/questions',
   authenticate('teacher'),
-  async (_req: AuthenticatedRequest, res) => {
+  async (_req: AuthenticatedRequest, res: express.Response) => {
     const list = await prisma.question.findMany({ orderBy: { orderIndex: 'asc' } });
     return res.json(
       list.map((q) => ({
@@ -1423,7 +1424,7 @@ router.get(
 router.post(
   '/contents',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     try {
       const {
         title,
@@ -1504,7 +1505,7 @@ router.post(
   '/contents/upload-video',
   authenticate('teacher'),
   videoUpload.single('file'),
-  (req: AuthenticatedRequest, res) => {
+  (req: AuthenticatedRequest, res: express.Response) => {
     const uploadedFile = (req as AuthenticatedRequest & { file?: Express.Multer.File }).file;
     if (!uploadedFile) {
       return res.status(400).json({ error: 'Video dosyası gereklidir' });
@@ -1533,7 +1534,7 @@ router.post(
 router.post(
   '/tests',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const { title, subjectId, topic } = req.body as {
       title?: string;
@@ -1570,7 +1571,7 @@ router.post(
 router.post(
   '/assignments',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const { title, description, testId, contentId, classId, dueDate, points, testAssetId, timeLimitMinutes, studentIds: requestedStudentIds } =
       req.body as {
@@ -1651,7 +1652,7 @@ router.post(
 router.get(
   '/assignments',
   authenticate('teacher'),
-  async (_req: AuthenticatedRequest, res) => {
+  async (_req: AuthenticatedRequest, res: express.Response) => {
     const list = await prisma.assignment.findMany({
       include: { students: { select: { studentId: true } } },
     });
@@ -1677,7 +1678,7 @@ router.get(
 router.get(
   '/messages',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const messagesData = await prisma.message.findMany({
       where: { OR: [{ fromUserId: userId }, { toUserId: userId }] },
@@ -1715,7 +1716,7 @@ router.get(
 router.put(
   '/messages/:id/read',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const messageId = String(req.params.id);
     const teacherId = req.user!.id;
 
@@ -1753,7 +1754,7 @@ router.put(
 router.post(
   '/messages',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const fromUserId = req.user!.id;
     const { toUserId, text, studentId, subject } = req.body as {
       toUserId?: string;
@@ -1808,7 +1809,7 @@ router.post(
 router.get(
   '/meetings',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const meetingsData = await prisma.meeting.findMany({
       where: {
@@ -1843,7 +1844,7 @@ router.get(
 router.put(
   '/meetings/:id',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -1905,7 +1906,7 @@ router.put(
 router.delete(
   '/meetings/:id',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -1932,7 +1933,7 @@ router.delete(
 router.post(
   '/meetings',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const {
       type,
@@ -2051,7 +2052,7 @@ router.post(
 router.post(
   '/meetings/:id/start-live',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -2115,7 +2116,7 @@ router.post(
 router.post(
   '/meetings/:id/mute-all',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -2150,7 +2151,7 @@ router.post(
 router.post(
   '/meetings/:id/start-recording',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -2179,7 +2180,7 @@ router.post(
 router.post(
   '/meetings/:id/stop-recording',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -2205,7 +2206,7 @@ router.post(
 router.get(
   '/meetings/:id/attendance-students',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
 
@@ -2244,7 +2245,7 @@ router.get(
 router.post(
   '/meetings/:id/attendance',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const meetingId = String(req.params.id);
     const { attendance: attendanceList } = req.body as {
@@ -2366,7 +2367,7 @@ router.post(
 router.get(
   '/notifications',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const readFilter = req.query.read;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
@@ -2402,7 +2403,7 @@ router.get(
 router.get(
   '/notifications/unread-count',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const count = await prisma.notification.count({
       where: { userId, read: false },
@@ -2415,7 +2416,7 @@ router.get(
 router.put(
   '/notifications/:id/read',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
     const notification = await prisma.notification.findFirst({
@@ -2449,7 +2450,7 @@ router.put(
 router.put(
   '/notifications/read-all',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const result = await prisma.notification.updateMany({
       where: { userId, read: false },
@@ -2463,7 +2464,7 @@ router.put(
 router.delete(
   '/notifications/:id',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const userId = req.user!.id;
     const notificationId = String(req.params.id);
     const notification = await prisma.notification.findFirst({
@@ -2483,7 +2484,7 @@ router.delete(
 router.get(
   '/calendar',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const startDate = req.query.startDate
       ? new Date(String(req.query.startDate))
@@ -2605,7 +2606,7 @@ type CoachingNoteRow = {
 router.get(
   '/students/:studentId/coaching',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const studentId = String(req.params.studentId);
 
@@ -2665,7 +2666,7 @@ router.get(
 router.get(
   '/students/:studentId/coaching-goals',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const studentId = String(req.params.studentId);
 
@@ -2717,7 +2718,7 @@ router.get(
 router.post(
   '/students/:studentId/coaching-goals',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const studentId = String(req.params.studentId);
     const { title, description, deadline } = req.body as {
@@ -2780,7 +2781,7 @@ router.post(
 router.patch(
   '/coaching-goals/:goalId',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const goalId = String(req.params.goalId);
 
@@ -2844,7 +2845,7 @@ router.patch(
 router.get(
   '/students/:studentId/coaching-notes',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const studentId = String(req.params.studentId);
 
@@ -2891,7 +2892,7 @@ router.get(
 router.post(
   '/students/:studentId/coaching-notes',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const studentId = String(req.params.studentId);
     const { content, visibility, date } = req.body as {
@@ -2953,7 +2954,7 @@ router.post(
 router.post(
   '/students/:studentId/coaching',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const studentId = String(req.params.studentId);
     const { date, durationMinutes, title, notes, mode, meetingUrl } = req.body as {
@@ -3093,7 +3094,7 @@ router.post(
 router.get(
   '/coaching',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const studentId = req.query.studentId ? String(req.query.studentId) : undefined;
 
@@ -3140,7 +3141,7 @@ router.get(
 router.put(
   '/coaching/:sessionId',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const sessionId = String(req.params.sessionId);
     const { date, durationMinutes, title, notes, mode, meetingUrl } = req.body as {
@@ -3263,7 +3264,7 @@ router.put(
 router.delete(
   '/coaching/:sessionId',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
     const sessionId = String(req.params.sessionId);
 
@@ -3294,7 +3295,7 @@ router.delete(
 router.get(
   '/assignments/live-status',
   authenticate('teacher'),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
 
     // Aktif ödevleri bul
@@ -3331,7 +3332,7 @@ router.get(
 router.get(
   '/students/:id/performance',
   authenticateMultiple(['teacher', 'admin']),
-  async (req: AuthenticatedRequest, res) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = String(req.params.id);
 
     // Öğrenci bilgisi

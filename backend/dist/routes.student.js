@@ -8,6 +8,7 @@ const express_1 = __importDefault(require("express"));
 const pdfkit_1 = __importDefault(require("pdfkit"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const multer_1 = __importDefault(require("multer"));
 const auth_1 = require("./auth");
 const db_1 = require("./db");
 const badgeService_1 = require("./services/badgeService");
@@ -15,6 +16,18 @@ const notificationService_1 = require("./services/notificationService");
 const livekit_1 = require("./livekit");
 const ai_1 = require("./ai");
 const router = express_1.default.Router();
+// Yüklenen dosyalar için klasörler
+const uploadsHelpDir = path_1.default.join(__dirname, '..', 'uploads', 'help-requests');
+const uploadsTmpDir = path_1.default.join(__dirname, '..', 'uploads', 'tmp');
+[uploadsHelpDir, uploadsTmpDir].forEach((dir) => {
+    if (!fs_1.default.existsSync(dir)) {
+        fs_1.default.mkdirSync(dir, { recursive: true });
+    }
+});
+const helpRequestUpload = (0, multer_1.default)({
+    dest: uploadsTmpDir,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
 // Basit metin PDF'i üretmek için yardımcı fonksiyon
 async function generateFeedbackPdf(text) {
     const fontPath = path_1.default.join(__dirname, 'assets', 'fonts', 'arial.ttf');
@@ -1083,61 +1096,87 @@ router.post('/questionbank/start-test', (0, auth_1.authenticate)('student'), asy
         questions: responseQuestions,
     });
 });
-// Öğretmene sor (yardım talebi) - test veya PDF test içindeki soru için
-router.post('/help-requests', (0, auth_1.authenticate)('student'), async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+// Öğretmene sor (yardım talebi) - test, PDF test veya genel fotoğraf ile
+router.post('/help-requests', (0, auth_1.authenticate)('student'), helpRequestUpload.single('image'), async (req, res) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     const studentId = req.user.id;
     const { assignmentId, questionId, message, studentAnswer } = req.body;
-    if (!assignmentId) {
-        return res.status(400).json({ error: 'assignmentId zorunludur' });
+    let teacherId = null;
+    let notificationBody = '';
+    // Görsel yüklendiyse taşı
+    let imageUrl;
+    if (req.file) {
+        const ext = path_1.default.extname(req.file.originalname) || '.png';
+        const fileName = `help-${studentId}-${Date.now()}${ext}`;
+        const finalPath = path_1.default.join(uploadsHelpDir, fileName);
+        fs_1.default.renameSync(req.file.path, finalPath);
+        imageUrl = `/uploads/help-requests/${fileName}`;
     }
-    if (!questionId) {
-        return res.status(400).json({ error: 'questionId zorunludur' });
-    }
-    const assignment = await db_1.prisma.assignment.findFirst({
-        where: { id: assignmentId, students: { some: { studentId } } },
-        include: { test: true, testAsset: true },
-    });
-    if (!assignment) {
-        return res.status(404).json({ error: 'Görev bulunamadı' });
-    }
-    const teacherId = (_a = assignment.createdByTeacherId) !== null && _a !== void 0 ? _a : (assignment.classId
-        ? (_b = (await db_1.prisma.classGroup.findUnique({ where: { id: assignment.classId } }))) === null || _b === void 0 ? void 0 : _b.teacherId
-        : null);
-    if (!teacherId) {
-        return res.status(409).json({ error: 'Bu görev için öğretmen bilgisi bulunamadı' });
-    }
-    const testTitle = (_f = (_d = (_c = assignment.test) === null || _c === void 0 ? void 0 : _c.title) !== null && _d !== void 0 ? _d : (_e = assignment.testAsset) === null || _e === void 0 ? void 0 : _e.title) !== null && _f !== void 0 ? _f : assignment.title;
-    // PDF test (testAsset) – questionId "pdf-page-N" formatında
-    const pdfPageMatch = /^pdf-page-(\d+)$/.exec(questionId);
-    const isPdfTest = !!assignment.testAssetId && !assignment.testId;
-    let notificationBody;
-    let dbQuestionId;
-    if (isPdfTest && pdfPageMatch && pdfPageMatch[1]) {
-        const pageNum = parseInt(pdfPageMatch[1], 10);
-        dbQuestionId = null;
-        notificationBody = `${req.user.name} "${testTitle}" PDF testinde ${pageNum}. soruda takıldı.`;
+    if (assignmentId) {
+        const assignment = await db_1.prisma.assignment.findFirst({
+            where: { id: assignmentId, students: { some: { studentId } } },
+            include: { test: true, testAsset: true },
+        });
+        if (!assignment) {
+            return res.status(404).json({ error: 'Görev bulunamadı' });
+        }
+        teacherId =
+            (_a = assignment.createdByTeacherId) !== null && _a !== void 0 ? _a : (assignment.classId
+                ? (_b = (await db_1.prisma.classGroup.findUnique({ where: { id: assignment.classId } }))) === null || _b === void 0 ? void 0 : _b.teacherId
+                : null);
+        const testTitle = (_f = (_d = (_c = assignment.test) === null || _c === void 0 ? void 0 : _c.title) !== null && _d !== void 0 ? _d : (_e = assignment.testAsset) === null || _e === void 0 ? void 0 : _e.title) !== null && _f !== void 0 ? _f : assignment.title;
+        if (questionId) {
+            // PDF test (testAsset) – questionId "pdf-page-N" formatında
+            const pdfPageMatch = /^pdf-page-(\d+)$/.exec(questionId);
+            const isPdfTest = !!assignment.testAssetId && !assignment.testId;
+            if (isPdfTest && pdfPageMatch && pdfPageMatch[1]) {
+                const pageNum = parseInt(pdfPageMatch[1], 10);
+                notificationBody = `${req.user.name} "${testTitle}" PDF testinde ${pageNum}. soruda takıldı.`;
+            }
+            else {
+                const question = await db_1.prisma.question.findUnique({ where: { id: questionId } });
+                if (question) {
+                    const questionNumber = ((_g = question.orderIndex) !== null && _g !== void 0 ? _g : 0) + 1;
+                    notificationBody = `${req.user.name} "${testTitle}" testinde ${questionNumber}. soruda takıldı.`;
+                }
+                else {
+                    notificationBody = `${req.user.name} "${testTitle}" adlı sınavda bir soruda takıldı.`;
+                }
+            }
+        }
+        else {
+            notificationBody = `${req.user.name} "${testTitle}" adlı çalışmada takıldığı bir soru gönderdi.`;
+        }
     }
     else {
-        const question = await db_1.prisma.question.findUnique({ where: { id: questionId } });
-        if (!question) {
-            return res.status(404).json({ error: 'Soru bulunamadı' });
+        // Genel soru (Fotoğraflı veya mesajlı)
+        const student = await db_1.prisma.user.findUnique({
+            where: { id: studentId },
+            select: { classId: true },
+        });
+        if (student === null || student === void 0 ? void 0 : student.classId) {
+            const classGroup = await db_1.prisma.classGroup.findUnique({ where: { id: student.classId } });
+            teacherId = (_h = classGroup === null || classGroup === void 0 ? void 0 : classGroup.teacherId) !== null && _h !== void 0 ? _h : null;
         }
-        if (assignment.testId && question.testId !== assignment.testId) {
-            return res.status(400).json({ error: 'Soru bu teste ait değil' });
+        if (!teacherId) {
+            // Eğer sınıfı yoksa rastgele bir öğretmen seç (veya hata ver, ama burada ilk öğretmeni bulalım)
+            const anyTeacher = await db_1.prisma.user.findFirst({ where: { role: 'teacher' } });
+            teacherId = (_j = anyTeacher === null || anyTeacher === void 0 ? void 0 : anyTeacher.id) !== null && _j !== void 0 ? _j : null;
         }
-        dbQuestionId = questionId;
-        const questionNumber = ((_g = question.orderIndex) !== null && _g !== void 0 ? _g : 0) + 1;
-        notificationBody = `${req.user.name} "${testTitle}" testinde ${questionNumber}. soruda takıldı.`;
+        notificationBody = `${req.user.name} size yeni bir soru gönderdi (Soru Havuzu / Genel).`;
+    }
+    if (!teacherId) {
+        return res.status(409).json({ error: 'Yardım talebi için öğretmen bulunamadı' });
     }
     const created = await db_1.prisma.helpRequest.create({
         data: {
             studentId,
             teacherId,
-            assignmentId: assignment.id,
-            questionId: dbQuestionId,
+            assignmentId: assignmentId || null,
+            questionId: (assignmentId && questionId && !questionId.startsWith('pdf-')) ? questionId : null,
             studentAnswer: (studentAnswer === null || studentAnswer === void 0 ? void 0 : studentAnswer.trim()) ? studentAnswer.trim().toUpperCase().slice(0, 1) : undefined,
             message: (message === null || message === void 0 ? void 0 : message.trim()) ? message.trim() : undefined,
+            imageUrl,
             status: 'open',
         },
     });
@@ -1152,15 +1191,17 @@ router.post('/help-requests', (0, auth_1.authenticate)('student'), async (req, r
             relatedEntityId: created.id,
         },
     });
+    const r = created;
     return res.status(201).json({
-        id: created.id,
-        studentId: created.studentId,
-        teacherId: created.teacherId,
-        assignmentId: created.assignmentId,
-        questionId: (_h = created.questionId) !== null && _h !== void 0 ? _h : undefined,
-        message: (_j = created.message) !== null && _j !== void 0 ? _j : undefined,
-        status: created.status,
-        createdAt: created.createdAt.toISOString(),
+        id: r.id,
+        studentId: r.studentId,
+        teacherId: r.teacherId,
+        assignmentId: (_k = r.assignmentId) !== null && _k !== void 0 ? _k : undefined,
+        questionId: (_l = r.questionId) !== null && _l !== void 0 ? _l : undefined,
+        imageUrl: (_m = r.imageUrl) !== null && _m !== void 0 ? _m : undefined,
+        message: (_o = r.message) !== null && _o !== void 0 ? _o : undefined,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
     });
 });
 // Öğrencinin yardım talepleri

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { HelpCircle } from 'lucide-react';
+import { HelpCircle, Camera, Image, Trash2, Loader2 } from 'lucide-react';
 import { DrawingCanvas } from './DrawingCanvas';
 import { Breadcrumb } from './components/DashboardPrimitives';
 
@@ -31,7 +31,7 @@ interface PdfTestOverlayProps {
   onTimeUp?: (answers: Record<number, string>) => void;
   onClose: () => void;
   onSubmit: (answers: Record<number, string>) => Promise<void>;
-  onAskTeacher?: (questionId: string, message?: string, studentAnswer?: string) => Promise<void>;
+  onAskTeacher?: (questionId: string, message?: string, studentAnswer?: string, image?: File) => Promise<void>;
   submitting?: boolean;
 }
 
@@ -67,6 +67,10 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
   const [askTeacherOpen, setAskTeacherOpen] = useState(false);
   const [askTeacherMessage, setAskTeacherMessage] = useState('');
   const [askTeacherSending, setAskTeacherSending] = useState(false);
+  const [askTeacherFile, setAskTeacherFile] = useState<File | null>(null);
+  const [askTeacherPreview, setAskTeacherPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const drawingLineWidth = 3;
   const eraserWidth = 18;
   const docRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -185,6 +189,33 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
     setScratchpads((prev) => ({ ...prev, [pageKey]: dataUrl }));
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAskTeacherFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAskTeacherPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearFile = () => {
+    setAskTeacherFile(null);
+    setAskTeacherPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+  };
+
+  const triggerCamera = () => {
+    cameraInputRef.current?.click();
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
   const handleAskTeacher = async () => {
     if (!onAskTeacher) return;
     setAskTeacherSending(true);
@@ -193,9 +224,11 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
         pdfQuestionId,
         askTeacherMessage.trim() || undefined,
         answers[pageKey] || undefined,
+        askTeacherFile || undefined,
       );
       setAskTeacherOpen(false);
       setAskTeacherMessage('');
+      clearFile();
     } finally {
       setAskTeacherSending(false);
     }
@@ -798,31 +831,141 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
                 width: '100%',
                 padding: '0.6rem',
                 borderRadius: 8,
-                border: '1px solid rgba(71,85,105,0.9)',
-                background: 'rgba(15,23,42,0.9)',
+                background: '#1a2234',
                 color: '#e5e7eb',
+                border: '1px solid rgba(148,163,184,0.4)',
                 fontSize: '0.9rem',
-                resize: 'vertical',
                 marginBottom: '1rem',
+                resize: 'none',
               }}
             />
-            <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end' }}>
+
+            {/* Fotoğraf Seçenekleri */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={triggerCamera}
+                  className="ghost-btn"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    padding: '0.6rem',
+                    borderRadius: 10,
+                    border: '1px solid rgba(99,102,241,0.4)',
+                    background: 'rgba(99,102,241,0.05)',
+                    color: '#c7d2fe',
+                  }}
+                >
+                  <Camera size={18} />
+                  Foto Çek
+                </button>
+                <button
+                  type="button"
+                  onClick={triggerFileInput}
+                  className="ghost-btn"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    padding: '0.6rem',
+                    borderRadius: 10,
+                    border: '1px solid rgba(148,163,184,0.3)',
+                    background: 'rgba(15,23,42,0.4)',
+                    color: '#94a3b8',
+                  }}
+                >
+                  <Image size={18} />
+                  Galeriden Seç
+                </button>
+              </div>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept="image/*"
+                onChange={handleFileChange}
+              />
+              <input
+                type="file"
+                ref={cameraInputRef}
+                style={{ display: 'none' }}
+                accept="image/*"
+                capture="environment"
+                onChange={handleFileChange}
+              />
+
+              {askTeacherPreview && (
+                <div style={{ position: 'relative', marginTop: '0.5rem', borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(99,102,241,0.3)' }}>
+                  <img
+                    src={askTeacherPreview}
+                    alt="Önizleme"
+                    style={{ width: '100%', maxHeight: 200, objectFit: 'cover', display: 'block' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={clearFile}
+                    style={{
+                      position: 'absolute',
+                      top: 4,
+                      right: 4,
+                      background: 'rgba(239,68,68,0.85)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: 24,
+                      height: 24,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               <button
                 type="button"
                 className="ghost-btn"
                 onClick={() => setAskTeacherOpen(false)}
                 disabled={askTeacherSending}
-                style={{ border: '1px solid rgba(148,163,184,0.9)', color: '#e5e7eb' }}
+                style={{
+                  border: '1px solid rgba(148,163,184,0.3)',
+                  color: '#94a3b8',
+                }}
               >
-                İptal
+                Vazgeç
               </button>
               <button
                 type="button"
                 className="primary-btn"
                 onClick={handleAskTeacher}
                 disabled={askTeacherSending}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.5rem 1.25rem',
+                }}
               >
-                {askTeacherSending ? 'Gönderiliyor...' : 'Gönder'}
+                {askTeacherSending ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Gönderiliyor...
+                  </>
+                ) : (
+                  'Soruyu Gönder'
+                )}
               </button>
             </div>
           </div>

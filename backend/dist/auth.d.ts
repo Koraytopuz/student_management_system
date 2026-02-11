@@ -1,9 +1,9 @@
 import express from 'express';
 import { z } from 'zod';
 import { User, UserRole } from './types';
-export interface AuthenticatedRequest extends express.Request {
+export type AuthenticatedRequest = express.Request & {
     user?: User;
-}
+};
 export declare const loginSchema: z.ZodObject<{
     email: z.ZodString;
     password: z.ZodString;
@@ -16,4 +16,5 @@ export declare const loginSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const loginHandler: express.RequestHandler;
 export declare function authenticate(requiredRole?: UserRole): express.RequestHandler;
+export declare function authenticateMultiple(requiredRoles?: UserRole[]): express.RequestHandler;
 //# sourceMappingURL=auth.d.ts.map
