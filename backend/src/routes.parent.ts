@@ -61,13 +61,13 @@ async function getAssignmentStatus(
   const [result, watchRecord] = await Promise.all([
     assignment.testId
       ? prisma.testResult.findFirst({
-          where: { assignmentId: assignment.id, studentId },
-        })
+        where: { assignmentId: assignment.id, studentId },
+      })
       : Promise.resolve(null),
     assignment.contentId
       ? prisma.watchRecord.findUnique({
-          where: { contentId_studentId: { contentId: assignment.contentId, studentId } },
-        })
+        where: { contentId_studentId: { contentId: assignment.contentId, studentId } },
+      })
       : Promise.resolve(null),
   ]);
 
@@ -102,7 +102,7 @@ router.get(
     for (const sid of studentIds) {
       const [student, studentResults, allResults, watchRecs, studentAssignments] =
         await Promise.all([
-          prisma.user.findFirst({ where: { id: sid, role: 'student' } }),
+          prisma.user.findFirst({ where: { id: sid, role: 'student' }, select: { id: true, name: true, gradeLevel: true, classId: true, profilePictureUrl: true } } as any),
           prisma.testResult.findMany({
             where: { studentId: sid, completedAt: { gte: sevenDaysAgo } },
           }),
@@ -111,7 +111,7 @@ router.get(
           prisma.assignment.findMany({
             where: { students: { some: { studentId: sid } } },
           }),
-        ]);
+        ]) as any;
 
       let pendingCount = 0;
       let overdueCount = 0;
@@ -121,11 +121,11 @@ router.get(
         else if (status === 'overdue') overdueCount++;
       }
 
-      const studyMinutes = watchRecs.reduce((s, w) => s + w.watchedSeconds, 0) / 60;
-      const lastResult = allResults[allResults.length - 1];
-      const lastWatch = watchRecs.sort((a, b) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())[0];
+      const studyMinutes = (watchRecs as any[]).reduce((s: any, w: any) => s + w.watchedSeconds, 0) / 60;
+      const lastResult = allResults[allResults.length - 1] as any;
+      const lastWatch = (watchRecs as any[]).sort((a: any, b: any) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())[0];
       const lastActivity =
-        lastResult?.completedAt.toISOString() ?? lastWatch?.lastWatchedAt.toISOString();
+        lastResult?.completedAt?.toISOString() ?? lastWatch?.lastWatchedAt?.toISOString();
 
       const status: 'active' | 'inactive' =
         lastActivity && new Date(lastActivity) >= threeDaysAgo ? 'active' : 'inactive';
@@ -141,14 +141,15 @@ router.get(
           allResults.length === 0
             ? 0
             : Math.round(
-                allResults.reduce((sum, r) => sum + r.scorePercent, 0) / allResults.length,
-              ),
+              (allResults as any[]).reduce((sum: any, r: any) => sum + r.scorePercent, 0) / allResults.length,
+            ),
         totalStudyMinutes: Math.round(studyMinutes),
         lastActivityDate: lastActivity,
         status,
         pendingAssignmentsCount: pendingCount,
         overdueAssignmentsCount: overdueCount,
-      });
+        profilePictureUrl: (student as any)?.profilePictureUrl ?? undefined,
+      } as any);
     }
 
     const totalTestsSolved = cards.reduce((sum, c) => sum + c.testsSolvedLast7Days, 0);
@@ -156,8 +157,8 @@ router.get(
       cards.length === 0
         ? 0
         : Math.round(
-            cards.reduce((sum, c) => sum + c.averageScorePercent, 0) / cards.length,
-          );
+          cards.reduce((sum, c) => sum + c.averageScorePercent, 0) / cards.length,
+        );
 
     return res.json({
       children: cards,
@@ -186,7 +187,7 @@ router.get(
 
     const [student, studentResults, allResults, watchRecs, studentAssignments, contentsData, testsData, subjectsData] =
       await Promise.all([
-        prisma.user.findFirst({ where: { id: studentId, role: 'student' } }),
+        prisma.user.findFirst({ where: { id: studentId, role: 'student' }, select: { id: true, name: true, gradeLevel: true, classId: true, profilePictureUrl: true } } as any),
         prisma.testResult.findMany({
           where: {
             studentId,
@@ -201,15 +202,15 @@ router.get(
         prisma.contentItem.findMany(),
         prisma.test.findMany(),
         prisma.subject.findMany(),
-      ]);
+      ]) as any;
 
     if (!student) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    const contentMap = new Map(contentsData.map((c) => [c.id, c]));
-    const testMap = new Map(testsData.map((t) => [t.id, t]));
-    const subjectMap = new Map(subjectsData.map((s) => [s.id, s]));
+    const contentMap = new Map((contentsData as any[]).map((c: any) => [c.id, c]));
+    const testMap = new Map((testsData as any[]).map((t: any) => [t.id, t]));
+    const subjectMap = new Map((subjectsData as any[]).map((s: any) => [s.id, s]));
 
     let pendingCount = 0;
     let overdueCount = 0;
@@ -231,10 +232,10 @@ router.get(
       if (status === 'pending') pendingCount++;
       else if (status === 'overdue') overdueCount++;
       if (status === 'pending' || status === 'in_progress') {
-        const test = a.testId ? testMap.get(a.testId) : null;
-        const content = a.contentId ? contentMap.get(a.contentId) : null;
+        const test = a.testId ? (testMap.get(a.testId) as any) : null;
+        const content = a.contentId ? (contentMap.get(a.contentId) as any) : null;
         const subjectId = test?.subjectId ?? content?.subjectId ?? '';
-        const subjectName = subjectMap.get(subjectId)?.name ?? 'Bilinmeyen';
+        const subjectName = (subjectMap.get(subjectId) as any)?.name ?? 'Bilinmeyen';
         const [result, watchRecord] = await Promise.all([
           a.testId ? prisma.testResult.findFirst({ where: { assignmentId: a.id, studentId } }) : null,
           a.contentId ? prisma.watchRecord.findUnique({ where: { contentId_studentId: { contentId: a.contentId, studentId } } }) : null,
@@ -260,16 +261,16 @@ router.get(
     }
 
     const recentActivities = [
-      ...allResults.slice(-5).map((r) => ({ type: 'test' as const, title: `Test tamamlandı - ${r.scorePercent}%`, date: r.completedAt.toISOString() })),
-      ...watchRecs
-        .sort((a, b) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())
+      ...(allResults as any[]).slice(-5).map((r: any) => ({ type: 'test' as const, title: `Test tamamlandı - ${r.scorePercent}%`, date: r.completedAt.toISOString() })),
+      ...(watchRecs as any[])
+        .sort((a: any, b: any) => b.lastWatchedAt.getTime() - a.lastWatchedAt.getTime())
         .slice(0, 3)
-        .map((w) => ({ type: 'content' as const, title: contentMap.get(w.contentId)?.title ?? 'İçerik izlendi', date: w.lastWatchedAt.toISOString() })),
+        .map((w: any) => ({ type: 'content' as const, title: (contentMap.get(w.contentId) as any)?.title ?? 'İçerik izlendi', date: w.lastWatchedAt.toISOString() })),
     ]
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 10);
 
-    const studyMinutes = watchRecs.reduce((s, w) => s + w.watchedSeconds, 0) / 60;
+    const studyMinutes = (watchRecs as any[]).reduce((s: any, w: any) => s + w.watchedSeconds, 0) / 60;
 
     return res.json({
       studentId,
@@ -278,14 +279,15 @@ router.get(
       className: await getStudentClassName(studentId),
       quickStats: {
         testsSolvedLast7Days: studentResults.length,
-        averageScorePercent: allResults.length === 0 ? 0 : Math.round(allResults.reduce((sum, r) => sum + r.scorePercent, 0) / allResults.length),
+        averageScorePercent: allResults.length === 0 ? 0 : Math.round((allResults as any[]).reduce((sum: any, r: any) => sum + r.scorePercent, 0) / allResults.length),
         totalStudyMinutes: Math.round(studyMinutes),
         pendingAssignmentsCount: pendingCount,
         overdueAssignmentsCount: overdueCount,
       },
       recentActivities,
       upcomingAssignments: upcoming.slice(0, 5),
-    });
+      profilePictureUrl: (student as any).profilePictureUrl ?? undefined,
+    } as any);
   },
 );
 
@@ -389,8 +391,8 @@ router.get(
     const mostActiveDay =
       dailyData.length > 0
         ? dailyData.reduce((max, d) =>
-            d.totalMinutes > max.totalMinutes ? d : max,
-          ).date
+          d.totalMinutes > max.totalMinutes ? d : max,
+        ).date
         : '';
 
     // Saatlik aktivite dağılımı (basitleştirilmiş)
@@ -474,8 +476,8 @@ router.get(
       const result = allResults.find((r) => r.assignmentId === a.id);
       const watchRecord = a.contentId
         ? await prisma.watchRecord.findUnique({
-            where: { contentId_studentId: { contentId: a.contentId, studentId } },
-          })
+          where: { contentId_studentId: { contentId: a.contentId, studentId } },
+        })
         : null;
 
       assignmentItems.push({
@@ -666,8 +668,8 @@ router.get(
     const otherUserIds = [...new Set(userMessages.map((m) => (m.fromUserId === userId ? m.toUserId : m.fromUserId)))];
     const users = await prisma.user.findMany({
       where: { id: { in: otherUserIds } },
-      select: { id: true, name: true, role: true },
-    });
+      select: { id: true, name: true, role: true, profilePictureUrl: true },
+    } as any);
     const userMap = new Map(users.map((u) => [u.id, u]));
     const studentsData = await prisma.user.findMany({
       where: { id: { in: userMessages.map((m) => m.studentId).filter(Boolean) as string[] }, role: 'student' },
@@ -697,8 +699,9 @@ router.get(
           userRole: otherUser.role,
           studentId: msg.studentId ?? undefined,
           studentName: msg.studentId ? studentMap.get(msg.studentId) : undefined,
+          profilePictureUrl: (otherUser as any).profilePictureUrl ?? undefined,
           unreadCount: 0,
-        });
+        } as any);
       }
       const conv = conversationMap.get(otherUserId)!;
       if (!conv.lastMessage || msg.createdAt > new Date(conv.lastMessage.createdAt)) {
@@ -1365,7 +1368,7 @@ router.get(
     const totalStudyMinutes = Math.round(
       (studentResults.reduce((sum, r) => sum + r.durationSeconds, 0) +
         studentWatchRecords.reduce((sum, w) => sum + w.watchedSeconds, 0)) /
-        60,
+      60,
     );
     const contentsWatched = new Set(studentWatchRecords.map((w) => w.contentId)).size;
     const contentsWatchTimeMinutes = Math.round(
@@ -1559,7 +1562,7 @@ router.get(
         .json({ error: access.error });
     }
 
-    const notes = await prisma.coachingNote.findMany({
+    const notes = await (prisma as any).coachingNote.findMany({
       where: {
         studentId,
         visibility: 'shared_with_parent',
@@ -1571,7 +1574,7 @@ router.get(
     });
 
     return res.json(
-      notes.map((n) => ({
+      notes.map((n: any) => ({
         id: n.id,
         studentId: n.studentId,
         coachId: n.coachId,
@@ -1598,7 +1601,7 @@ router.get(
         .json({ error: access.error });
     }
 
-    const goals = await prisma.coachingGoal.findMany({
+    const goals = await (prisma as any).coachingGoal.findMany({
       where: { studentId },
       orderBy: { deadline: 'asc' },
       include: {
@@ -1618,18 +1621,18 @@ router.get(
     }
 
     const total = goals.length;
-    const completedCount = goals.filter((g) => g.status === 'completed').length;
-    const missedCount = goals.filter((g) => g.status === 'missed').length;
-    const pendingCount = goals.filter((g) => g.status === 'pending').length;
+    const completedCount = goals.filter((g: any) => g.status === 'completed').length;
+    const missedCount = goals.filter((g: any) => g.status === 'missed').length;
+    const pendingCount = goals.filter((g: any) => g.status === 'pending').length;
     const now = Date.now();
     const overduePendingCount = goals.filter(
-      (g) => g.status === 'pending' && g.deadline.getTime() < now,
+      (g: any) => g.status === 'pending' && g.deadline.getTime() < now,
     ).length;
     const completionPercent =
       total === 0 ? 0 : Math.round((completedCount / total) * 100);
 
     return res.json({
-      goals: goals.map((g) => ({
+      goals: goals.map((g: any) => ({
         id: g.id,
         studentId: g.studentId,
         coachId: g.coachId,
@@ -1688,7 +1691,7 @@ router.get(
       prisma.meeting.findMany({
         where: {
           OR: [
-            { students: { some: { studentId: { in: studentIds } } } },
+            { students: { some: { studentId: { in: studentIds } } }, },
             { parents: { some: { parentId } } },
           ],
         },
@@ -1808,7 +1811,7 @@ router.post(
     const admins = await prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
     if (admins.length > 0) {
       await prisma.notification.createMany({
-        data: admins.map((a) => ({
+        data: admins.map((a: { id: string }) => ({
           userId: a.id,
           type: 'complaint_created' as any,
           title: 'Yeni şikayet/öneri',

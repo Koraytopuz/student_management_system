@@ -202,6 +202,7 @@ model User {
   gradeLevel  String? @map("grade_level")
   classId     String? @map("class_id")
   parentPhone String? @map("parent_phone")
+  profilePictureUrl String? @map("profile_picture_url")
 
   // Relations
   classGroupsAsTeacher  ClassGroup[]         @relation("ClassGroupTeacher")
@@ -335,6 +336,7 @@ model Test {
   subject     Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   questions   Question[]
   assignments Assignment[]
+  testResults TestResult[]
 
   @@map("tests")
 }
@@ -490,6 +492,7 @@ model TestResult {
   createdAt      DateTime @default(now())
 
   assignment Assignment           @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  test       Test                 @relation(fields: [testId], references: [id], onDelete: Cascade)
   answers    TestResultAnswer[]
 
   @@map("test_results")

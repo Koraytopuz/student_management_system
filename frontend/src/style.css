@@ -240,7 +240,7 @@ a {
 }
 
 .login-particles-canvas {
-  position: absolute;
+  position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -4383,4 +4383,70 @@ button:disabled {
     box-shadow: none !important;
     border-radius: 0 !important;
   }
+}
+
+/* Annual Report Light Mode Overrides */
+:root[data-theme='light'] .annual-report-title-block h1 {
+  color: #1e293b;
+}
+
+:root[data-theme='light'] .annual-report-subtitle {
+  color: #475569;
+}
+
+:root[data-theme='light'] .annual-report-helper {
+  color: #64748b;
+}
+
+:root[data-theme='light'] .annual-report-eyebrow {
+  color: #3b82f6;
+}
+
+:root[data-theme='light'] .annual-report-score-label {
+  color: #64748b;
+}
+
+:root[data-theme='light'] .annual-report-score-value {
+  color: #1e293b;
+}
+
+:root[data-theme='light'] .annual-report-score-denominator {
+  color: #94a3b8;
+}
+
+:root[data-theme='light'] .annual-report-score-description {
+  color: #64748b;
+}
+
+:root[data-theme='light'] .annual-report-effort-value {
+  color: #1e293b;
+}
+
+:root[data-theme='light'] .annual-report-card-title {
+  color: #1e293b;
+}
+
+:root[data-theme='light'] .annual-report-rank-inner {
+  background: #ffffff;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+}
+
+/* Login Page Light Mode Overrides */
+:root[data-theme='light'] .login-card {
+  color: #0f172a;
+}
+
+:root[data-theme='light'] .login-card p {
+  color: #334155;
+}
+
+:root[data-theme='light'] .login-card span {
+  color: #475569;
+}
+
+:root[data-theme='light'] .login-card input {
+  color: #0f172a;
+  background: #ffffff;
+  border-color: #cbd5e1;
 }

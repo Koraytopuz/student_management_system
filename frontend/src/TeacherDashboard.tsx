@@ -72,6 +72,9 @@ import {
   type CurriculumTopic,
   getCurriculumTopics,
   getCurriculumSubjects,
+  getStudentPerformanceReport,
+  resolveContentUrl,
+  type AnnualReportData,
 } from './api';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -265,6 +268,8 @@ export const TeacherDashboard: React.FC = () => {
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [selectedStudentProfile, setSelectedStudentProfile] = useState<TeacherStudentProfile | null>(null);
   const [studentProfileLoading, setStudentProfileLoading] = useState(false);
+  const [reportData, setReportData] = useState<AnnualReportData | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const [contentDraft, setContentDraft] = useState({
     title: '',
     type: 'video',
@@ -562,6 +567,18 @@ export const TeacherDashboard: React.FC = () => {
       .catch(() => setSelectedStudentProfile(null))
       .finally(() => setStudentProfileLoading(false));
   }, [token, selectedStudentId]);
+
+  useEffect(() => {
+    if (!token || !selectedStudentId || activeTab !== 'reports') {
+      setReportData(null);
+      return;
+    }
+    setReportLoading(true);
+    getStudentPerformanceReport(token, selectedStudentId)
+      .then(setReportData)
+      .catch(() => setReportData(null))
+      .finally(() => setReportLoading(false));
+  }, [token, selectedStudentId, activeTab]);
 
   useEffect(() => {
     if (!aiOpen) return;
@@ -1687,26 +1704,68 @@ export const TeacherDashboard: React.FC = () => {
         />
       )}
       {activeTab === 'reports' && (
-        <AnnualPerformanceReport
-          studentName={selectedStudent?.name}
-          className={selectedStudent?.gradeLevel ? `${selectedStudent.gradeLevel}. Sınıf` : undefined}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <GlassCard title="Rapor Görüntüleme" subtitle="Öğrenci karnesini seçin">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <select
+                value={selectedStudentId}
+                onChange={(e) => setSelectedStudentId(e.target.value)}
+                style={{
+                  padding: '0.6rem 1rem',
+                  borderRadius: '0.75rem',
+                  border: '1px solid var(--color-border-subtle)',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text-main)',
+                  minWidth: '240px',
+                  fontSize: '0.9rem',
+                }}
+              >
+                <option value="">{students.length === 0 ? 'Öğrenci bulunamadı' : 'Bir öğrenci seçin...'}</option>
+                {students.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} {s.gradeLevel ? `(${s.gradeLevel}. Sınıf)` : ''}
+                  </option>
+                ))}
+              </select>
+              
+              {!selectedStudentId && (
+                <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                  Lütfen yukarıdan bir öğrenci seçiniz.
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {reportLoading ? (
+            <div className="glass-card p-8 flex items-center justify-center text-muted">
+              <span className="animate-pulse">Rapor hazırlanıyor, lütfen bekleyin...</span>
+            </div>
+          ) : selectedStudent ? (
+            <AnnualPerformanceReport
+              reportData={reportData}
+            />
+          ) : (
+            <div className="empty-state">Raporunu görüntülemek istediğiniz öğrenciyi seçin.</div>
+          )}
+        </div>
+      )}
+      {(activeTab === 'tests' || activeTab === 'questionbank') && (
+        <TeacherAiAssistant
+          open={aiOpen}
+          onToggle={() => setAiOpen((prev) => !prev)}
+          onClose={() => setAiOpen(false)}
+          messages={aiMessages}
+          input={aiInput}
+          onInputChange={setAiInput}
+          onSend={handleAiSend}
+          loading={aiLoading}
+          error={aiError}
+          scrollRef={aiScrollRef}
+          format={aiFormat}
+          onFormatChange={setAiFormat}
+          onDownloadAttachment={handleDownloadAttachment}
         />
       )}
-      <TeacherAiAssistant
-        open={aiOpen}
-        onToggle={() => setAiOpen((prev) => !prev)}
-        onClose={() => setAiOpen(false)}
-        messages={aiMessages}
-        input={aiInput}
-        onInputChange={setAiInput}
-        onSend={handleAiSend}
-        loading={aiLoading}
-        error={aiError}
-        scrollRef={aiScrollRef}
-        format={aiFormat}
-        onFormatChange={setAiFormat}
-        onDownloadAttachment={handleDownloadAttachment}
-      />
       <TeacherMeetingModal
         open={meetingModalOpen}
         onClose={() => {
@@ -4344,9 +4403,58 @@ const TeacherStudents: React.FC<{
                 textAlign: 'left',
                 cursor: 'pointer',
                 background: student.id === selectedStudentId ? 'var(--color-surface-strong)' : undefined,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
               }}
               onClick={() => onSelectStudent(student.id)}
             >
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                {student.profilePictureUrl ? (
+                  <img
+                    src={resolveContentUrl(student.profilePictureUrl)}
+                    alt={student.name}
+                    style={{
+                      width: '2.5rem',
+                      height: '2.5rem',
+                      borderRadius: '50%',
+                      objectFit: 'cover',
+                      border: '2px solid var(--color-border-subtle)',
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: '2.5rem',
+                      height: '2.5rem',
+                      borderRadius: '50%',
+                      background: 'var(--color-primary-soft)',
+                      color: 'var(--color-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.85rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {student.name.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                {student.isOnline && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      right: 0,
+                      width: '0.75rem',
+                      height: '0.75rem',
+                      borderRadius: '50%',
+                      background: '#22c55e',
+                      border: '2px solid var(--color-surface)',
+                    }}
+                  />
+                )}
+              </div>
               <div style={{ flex: 1 }}>
                 <strong
                   style={{
@@ -4380,6 +4488,57 @@ const TeacherStudents: React.FC<{
           <div className="empty-state">Öğrenci verileri yükleniyor...</div>
         ) : studentProfile ? (
           <>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1rem',
+                marginBottom: '1.5rem',
+                padding: '1rem',
+                borderRadius: 16,
+                background: 'var(--color-surface-soft)',
+                border: '1px solid var(--color-border-subtle)',
+              }}
+            >
+              {studentProfile.student.profilePictureUrl ? (
+                <img
+                  src={resolveContentUrl(studentProfile.student.profilePictureUrl)}
+                  alt={studentProfile.student.name}
+                  style={{
+                    width: '4rem',
+                    height: '4rem',
+                    borderRadius: '1rem',
+                    objectFit: 'cover',
+                    boxShadow: 'var(--shadow-sm)',
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '4rem',
+                    height: '4rem',
+                    borderRadius: '1rem',
+                    background: 'var(--color-primary)',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.5rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  {studentProfile.student.name.slice(0, 2).toUpperCase()}
+                </div>
+              )}
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>
+                  {studentProfile.student.name}
+                </h2>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
+                  {studentProfile.student.gradeLevel ? `${studentProfile.student.gradeLevel}. Sınıf` : 'Öğrenci'} · ID: {studentProfile.student.id.slice(0, 8)}
+                </p>
+              </div>
+            </div>
             <div className="metric-grid metric-grid--fixed">
               <MetricCard
                 label="Çözülen Test"

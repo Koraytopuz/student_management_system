@@ -8,11 +8,42 @@ const bcrypt_1 = __importDefault(require("bcrypt"));
 const auth_1 = require("./auth");
 const db_1 = require("./db");
 const router = express_1.default.Router();
+// Sistem genelinde kullanılacak sabit sınıf seviyeleri
+// Öğrenci ve soru bankası tarafındaki gradeLevel alanlarıyla uyumlu tutulmalıdır.
+const ALLOWED_GRADES = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'];
 function toTeacher(u) {
     return { id: u.id, name: u.name, email: u.email, role: 'teacher', subjectAreas: u.subjectAreas };
 }
+/**
+ * Veli telefon numarasını normalize eder.
+ * - Tüm rakam dışı karakterleri temizler
+ * - 90 / 0 gibi önekleri kırpar
+ * - Veritabanında 5XXXXXXXXX (10 hane) formatında saklar
+ */
+function normalizeParentPhone(raw) {
+    if (raw == null)
+        return null;
+    const str = String(raw).trim();
+    if (!str)
+        return null;
+    // Tüm rakam dışı karakterleri temizle
+    let digits = str.replace(/\D+/g, '');
+    // Çok uzunsa son 10 haneyi bırak (9053..., 0090..., vb.)
+    if (digits.length > 10) {
+        digits = digits.slice(-10);
+    }
+    // 0XXXXXXXXXX formatı geldiyse baştaki 0'ı at
+    if (digits.length === 11 && digits.startsWith('0')) {
+        digits = digits.slice(1);
+    }
+    // 90XXXXXXXXXX gibi ülke kodu dahil geldiyse son 10 haneyi bırakmış olduk
+    if (digits.length !== 10 || !digits.startsWith('5')) {
+        throw new Error('INVALID_PARENT_PHONE');
+    }
+    return digits;
+}
 function toStudent(u) {
-    var _a, _b;
+    var _a, _b, _c;
     return {
         id: u.id,
         name: u.name,
@@ -20,6 +51,7 @@ function toStudent(u) {
         role: 'student',
         gradeLevel: (_a = u.gradeLevel) !== null && _a !== void 0 ? _a : '',
         classId: (_b = u.classId) !== null && _b !== void 0 ? _b : '',
+        parentPhone: (_c = u.parentPhone) !== null && _c !== void 0 ? _c : undefined,
     };
 }
 function toParent(u, studentIds) {
@@ -50,7 +82,14 @@ router.get('/teachers', (0, auth_1.authenticate)('admin'), async (_req, res) => 
 router.get('/students', (0, auth_1.authenticate)('admin'), async (_req, res) => {
     const list = await db_1.prisma.user.findMany({
         where: { role: 'student' },
-        select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            gradeLevel: true,
+            classId: true,
+            parentPhone: true,
+        },
     });
     res.json(list.map(toStudent));
 });
@@ -62,7 +101,7 @@ router.get('/parents', (0, auth_1.authenticate)('admin'), async (_req, res) => {
     res.json(list.map((u) => toParent(u, u.parentStudents.map((ps) => ps.studentId))));
 });
 router.post('/teachers', (0, auth_1.authenticate)('admin'), async (req, res) => {
-    const { name, email, subjectAreas, password } = req.body;
+    const { name, email, subjectAreas, assignedGrades, password } = req.body;
     if (!name || !email) {
         return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
     }
@@ -76,6 +115,12 @@ router.post('/teachers', (0, auth_1.authenticate)('admin'), async (req, res) => 
     const areasArray = typeof subjectAreas === 'string'
         ? subjectAreas.split(',').map((s) => s.trim()).filter(Boolean)
         : subjectAreas !== null && subjectAreas !== void 0 ? subjectAreas : [];
+    const gradesArray = typeof assignedGrades === 'string'
+        ? assignedGrades
+            .split(',')
+            .map((s) => s.trim())
+            .filter((g) => g && ALLOWED_GRADES.includes(g))
+        : (assignedGrades !== null && assignedGrades !== void 0 ? assignedGrades : []).filter((g) => typeof g === 'string' && ALLOWED_GRADES.includes(g));
     const passwordHash = await bcrypt_1.default.hash(password, 10);
     const created = await db_1.prisma.user.create({
         data: {
@@ -84,6 +129,10 @@ router.post('/teachers', (0, auth_1.authenticate)('admin'), async (req, res) => 
             role: 'teacher',
             passwordHash,
             subjectAreas: areasArray,
+            // Not: teacherGrades alanı Prisma Client/DB ile tam senkronize edilene kadar
+            // güvenli tarafta kalmak için doğrudan yazmıyoruz. İleride migration sonrasında
+            // tekrar aktifleştirilebilir.
+            // teacherGrades: gradesArray,
         },
         select: { id: true, name: true, email: true, subjectAreas: true },
     });
@@ -99,12 +148,27 @@ router.delete('/teachers/:id', (0, auth_1.authenticate)('admin'), async (req, re
     return res.json(toTeacher(existing));
 });
 router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => {
-    const { name, email, gradeLevel, classId, password } = req.body;
+    const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body;
     if (!name || !email) {
         return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
     }
     if (!password || password.length < 4) {
         return res.status(400).json({ error: 'Şifre en az 4 karakter olmalıdır' });
+    }
+    if (gradeLevel && !ALLOWED_GRADES.includes(gradeLevel)) {
+        return res.status(400).json({ error: 'Geçersiz sınıf seviyesi' });
+    }
+    let parentPhone = null;
+    try {
+        parentPhone = normalizeParentPhone(parentPhoneRaw);
+    }
+    catch (err) {
+        if (err instanceof Error && err.message === 'INVALID_PARENT_PHONE') {
+            return res
+                .status(400)
+                .json({ error: 'Geçersiz veli telefon numarası. Lütfen 555 123 45 67 formatında girin.' });
+        }
+        throw err;
     }
     const exists = await db_1.prisma.user.findFirst({ where: { email, role: 'student' } });
     if (exists) {
@@ -119,10 +183,82 @@ router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => 
             passwordHash,
             gradeLevel: gradeLevel !== null && gradeLevel !== void 0 ? gradeLevel : '',
             classId: classId !== null && classId !== void 0 ? classId : '',
+            parentPhone,
         },
-        select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            gradeLevel: true,
+            classId: true,
+            parentPhone: true,
+        },
     });
     return res.status(201).json(toStudent(created));
+});
+router.put('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const id = String(req.params.id);
+    const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body;
+    const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'student' } });
+    if (!existing) {
+        return res.status(404).json({ error: 'Öğrenci bulunamadı' });
+    }
+    if (name === undefined &&
+        email === undefined &&
+        gradeLevel === undefined &&
+        classId === undefined &&
+        parentPhoneRaw === undefined &&
+        password === undefined) {
+        return res
+            .status(400)
+            .json({ error: 'Güncellenecek en az bir alan gönderilmelidir' });
+    }
+    const data = {};
+    if (name !== undefined)
+        data.name = String(name).trim();
+    if (email !== undefined)
+        data.email = String(email).trim();
+    if (gradeLevel !== undefined) {
+        if (gradeLevel && !ALLOWED_GRADES.includes(gradeLevel)) {
+            return res.status(400).json({ error: 'Geçersiz sınıf seviyesi' });
+        }
+        data.gradeLevel = gradeLevel !== null && gradeLevel !== void 0 ? gradeLevel : '';
+    }
+    if (classId !== undefined)
+        data.classId = classId !== null && classId !== void 0 ? classId : '';
+    if (parentPhoneRaw !== undefined) {
+        try {
+            const normalized = normalizeParentPhone(parentPhoneRaw);
+            data.parentPhone = normalized;
+        }
+        catch (err) {
+            if (err instanceof Error && err.message === 'INVALID_PARENT_PHONE') {
+                return res
+                    .status(400)
+                    .json({ error: 'Geçersiz veli telefon numarası. Lütfen 555 123 45 67 formatında girin.' });
+            }
+            throw err;
+        }
+    }
+    if (password !== undefined) {
+        if (!password || password.length < 4) {
+            return res.status(400).json({ error: 'Yeni şifre en az 4 karakter olmalıdır' });
+        }
+        data.passwordHash = await bcrypt_1.default.hash(password, 10);
+    }
+    const updated = await db_1.prisma.user.update({
+        where: { id },
+        data,
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            gradeLevel: true,
+            classId: true,
+            parentPhone: true,
+        },
+    });
+    return res.json(toStudent(updated));
 });
 router.delete('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
     const id = String(req.params.id);

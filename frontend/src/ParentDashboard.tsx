@@ -15,6 +15,7 @@ import {
   joinParentMeeting,
   markParentMessageRead,
   sendParentMessage,
+  resolveContentUrl,
   type CalendarEvent,
   type Conversation,
   type Message,
@@ -270,7 +271,12 @@ export const ParentDashboard: React.FC = () => {
       }}
       breadcrumbs={parentBreadcrumbs}
       sidebarItems={sidebarItems}
-      user={{ initials: user?.name?.slice(0, 2).toUpperCase() ?? 'VP', name: user?.name ?? 'Veli', subtitle: 'Veli' }}
+      user={{
+        initials: user?.name?.slice(0, 2).toUpperCase() ?? 'VP',
+        name: user?.name ?? 'Veli',
+        subtitle: 'Veli',
+        profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
+      }}
       headerActions={
         <button
           type="button"
@@ -467,6 +473,59 @@ const ParentOverview: React.FC<{
 
   return (
     <>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem',
+          marginBottom: '1.5rem',
+          padding: '1.25rem',
+          borderRadius: 20,
+          background: 'var(--color-surface-soft)',
+          border: '1px solid var(--color-border-subtle)',
+          boxShadow: 'var(--shadow-sm)',
+        }}
+      >
+        {summary?.profilePictureUrl ? (
+          <img
+            src={resolveContentUrl(summary.profilePictureUrl)}
+            alt={summary.studentName}
+            style={{
+              width: '4rem',
+              height: '4rem',
+              borderRadius: '1rem',
+              objectFit: 'cover',
+              boxShadow: 'var(--shadow-sm)',
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: '4rem',
+              height: '4rem',
+              borderRadius: '1rem',
+              background: 'var(--color-primary)',
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '1.5rem',
+              fontWeight: 700,
+            }}
+          >
+            {summary?.studentName.slice(0, 2).toUpperCase() || 'ÖGR'}
+          </div>
+        )}
+        <div>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-text-main)' }}>
+            {summary?.studentName || 'Yükleniyor...'}
+          </h2>
+          <p style={{ margin: '0.2rem 0 0', fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
+            {summary?.gradeLevel ? `${summary.gradeLevel}. Sınıf` : 'Öğrenci'} · {summary?.className || 'Okulda'}
+          </p>
+        </div>
+      </div>
+
       <div className="metric-grid">
         <MetricCard
           label="Ortalama Skor"
@@ -646,9 +705,39 @@ const ParentMessages: React.FC<{
               key={thread.userId}
               onClick={() => onSelectConversation(thread.userId)}
               className={`list-row message-row${thread.userId === selectedConversationId ? ' active' : ''}`}
-              style={{ textAlign: 'left' }}
+              style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.75rem' }}
             >
-              <div>
+              {thread.profilePictureUrl ? (
+                <img
+                  src={resolveContentUrl(thread.profilePictureUrl)}
+                  alt={thread.userName}
+                  style={{
+                    width: '2.5rem',
+                    height: '2.5rem',
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '2.5rem',
+                    height: '2.5rem',
+                    borderRadius: '50%',
+                    background: 'var(--color-primary-soft)',
+                    color: 'var(--color-primary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    flexShrink: 0,
+                  }}
+                >
+                  {thread.userName.slice(0, 2).toUpperCase()}
+                </div>
+              )}
+              <div style={{ flex: 1 }}>
                 <strong>{thread.userName}</strong>
                 <small>{thread.lastMessage?.text ?? 'Mesaj yok'}</small>
               </div>

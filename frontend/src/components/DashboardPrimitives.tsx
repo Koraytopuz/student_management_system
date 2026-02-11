@@ -90,6 +90,7 @@ export type UserPersona = {
   initials: string;
   name: string;
   subtitle: string;
+  profilePictureUrl?: string; // Add this
 };
 
 export type StatusMeta = {
@@ -241,7 +242,21 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
           <div className="dashboard-user">
             {headerActions}
-            <div className="user-avatar">{user.initials}</div>
+            {user.profilePictureUrl ? (
+              <img
+                src={user.profilePictureUrl}
+                alt={user.name}
+                style={{
+                  width: '3rem',
+                  height: '3rem',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '2px solid rgba(255,255,255,0.1)',
+                }}
+              />
+            ) : (
+              <div className="user-avatar">{user.initials}</div>
+            )}
             <div className="user-meta">
               <strong>{user.name}</strong>
               <span>{user.subtitle}</span>

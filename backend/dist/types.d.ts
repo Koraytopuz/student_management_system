@@ -8,11 +8,14 @@ export interface UserBase {
 export interface Teacher extends UserBase {
     role: 'teacher';
     subjectAreas: string[];
+    /** Öğretmenin girebildiği sınıf seviyeleri (\"4\"–\"12\") */
+    assignedGrades?: string[];
 }
 export interface Student extends UserBase {
     role: 'student';
     gradeLevel: string;
     classId: string;
+    parentPhone?: string;
 }
 export interface Parent extends UserBase {
     role: 'parent';

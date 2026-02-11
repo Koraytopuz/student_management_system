@@ -16,7 +16,7 @@ exports.loginSchema = zod_1.z.object({
     role: zod_1.z.enum(['teacher', 'student', 'parent', 'admin']),
 });
 function prismaUserToApiUser(dbUser, studentIds) {
-    var _a, _b;
+    var _a, _b, _c;
     const base = {
         id: dbUser.id,
         name: dbUser.name,
@@ -25,13 +25,19 @@ function prismaUserToApiUser(dbUser, studentIds) {
     };
     switch (dbUser.role) {
         case 'teacher':
-            return { ...base, role: 'teacher', subjectAreas: dbUser.subjectAreas };
+            return {
+                ...base,
+                role: 'teacher',
+                subjectAreas: dbUser.subjectAreas,
+                // Yeni alan: öğretmenin girebildiği sınıflar (opsiyonel)
+                assignedGrades: (_a = dbUser.teacherGrades) !== null && _a !== void 0 ? _a : [],
+            };
         case 'student':
             return {
                 ...base,
                 role: 'student',
-                gradeLevel: (_a = dbUser.gradeLevel) !== null && _a !== void 0 ? _a : '',
-                classId: (_b = dbUser.classId) !== null && _b !== void 0 ? _b : '',
+                gradeLevel: (_b = dbUser.gradeLevel) !== null && _b !== void 0 ? _b : '',
+                classId: (_c = dbUser.classId) !== null && _c !== void 0 ? _c : '',
             };
         case 'parent':
             return { ...base, role: 'parent', studentIds: studentIds !== null && studentIds !== void 0 ? studentIds : [] };

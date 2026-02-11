@@ -40,6 +40,7 @@ function prismaUserToApiUser(dbUser: PrismaUser, studentIds?: string[]): User {
         role: 'student',
         gradeLevel: dbUser.gradeLevel ?? '',
         classId: dbUser.classId ?? '',
+        profilePictureUrl: (dbUser as any).profilePictureUrl ?? undefined,
       };
     case 'parent':
       return { ...base, role: 'parent', studentIds: studentIds ?? [] };
@@ -105,6 +106,10 @@ export const loginHandler: express.RequestHandler = async (req, res) => {
 };
 
 export function authenticate(requiredRole?: UserRole): express.RequestHandler {
+  return authenticateMultiple(requiredRole ? [requiredRole] : undefined);
+}
+
+export function authenticateMultiple(requiredRoles?: UserRole[]): express.RequestHandler {
   return async (req: AuthenticatedRequest, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -126,7 +131,7 @@ export function authenticate(requiredRole?: UserRole): express.RequestHandler {
         return res.status(401).json({ error: 'Kullanıcı bulunamadı' });
       }
 
-      if (requiredRole && dbUser.role !== requiredRole) {
+      if (requiredRoles && requiredRoles.length > 0 && !requiredRoles.includes(dbUser.role)) {
         return res.status(403).json({ error: 'Bu kaynağa erişim izniniz yok' });
       }
 

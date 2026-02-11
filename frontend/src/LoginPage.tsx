@@ -10,6 +10,13 @@ const DEMO_EMAILS: Record<UserRole, string> = {
   admin: 'admin@example.com',
 };
 
+const DEMO_STUDENTS = [
+  { id: '1', name: 'Ali Yılmaz', email: 'ali.student@example.com', grade: '12. Sınıf' },
+  { id: '2', name: 'Ayşe Demir', email: 'ayse.student@example.com', grade: '11. Sınıf' },
+  { id: '3', name: 'Mehmet Öz', email: 'mehmet.student@example.com', grade: '10. Sınıf' },
+  { id: '4', name: 'Zeynep Kaya', email: 'zeynep.student@example.com', grade: '9. Sınıf' },
+];
+
 const roles: { value: UserRole; label: string }[] = [
   { value: 'teacher', label: 'Öğretmen' },
   { value: 'student', label: 'Öğrenci' },
@@ -39,11 +46,8 @@ export const LoginPage: React.FC = () => {
 
     // Set canvas size
     const updateSize = () => {
-      const parent = canvas.parentElement;
-      if (parent) {
-        canvas.width = parent.clientWidth;
-        canvas.height = parent.clientHeight;
-      }
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
     };
     
     // Initial size setup with a small delay to ensure DOM is ready
@@ -90,10 +94,7 @@ export const LoginPage: React.FC = () => {
         mouse.y = e.clientY - rect.top;
       };
       // Add listener to parent element instead of canvas
-      const parent = canvas.parentElement;
-      if (parent) {
-        parent.addEventListener('mousemove', handleCanvasMouseMove);
-      }
+      window.addEventListener('mousemove', handleCanvasMouseMove);
 
       // Animation loop
       const animate = () => {
@@ -181,10 +182,7 @@ export const LoginPage: React.FC = () => {
       clearTimeout(timeoutId);
       window.removeEventListener('resize', updateSize);
       if (handleCanvasMouseMove) {
-        const parent = canvas.parentElement;
-        if (parent) {
-          parent.removeEventListener('mousemove', handleCanvasMouseMove);
-        }
+        window.removeEventListener('mousemove', handleCanvasMouseMove);
       }
       if (animationId !== null) {
         cancelAnimationFrame(animationId);
@@ -244,6 +242,37 @@ export const LoginPage: React.FC = () => {
             </button>
           ))}
         </div>
+
+        {selectedRole === 'student' && (
+          <div style={{ marginBottom: '1rem' }}>
+            <label className="field">
+              <span>Demo Öğrenci Seçimi</span>
+              <select
+                value={DEMO_STUDENTS.find(s => s.email === email)?.email ? email : ''}
+                onChange={(e) => {
+                  if (e.target.value) setEmail(e.target.value);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '0.6rem',
+                  borderRadius: '0.7rem',
+                  border: '1px solid #d1d5db',
+                  background: 'var(--color-surface, #f9fafb)',
+                  fontSize: '0.9rem',
+                  color: 'var(--color-text-main, #0f172a)',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="" disabled>Listeden seçin...</option>
+                {DEMO_STUDENTS.map((s) => (
+                  <option key={s.id} value={s.email}>
+                    {s.name} ({s.grade})
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="form">
           <label className="field">

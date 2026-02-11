@@ -11,6 +11,7 @@ export interface User {
   subjectAreas?: string[];
   /** Öğretmenler için: yetkili olduğu sınıf seviyeleri (\"4\"–\"12\") */
   assignedGrades?: string[];
+  profilePictureUrl?: string;
 }
 
 export interface LoginResponse {
@@ -34,8 +35,9 @@ export interface ParentDashboardSummaryStudentCard {
   averageScorePercent?: number;
   totalStudyMinutes?: number;
   status?: 'active' | 'inactive';
-  pendingAssignmentsCount?: number;
-  overdueAssignmentsCount?: number;
+  pendingAssignmentsCount: number;
+  overdueAssignmentsCount: number;
+  profilePictureUrl?: string;
 }
 
 export interface ParentDashboardSummary {
@@ -74,6 +76,7 @@ export interface StudentDetailSummary {
     dueDate: string;
     status: 'pending' | 'in_progress' | 'completed' | 'overdue';
   }>;
+  profilePictureUrl?: string;
 }
 
 export interface Message {
@@ -98,6 +101,7 @@ export interface Conversation {
   studentName?: string;
   lastMessage?: Message;
   unreadCount: number;
+  profilePictureUrl?: string;
 }
 
 export interface CalendarEvent {
@@ -404,6 +408,7 @@ export interface TeacherStudent {
   gradeLevel?: string;
   classId?: string;
   lastSeenAt?: string;
+  profilePictureUrl?: string;
 }
 
 export interface TeacherStudentProfile {
@@ -1575,6 +1580,22 @@ export function uploadTeacherTestAssetFile(token: string, file: File) {
   });
 }
 
+export function uploadAdminStudentImage(token: string, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return fetch(`${API_BASE_URL}/admin/upload/student-image`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  }).then(async (res) => {
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({}));
+      throw new Error(errorBody.error ?? `API error: ${res.status}`);
+    }
+    return res.json() as Promise<{ url: string }>;
+  });
+}
+
 export function getTeacherTestAssets(token: string) {
   return apiRequest<TeacherTestAsset[]>('/teacher/test-assets', {}, token);
 }
@@ -1966,3 +1987,58 @@ export function startStudentQuestionBankTest(
 }
 
 
+
+export interface ReportSubjectTopic {
+  id: string;
+  name: string;
+  correct: number;
+  incorrect: number;
+  masteryPercent: number;
+}
+
+export interface ReportSubject {
+  id: string;
+  label: string;
+  topics: ReportSubjectTopic[];
+}
+
+export interface ReportRadarItem {
+  axis: string;
+  student: number;
+  classAvg: number;
+}
+
+export interface AnnualReportData {
+  student: {
+    name: string;
+    className: string;
+    avatarUrl: string;
+    annualScore: number;
+    annualRankPercentile: number;
+  };
+  digitalEffort: {
+    attendanceRate: number;
+    focusHours: number;
+    videoMinutes: number;
+    solvedQuestions: number;
+  };
+  subjects: ReportSubject[];
+  radar: ReportRadarItem[];
+  coachNote: string;
+}
+
+export function getStudentPerformanceReport(token: string, studentId: string) {
+  return apiRequest<AnnualReportData>(`/teacher/students/${studentId}/performance`, {}, token);
+}
+
+/**
+ * Uzak medya veya yüklemeler için tam URL oluşturur.
+ * '/uploads' ile başlayan yolları API base URL'i ile birleştirir.
+ */
+export function resolveContentUrl(url?: string | null): string {
+  if (!url) return '';
+  if (url.startsWith('/uploads')) {
+    return `${getApiBaseUrl()}${url}`;
+  }
+  return url;
+}

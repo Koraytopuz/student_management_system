@@ -1246,6 +1246,96 @@ router.post('/children/:id/goals', (0, auth_1.authenticate)('parent'), async (re
         reward: (_a = newGoal.reward) !== null && _a !== void 0 ? _a : undefined,
     });
 });
+// Koçluk notları – veli için görünür olanlar
+router.get('/children/:id/coaching-notes', (0, auth_1.authenticate)('parent'), async (req, res) => {
+    const parentId = req.user.id;
+    const studentId = String(req.params.id);
+    const access = await checkParentAccess(parentId, studentId);
+    if (!access.allowed) {
+        return res
+            .status(access.error === 'Veli bulunamadı' ? 404 : 403)
+            .json({ error: access.error });
+    }
+    const notes = await db_1.prisma.coachingNote.findMany({
+        where: {
+            studentId,
+            visibility: 'shared_with_parent',
+        },
+        orderBy: { date: 'desc' },
+        include: {
+            coach: { select: { id: true, name: true } },
+        },
+    });
+    return res.json(notes.map((n) => {
+        var _a, _b;
+        return ({
+            id: n.id,
+            studentId: n.studentId,
+            coachId: n.coachId,
+            coachName: (_b = (_a = n.coach) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : 'Koç',
+            content: n.content,
+            visibility: n.visibility,
+            date: n.date.toISOString(),
+        });
+    }));
+});
+// Koçluk hedef ilerlemesi – veli raporu için özet
+router.get('/children/:id/coaching-progress', (0, auth_1.authenticate)('parent'), async (req, res) => {
+    const parentId = req.user.id;
+    const studentId = String(req.params.id);
+    const access = await checkParentAccess(parentId, studentId);
+    if (!access.allowed) {
+        return res
+            .status(access.error === 'Veli bulunamadı' ? 404 : 403)
+            .json({ error: access.error });
+    }
+    const goals = await db_1.prisma.coachingGoal.findMany({
+        where: { studentId },
+        orderBy: { deadline: 'asc' },
+        include: {
+            coach: { select: { id: true, name: true } },
+        },
+    });
+    if (goals.length === 0) {
+        return res.json({
+            goals: [],
+            completionPercent: 0,
+            pendingCount: 0,
+            completedCount: 0,
+            missedCount: 0,
+            overduePendingCount: 0,
+        });
+    }
+    const total = goals.length;
+    const completedCount = goals.filter((g) => g.status === 'completed').length;
+    const missedCount = goals.filter((g) => g.status === 'missed').length;
+    const pendingCount = goals.filter((g) => g.status === 'pending').length;
+    const now = Date.now();
+    const overduePendingCount = goals.filter((g) => g.status === 'pending' && g.deadline.getTime() < now).length;
+    const completionPercent = total === 0 ? 0 : Math.round((completedCount / total) * 100);
+    return res.json({
+        goals: goals.map((g) => {
+            var _a, _b, _c;
+            return ({
+                id: g.id,
+                studentId: g.studentId,
+                coachId: g.coachId,
+                coachName: (_b = (_a = g.coach) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : 'Koç',
+                title: g.title,
+                description: (_c = g.description) !== null && _c !== void 0 ? _c : undefined,
+                deadline: g.deadline.toISOString(),
+                status: g.status,
+                createdAt: g.createdAt.toISOString(),
+                isOverdue: g.status === 'pending' && g.deadline.getTime() < Date.now(),
+            });
+        }),
+        completionPercent,
+        pendingCount,
+        completedCount,
+        missedCount,
+        overduePendingCount,
+    });
+});
 // Takvim
 router.get('/calendar', (0, auth_1.authenticate)('parent'), async (req, res) => {
     var _a;

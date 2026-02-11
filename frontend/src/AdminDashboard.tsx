@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification, getSubjectsList } from './api';
+import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification, getSubjectsList, uploadAdminStudentImage, resolveContentUrl, getStudentPerformanceReport, type AnnualReportData } from './api';
 import { useAuth } from './AuthContext';
 import {
   DashboardLayout,
@@ -23,6 +23,7 @@ interface Teacher {
   email: string;
   subjectAreas?: string[];
   assignedGrades?: string[];
+  profilePictureUrl?: string;
 }
 
 interface Student {
@@ -31,6 +32,7 @@ interface Student {
   email: string;
    gradeLevel?: string;
    parentPhone?: string;
+   profilePictureUrl?: string;
 }
 
 interface Parent {
@@ -97,6 +99,7 @@ export const AdminDashboard: React.FC = () => {
     gradeLevel: '',
     parentPhone: '',
     password: '',
+    profilePictureUrl: '',
   });
   const [newParent, setNewParent] = useState({
     name: '',
@@ -114,17 +117,21 @@ export const AdminDashboard: React.FC = () => {
     gradeLevel: string;
     parentPhone: string;
     password: string;
+    profilePictureUrl: string;
   }>({
     name: '',
     email: '',
     gradeLevel: '',
     parentPhone: '',
     password: '',
+    profilePictureUrl: '',
   });
 
   const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [reportStudentId, setReportStudentId] = useState<string | null>(null);
+  const [reportData, setReportData] = useState<AnnualReportData | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
 
   type AdminTab =
     | 'overview'
@@ -138,6 +145,27 @@ export const AdminDashboard: React.FC = () => {
   const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>([]);
   const [adminNotificationsLoading, setAdminNotificationsLoading] = useState(false);
   const [activeComplaintId, setActiveComplaintId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'notifications') return;
+    setAdminNotificationsLoading(true);
+    getAdminNotifications(token)
+      .then(setAdminNotifications)
+      .catch(() => setAdminNotifications([]))
+      .finally(() => setAdminNotificationsLoading(false));
+  }, [token, activeTab]);
+
+  useEffect(() => {
+    if (!token || !reportStudentId || activeTab !== 'reports') {
+      setReportData(null);
+      return;
+    }
+    setReportLoading(true);
+    getStudentPerformanceReport(token, reportStudentId)
+      .then(setReportData)
+      .catch(() => setReportData(null))
+      .finally(() => setReportLoading(false));
+  }, [token, reportStudentId, activeTab]);
 
   const sidebarItems = useMemo<SidebarItem[]>(
     () => [
@@ -337,12 +365,13 @@ export const AdminDashboard: React.FC = () => {
             gradeLevel: newStudent.gradeLevel,
             parentPhone: normalizedParentPhone,
             password: newStudent.password,
+            profilePictureUrl: newStudent.profilePictureUrl || undefined,
           }),
         },
         token,
       );
       setStudents((prev) => [...prev, created]);
-      setNewStudent({ name: '', email: '', gradeLevel: '', parentPhone: '', password: '' });
+      setNewStudent({ name: '', email: '', gradeLevel: '', parentPhone: '', password: '', profilePictureUrl: '' });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -399,6 +428,7 @@ export const AdminDashboard: React.FC = () => {
       gradeLevel: s.gradeLevel ?? '',
       parentPhone: s.parentPhone ? formatParentPhoneForDisplay(s.parentPhone) : '',
       password: '',
+      profilePictureUrl: s.profilePictureUrl || '',
     });
   }
 
@@ -428,6 +458,7 @@ export const AdminDashboard: React.FC = () => {
             gradeLevel: editStudent.gradeLevel,
             parentPhone: normalizedParentPhone,
             password: editStudent.password || undefined,
+            profilePictureUrl: editStudent.profilePictureUrl || undefined,
           }),
         },
         token,
@@ -467,6 +498,7 @@ export const AdminDashboard: React.FC = () => {
         initials: user?.name?.slice(0, 2).toUpperCase() ?? 'AD',
         name: user?.name ?? 'Admin',
         subtitle: 'Yönetici',
+        profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
       }}
       onLogout={logout}
     >
@@ -902,8 +934,38 @@ export const AdminDashboard: React.FC = () => {
               <div className="empty-state">Henüz öğretmen kaydı yok.</div>
             )}
             {teachers.map((t) => (
-              <div key={t.id} className="list-row">
-                <div>
+              <div key={t.id} className="list-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                {t.profilePictureUrl ? (
+                  <img
+                    src={resolveContentUrl(t.profilePictureUrl)}
+                    alt={t.name}
+                    style={{
+                      width: '2.5rem',
+                      height: '2.5rem',
+                      borderRadius: '50%',
+                      objectFit: 'cover',
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: '2.5rem',
+                      height: '2.5rem',
+                      borderRadius: '50%',
+                      background: 'var(--color-primary-soft)',
+                      color: 'var(--color-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.85rem',
+                      fontWeight: 700,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {t.name.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div style={{ flex: 1 }}>
                   <strong>{t.name}</strong>
                   <small>{t.email}</small>
                 </div>
@@ -987,6 +1049,33 @@ export const AdminDashboard: React.FC = () => {
                 required
               />
             </div>
+            <div className="field">
+              <span>Profil Resmi</span>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                {newStudent.profilePictureUrl && (
+                  <img
+                    src={newStudent.profilePictureUrl}
+                    alt="Preview"
+                    style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover' }}
+                  />
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file && token) {
+                      try {
+                        const { url } = await uploadAdminStudentImage(token, file);
+                        setNewStudent((s) => ({ ...s, profilePictureUrl: url }));
+                      } catch (err) {
+                        setError('Resim yüklenemedi');
+                      }
+                    }
+                  }}
+                />
+              </div>
+            </div>
             <button type="submit">Öğrenci Ekle</button>
           </form>
           <div className="dual-grid">
@@ -997,8 +1086,39 @@ export const AdminDashboard: React.FC = () => {
               {students.map((s) => {
                 const phoneDisplay = s.parentPhone ? formatParentPhoneForDisplay(s.parentPhone) : '—';
                 return (
-                  <div key={s.id} className="list-row">
-                    <div>
+                  <div key={s.id} className="list-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    {s.profilePictureUrl ? (
+                      <img
+                        src={resolveContentUrl(s.profilePictureUrl)}
+                        alt={s.name}
+                        style={{
+                          width: '3rem',
+                          height: '3rem',
+                          borderRadius: '12px',
+                          objectFit: 'cover',
+                          boxShadow: 'var(--shadow-sm)',
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          width: '3rem',
+                          height: '3rem',
+                          borderRadius: '12px',
+                          background: 'var(--color-primary-soft)',
+                          color: 'var(--color-primary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '1rem',
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {s.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div style={{ flex: 1 }}>
                       <strong>{s.name}</strong>
                       <small>{s.email}</small>
                       <div style={{ fontSize: '0.8rem', marginTop: '0.2rem', opacity: 0.9 }}>
@@ -1107,6 +1227,33 @@ export const AdminDashboard: React.FC = () => {
                         }))
                       }
                     />
+                  </div>
+                  <div className="field">
+                    <span>Profil Resmi</span>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {editStudent.profilePictureUrl && (
+                        <img
+                          src={editStudent.profilePictureUrl}
+                          alt="Preview"
+                          style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover' }}
+                        />
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file && token) {
+                            try {
+                              const { url } = await uploadAdminStudentImage(token, file);
+                              setEditStudent((s) => ({ ...s, profilePictureUrl: url }));
+                            } catch (err) {
+                              setError('Resim yüklenemedi');
+                            }
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button type="submit" className="primary-btn">
@@ -1240,10 +1387,11 @@ export const AdminDashboard: React.FC = () => {
               : 'Öğrenci bulunamadı'
           }
         >
-          <AnnualPerformanceReport
-            studentName={reportStudent?.name}
-            className={reportStudent?.gradeLevel ? `${reportStudent.gradeLevel}. Sınıf` : undefined}
-          />
+          {reportLoading ? (
+            <div className="empty-state">Rapor verileri hazırlanıyor...</div>
+          ) : (
+            <AnnualPerformanceReport reportData={reportData} />
+          )}
         </GlassCard>
       )}
     </DashboardLayout>

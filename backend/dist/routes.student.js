@@ -259,6 +259,42 @@ router.get('/coaching', (0, auth_1.authenticate)('student'), async (req, res) =>
         });
     }));
 });
+// Öğrenci koçluk hedef durumu güncelleme (tamamlandı / geri al)
+router.patch('/coaching/goals/:goalId', (0, auth_1.authenticate)('student'), async (req, res) => {
+    var _a;
+    const studentId = req.user.id;
+    const goalId = String(req.params.goalId);
+    const goal = await db_1.prisma.coachingGoal.findFirst({
+        where: { id: goalId, studentId },
+    });
+    if (!goal) {
+        return res.status(404).json({ error: 'Koçluk hedefi bulunamadı' });
+    }
+    const { status } = req.body;
+    if (status !== 'pending' &&
+        status !== 'completed' &&
+        status !== 'missed') {
+        return res
+            .status(400)
+            .json({ error: 'Geçersiz status. pending/completed/missed olmalıdır.' });
+    }
+    const updated = await db_1.prisma.coachingGoal.update({
+        where: { id: goalId },
+        data: { status },
+    });
+    return res.json({
+        id: updated.id,
+        studentId: updated.studentId,
+        coachId: updated.coachId,
+        title: updated.title,
+        description: (_a = updated.description) !== null && _a !== void 0 ? _a : undefined,
+        deadline: updated.deadline.toISOString(),
+        status: updated.status,
+        createdAt: updated.createdAt.toISOString(),
+        isOverdue: updated.status === 'pending' &&
+            updated.deadline.getTime() < Date.now(),
+    });
+});
 router.post('/ai/chat', 
 // authenticate('student'), // Chatbot temporarily disabled for students
 async (req, res) => {
@@ -1877,20 +1913,6 @@ router.post('/meetings/:id/join-live', (0, auth_1.authenticate)('student'), asyn
     const isParticipant = meeting.students.some((s) => s.studentId === studentId);
     if (!isParticipant) {
         return res.status(403).json({ error: 'Bu toplantıya katılma yetkiniz yok' });
-    }
-    const now = Date.now();
-    const scheduledAtMs = new Date(meeting.scheduledAt).getTime();
-    const meetingEndMs = scheduledAtMs + meeting.durationMinutes * 60 * 1000;
-    const windowStartMs = scheduledAtMs - 10 * 60 * 1000; // 10 dk önce katılıma izin
-    if (now < windowStartMs) {
-        return res.status(400).json({
-            error: 'Bu seans henüz başlamadı. En erken seans saatinden 10 dakika önce katılabilirsiniz.',
-        });
-    }
-    if (now > meetingEndMs) {
-        return res.status(400).json({
-            error: 'Bu seansın katılım süresi sona erdi.',
-        });
     }
     // Canlı dersin açılması sadece öğretmen tarafından yapılabilsin.
     // Öğretmen yayını başlatmadıysa (roomId henüz yoksa) hata döndür.

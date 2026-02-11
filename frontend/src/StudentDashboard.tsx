@@ -3,7 +3,6 @@ import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle
 import { useAuth } from './AuthContext';
 import {
   apiRequest,
-  getApiBaseUrl,
   getStudentAssignments,
   getStudentAssignmentDetail,
   getStudentCalendar,
@@ -29,6 +28,7 @@ import {
   getStudentTestFeedback,
   getStudentBadges,
   recordFocusSession,
+  resolveContentUrl,
   type CalendarEvent,
   type ProgressCharts,
   type ProgressOverview,
@@ -103,15 +103,7 @@ const deriveStatus = (assignment: StudentAssignment): AssignmentStatus => {
   return due < Date.now() ? 'overdue' : 'todo';
 };
 
-const resolveContentUrl = (url: string): string => {
-  if (!url) return url;
-  // Backend yüklemeleri (uploads, solutions vb.) - API base kullan
-  if (url.startsWith('/uploads')) {
-    return `${getApiBaseUrl()}${url}`;
-  }
-  // Mutlak URL veya frontend public (/pdfs, /tests vb.)
-  return url;
-};
+
 
 const MEETING_WINDOW_BEFORE_MS = 10 * 60 * 1000; // 10 dk önce katılıma izin
 
@@ -910,6 +902,7 @@ export const StudentDashboard: React.FC = () => {
         initials: user?.name?.slice(0, 2).toUpperCase() ?? 'ÖG',
         name: user?.name ?? 'Öğrenci',
         subtitle: 'Öğrenci',
+        profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
       }}
       headerActions={
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>

@@ -19,6 +19,7 @@ export interface Student extends UserBase {
   gradeLevel: string;
   classId: string;
   parentPhone?: string;
+  profilePictureUrl?: string;
 }
 
 export interface Parent extends UserBase {
@@ -188,11 +189,11 @@ export interface Notification {
   createdAt: string;
   read: boolean;
   relatedEntityType?:
-    | 'assignment'
-    | 'test'
-    | 'meeting'
-    | 'message'
-    | 'content';
+  | 'assignment'
+  | 'test'
+  | 'meeting'
+  | 'message'
+  | 'content';
   relatedEntityId?: string;
   readAt?: string;
 }
@@ -334,6 +335,7 @@ export interface ParentDashboardSummaryStudentCard {
   status: 'active' | 'inactive';
   pendingAssignmentsCount: number;
   overdueAssignmentsCount: number;
+  profilePictureUrl?: string;
 }
 
 export type CalendarEventType = 'assignment' | 'meeting' | 'exam';
@@ -641,5 +643,6 @@ export interface StudentDetailSummary {
     date: string;
   }[];
   upcomingAssignments: AssignmentActivityItem[];
+  profilePictureUrl?: string;
 }
 

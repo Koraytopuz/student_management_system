@@ -11,117 +11,17 @@ import {
 } from 'recharts';
 import { CalendarDays, Clock, PlayCircle, HelpCircle, Download } from 'lucide-react';
 
+import type { AnnualReportData } from './api';
+import { resolveContentUrl } from './api';
+
+// Use types from API or keep local aliases
 type SubjectKey = 'matematik' | 'fen' | 'turkce' | 'sosyal' | 'yabanci';
 
 interface AnnualPerformanceReportProps {
-  studentName?: string;
-  className?: string;
+  reportData?: AnnualReportData | null;
 }
 
-type Topic = {
-  id: string;
-  name: string;
-  correct: number;
-  incorrect: number;
-  masteryPercent: number;
-};
-
-type Subject = {
-  id: SubjectKey;
-  label: string;
-  topics: Topic[];
-};
-
-const mockData = {
-  student: {
-    name: 'Deneme Öğrenci',
-    className: '8/A',
-    avatarUrl: '',
-    annualScore: 8.4,
-    annualRankPercentile: 92,
-  },
-  radar: [
-    {
-      axis: 'Matematik',
-      student: 88,
-      classAvg: 74,
-    },
-    {
-      axis: 'Fen',
-      student: 84,
-      classAvg: 78,
-    },
-    {
-      axis: 'Türkçe',
-      student: 91,
-      classAvg: 82,
-    },
-    {
-      axis: 'Sosyal',
-      student: 79,
-      classAvg: 76,
-    },
-    {
-      axis: 'Yabancı Dil',
-      student: 86,
-      classAvg: 80,
-    },
-  ],
-  subjects: [
-    {
-      id: 'matematik',
-      label: 'Matematik',
-      topics: [
-        { id: 'fractions', name: 'Kesirler & Oran-Orantı', correct: 124, incorrect: 18, masteryPercent: 87 },
-        { id: 'equations', name: 'Denklemler & Eşitsizlikler', correct: 96, incorrect: 24, masteryPercent: 80 },
-        { id: 'geometry', name: 'Geometri Temelleri', correct: 52, incorrect: 28, masteryPercent: 65 },
-      ],
-    },
-    {
-      id: 'fen',
-      label: 'Fen Bilimleri',
-      topics: [
-        { id: 'physics', name: 'Fizik – Kuvvet & Hareket', correct: 88, incorrect: 12, masteryPercent: 88 },
-        { id: 'chemistry', name: 'Kimya – Madde & Isı', correct: 76, incorrect: 19, masteryPercent: 80 },
-        { id: 'biology', name: 'Biyoloji – Hücre & Sistemler', correct: 64, incorrect: 32, masteryPercent: 67 },
-      ],
-    },
-    {
-      id: 'turkce',
-      label: 'Türkçe',
-      topics: [
-        { id: 'grammar', name: 'Dil Bilgisi', correct: 110, incorrect: 10, masteryPercent: 92 },
-        { id: 'reading', name: 'Paragraf & Okuma', correct: 140, incorrect: 18, masteryPercent: 89 },
-        { id: 'writing', name: 'Yazılı Anlatım', correct: 44, incorrect: 21, masteryPercent: 68 },
-      ],
-    },
-    {
-      id: 'sosyal',
-      label: 'Sosyal Bilgiler',
-      topics: [
-        { id: 'history', name: 'Tarih & Kronoloji', correct: 62, incorrect: 18, masteryPercent: 78 },
-        { id: 'geography', name: 'Coğrafya & Harita', correct: 54, incorrect: 16, masteryPercent: 77 },
-      ],
-    },
-    {
-      id: 'yabanci',
-      label: 'Yabancı Dil',
-      topics: [
-        { id: 'vocab', name: 'Kelime Bilgisi', correct: 72, incorrect: 14, masteryPercent: 84 },
-        { id: 'grammar', name: 'Dil Bilgisi', correct: 60, incorrect: 20, masteryPercent: 75 },
-        { id: 'listening', name: 'Dinleme & Konuşma', correct: 38, incorrect: 22, masteryPercent: 63 },
-      ],
-    },
-  ] as Subject[],
-  digitalEffort: {
-    attendanceRate: 93,
-    focusHours: 126,
-    videoMinutes: 1835,
-    solvedQuestions: 4820,
-  },
-  coachNote:
-    'Bu yıl özellikle sayısal derslerde büyük ivme kazandın. Yaz döneminde Geometri pratiklerine odaklanırsan hedefine ulaşman çok daha olası görünüyor. Kısa ama düzenli tekrarlarla dikkat pencerelerini verimli kullanmaya devam et.',
-};
+// ... existing types if needed, or rely on AnnualReportData ...
 
 const getMasteryBadge = (percent: number) => {
   if (percent >= 85) {
@@ -142,19 +42,24 @@ const formatMinutesToHhMm = (minutes: number) => {
 };
 
 export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = ({
-  studentName,
-  className,
+  reportData,
 }) => {
-  const [openSubjectId, setOpenSubjectId] = React.useState<SubjectKey | null>('matematik');
+  const [openSubjectId, setOpenSubjectId] = React.useState<string | null>('matematik');
 
-  const effectiveStudent = React.useMemo(
-    () => ({
-      ...mockData.student,
-      name: studentName ?? mockData.student.name,
-      className: className ?? mockData.student.className,
-    }),
-    [studentName, className],
-  );
+  const data = reportData || null;
+
+  if (!data) {
+     return <div className="p-8 text-center text-slate-400">Veri yükleniyor veya rapor bulunamadı.</div>;
+  }
+
+  // Use data from props
+  const effectiveStudent = {
+      name: data.student.name,
+      className: data.student.className,
+      avatarUrl: resolveContentUrl(data.student.avatarUrl),
+      annualScore: data.student.annualScore,
+      annualRankPercentile: data.student.annualRankPercentile
+  };
 
   const handlePrint = () => {
     if (typeof window !== 'undefined') {
@@ -188,14 +93,14 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
               </div>
               <div className="annual-report-title-block">
                 <p className="annual-report-eyebrow">
-                  AnnualPerformanceReport
+                  Yıllık Gelişim Raporu
                 </p>
                 <h1>Yıl Sonu Gelişim Raporu</h1>
                 <p className="annual-report-subtitle">
                   {effectiveStudent.name} · {effectiveStudent.className}
                 </p>
                 <p className="annual-report-helper">
-                  Spotify Wrapped tarzında, yıl boyu performansının kişiselleştirilmiş bir özeti.
+                  Yıl boyu performansının kişiselleştirilmiş özeti.
                 </p>
               </div>
             </div>
@@ -205,14 +110,14 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                 <div className="annual-report-score-text">
                   <p className="annual-report-score-label">Yıllık Genel Başarı Puanı</p>
                   <div className="annual-report-score-value">
-                    <span>{mockData.student.annualScore.toFixed(1)}</span>
+                    <span>{effectiveStudent.annualScore.toFixed(1)}</span>
                     <span className="annual-report-score-denominator">/10</span>
                   </div>
                 </div>
                 <div className="annual-report-rank-pill">
                   <div className="annual-report-rank-inner">
                     <span>TOP</span>
-                    <strong>{mockData.student.annualRankPercentile}</strong>
+                    <strong>{effectiveStudent.annualRankPercentile}</strong>
                     <span className="annual-report-rank-caption">percentile</span>
                   </div>
                 </div>
@@ -253,7 +158,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
             </div>
             <div className="annual-report-radar-shell">
               <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={mockData.radar} outerRadius="80%">
+                <RadarChart data={data.radar} outerRadius="80%">
                   <PolarGrid stroke="rgba(148,163,184,0.35)" />
                   <PolarAngleAxis
                     dataKey="axis"
@@ -262,7 +167,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                   />
                   <PolarRadiusAxis
                     angle={30}
-                    domain={[50, 100]}
+                    domain={[0, 100]}
                     tick={{ fill: 'rgba(148,163,184,0.7)', fontSize: 10 }}
                     tickLine={false}
                     axisLine={false}
@@ -324,12 +229,12 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                     Devamlılık
                   </span>
                   <span className="annual-report-effort-tag annual-report-effort-tag--emerald">
-                    Günlük rutine bağlı
+                    Canlı ders
                   </span>
                 </div>
                 <div className="annual-report-effort-body">
                   <p className="annual-report-effort-value">
-                    {mockData.digitalEffort.attendanceRate}
+                    {data.digitalEffort.attendanceRate}
                     <span className="annual-report-effort-unit">%</span>
                   </p>
                   <p className="annual-report-effort-caption">Katıldığı canlı ders oranı</p>
@@ -337,7 +242,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                 <div className="annual-report-effort-bar">
                   <div
                     className="annual-report-effort-bar-fill annual-report-effort-bar-fill--emerald"
-                    style={{ width: `${mockData.digitalEffort.attendanceRate}%` }}
+                    style={{ width: `${data.digitalEffort.attendanceRate}%` }}
                   />
                 </div>
               </div>
@@ -353,7 +258,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                 </div>
                 <div className="annual-report-effort-body">
                   <p className="annual-report-effort-value">
-                    {mockData.digitalEffort.focusHours}
+                    {data.digitalEffort.focusHours}
                     <span className="annual-report-effort-unit">saat</span>
                   </p>
                   <p className="annual-report-effort-caption">Toplam pomodoro odak süresi</p>
@@ -377,7 +282,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                 </div>
                 <div className="annual-report-effort-body">
                   <p className="annual-report-effort-value">
-                    {formatMinutesToHhMm(mockData.digitalEffort.videoMinutes)}
+                    {formatMinutesToHhMm(data.digitalEffort.videoMinutes)}
                   </p>
                   <p className="annual-report-effort-caption">İzlenen toplam ders videosu</p>
                 </div>
@@ -400,7 +305,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                 </div>
                 <div className="annual-report-effort-body">
                   <p className="annual-report-effort-value">
-                    {mockData.digitalEffort.solvedQuestions.toLocaleString('tr-TR')}
+                    {data.digitalEffort.solvedQuestions.toLocaleString('tr-TR')}
                   </p>
                   <p className="annual-report-effort-caption">Çözülen toplam soru sayısı</p>
                 </div>
@@ -433,7 +338,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
             </div>
 
             <div className="annual-report-subject-tabs">
-              {mockData.subjects.map((subject) => {
+              {data.subjects.map((subject) => {
                 const isActive = openSubjectId === subject.id;
                 return (
                   <button
@@ -456,11 +361,13 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
             </div>
 
             <div className="annual-report-topics-list">
-              {mockData.subjects.map((subject) => {
+              {data.subjects.map((subject) => {
                 const isOpen = openSubjectId === subject.id;
                 const subjectAvg =
-                  subject.topics.reduce((acc, t) => acc + t.masteryPercent, 0) /
-                  subject.topics.length;
+                  subject.topics.length > 0
+                    ? subject.topics.reduce((acc, t) => acc + t.masteryPercent, 0) /
+                      subject.topics.length
+                    : 0;
                 return (
                   <div
                     key={subject.id}
@@ -592,7 +499,7 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
               <p className="annual-report-coach-eyebrow">
                 Koçun Notu
               </p>
-              <p className="annual-report-coach-text">{mockData.coachNote}</p>
+              <p className="annual-report-coach-text">{data.coachNote}</p>
               <p className="annual-report-coach-meta">
                 Not: Bu yorum, yıl boyunca toplanan performans ve efor verilerine göre yapay zeka koç
                 tarafından otomatik üretilmiştir.

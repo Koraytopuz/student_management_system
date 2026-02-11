@@ -297,7 +297,9 @@ Yanıtını sadece JSON olarak ver, başka açıklama ekleme:
 /**
  * GET /questionbank/subjects/list - Ders listesi
  */
-router.get('/subjects/list', (0, auth_1.authenticate)('teacher'), async (_req, res) => {
+router.get('/subjects/list', 
+// Hem öğretmen hem de admin paneli bu listeyi kullanabildiği için rol kısıtı koymuyoruz
+(0, auth_1.authenticate)(), async (_req, res) => {
     const subjects = await prisma.subject.findMany({
         orderBy: { name: 'asc' },
     });

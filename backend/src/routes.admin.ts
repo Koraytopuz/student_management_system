@@ -4,6 +4,27 @@ import { authenticate, AuthenticatedRequest } from './auth';
 import { prisma } from './db';
 import type { Parent, Student, Teacher } from './types';
 import { UserRole } from '@prisma/client';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+// Multer Setup
+const uploadDir = 'uploads/profiles';
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'profile-' + uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({ storage });
 
 const router = express.Router();
 
@@ -55,6 +76,7 @@ function toStudent(u: {
   gradeLevel: string | null;
   classId: string | null;
   parentPhone: string | null;
+  profilePictureUrl?: string | null;
 }): Student {
   return {
     id: u.id,
@@ -64,6 +86,7 @@ function toStudent(u: {
     gradeLevel: u.gradeLevel ?? '',
     classId: u.classId ?? '',
     parentPhone: u.parentPhone ?? undefined,
+    profilePictureUrl: u.profilePictureUrl ?? undefined,
   };
 }
 
@@ -108,9 +131,10 @@ router.get('/students', authenticate('admin'), async (_req, res) => {
       gradeLevel: true,
       classId: true,
       parentPhone: true,
-    },
+      profilePictureUrl: true,
+    } as any,
   });
-  res.json(list.map(toStudent));
+  res.json(list.map((u) => toStudent(u as any)));
 });
 
 router.get('/parents', authenticate('admin'), async (_req, res) => {
@@ -154,9 +178,9 @@ router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest
   const gradesArray: string[] =
     typeof assignedGrades === 'string'
       ? assignedGrades
-          .split(',')
-          .map((s) => s.trim())
-          .filter((g) => g && ALLOWED_GRADES.includes(g))
+        .split(',')
+        .map((s) => s.trim())
+        .filter((g) => g && ALLOWED_GRADES.includes(g))
       : (assignedGrades ?? []).filter((g) => typeof g === 'string' && ALLOWED_GRADES.includes(g));
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -188,13 +212,14 @@ router.delete('/teachers/:id', authenticate('admin'), async (req: AuthenticatedR
 });
 
 router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
-  const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body as {
+  const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body as {
     name?: string;
     email?: string;
     gradeLevel?: string;
     classId?: string;
     parentPhone?: string;
     password?: string;
+    profilePictureUrl?: string;
   };
 
   if (!name || !email) {
@@ -235,7 +260,8 @@ router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest
       gradeLevel: gradeLevel ?? '',
       classId: classId ?? '',
       parentPhone,
-    },
+      profilePictureUrl,
+    } as any,
     select: {
       id: true,
       name: true,
@@ -243,20 +269,22 @@ router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest
       gradeLevel: true,
       classId: true,
       parentPhone: true,
-    },
+      profilePictureUrl: true,
+    } as any,
   });
-  return res.status(201).json(toStudent(created));
+  return res.status(201).json(toStudent(created as any));
 });
 
 router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
-  const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password } = req.body as {
+  const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body as {
     name?: string;
     email?: string;
     gradeLevel?: string;
     classId?: string;
     parentPhone?: string | null;
     password?: string;
+    profilePictureUrl?: string;
   };
 
   const existing = await prisma.user.findFirst({ where: { id, role: 'student' } });
@@ -269,8 +297,10 @@ router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequ
     email === undefined &&
     gradeLevel === undefined &&
     classId === undefined &&
+    classId === undefined &&
     parentPhoneRaw === undefined &&
-    password === undefined
+    password === undefined &&
+    profilePictureUrl === undefined
   ) {
     return res
       .status(400)
@@ -284,6 +314,7 @@ router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequ
     classId?: string | null;
     parentPhone?: string | null;
     passwordHash?: string;
+    profilePictureUrl?: string;
   } = {};
 
   if (name !== undefined) data.name = String(name).trim();
@@ -317,9 +348,13 @@ router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequ
     data.passwordHash = await bcrypt.hash(password, 10);
   }
 
+  if (profilePictureUrl !== undefined) {
+    data.profilePictureUrl = profilePictureUrl;
+  }
+
   const updated = await prisma.user.update({
     where: { id },
-    data,
+    data: data as any,
     select: {
       id: true,
       name: true,
@@ -327,10 +362,11 @@ router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequ
       gradeLevel: true,
       classId: true,
       parentPhone: true,
-    },
+      profilePictureUrl: true,
+    } as any,
   });
 
-  return res.json(toStudent(updated));
+  return res.json(toStudent(updated as any));
 });
 
 router.delete('/students/:id', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
@@ -341,7 +377,7 @@ router.delete('/students/:id', authenticate('admin'), async (req: AuthenticatedR
   }
   await prisma.parentStudent.deleteMany({ where: { studentId: id } });
   await prisma.user.delete({ where: { id } });
-  return res.json(toStudent(existing));
+  return res.json(toStudent(existing as any));
 });
 
 router.post('/parents', authenticate('admin'), async (req: AuthenticatedRequest, res) => {
@@ -611,6 +647,22 @@ router.get(
         updatedAt: s.updatedAt.toISOString(),
       })),
     );
+  },
+);
+
+router.post(
+  '/upload/student-image',
+  authenticate('admin'),
+  upload.single('file'),
+  (req: AuthenticatedRequest, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Dosya yüklenemedi' });
+    }
+    // relative path döndür
+    // src/uploads/profiles/... -> frontend'den erişim için /uploads/profiles/...
+    // backend static serve ayarı lazım, varsayılan olarak /uploads serve ediliyorsa:
+    const url = `/uploads/profiles/${req.file.filename}`;
+    return res.json({ url });
   },
 );
 
