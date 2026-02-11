@@ -1100,8 +1100,8 @@ router.post('/questionbank/start-test', (0, auth_1.authenticate)('student'), asy
 router.post('/help-requests', (0, auth_1.authenticate)('student'), helpRequestUpload.single('image'), async (req, res) => {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     const studentId = req.user.id;
-    const { assignmentId, questionId, message, studentAnswer } = req.body;
-    let teacherId = null;
+    const { assignmentId, questionId, message, studentAnswer, teacherId: requestedTeacherId } = req.body;
+    let teacherId = requestedTeacherId || null;
     let notificationBody = '';
     // Görsel yüklendiyse taşı
     let imageUrl;
@@ -1120,10 +1120,12 @@ router.post('/help-requests', (0, auth_1.authenticate)('student'), helpRequestUp
         if (!assignment) {
             return res.status(404).json({ error: 'Görev bulunamadı' });
         }
-        teacherId =
-            (_a = assignment.createdByTeacherId) !== null && _a !== void 0 ? _a : (assignment.classId
-                ? (_b = (await db_1.prisma.classGroup.findUnique({ where: { id: assignment.classId } }))) === null || _b === void 0 ? void 0 : _b.teacherId
-                : null);
+        if (!teacherId) {
+            teacherId =
+                (_a = assignment.createdByTeacherId) !== null && _a !== void 0 ? _a : (assignment.classId
+                    ? (_b = (await db_1.prisma.classGroup.findUnique({ where: { id: assignment.classId } }))) === null || _b === void 0 ? void 0 : _b.teacherId
+                    : null);
+        }
         const testTitle = (_f = (_d = (_c = assignment.test) === null || _c === void 0 ? void 0 : _c.title) !== null && _d !== void 0 ? _d : (_e = assignment.testAsset) === null || _e === void 0 ? void 0 : _e.title) !== null && _f !== void 0 ? _f : assignment.title;
         if (questionId) {
             // PDF test (testAsset) – questionId "pdf-page-N" formatında
@@ -1150,18 +1152,20 @@ router.post('/help-requests', (0, auth_1.authenticate)('student'), helpRequestUp
     }
     else {
         // Genel soru (Fotoğraflı veya mesajlı)
-        const student = await db_1.prisma.user.findUnique({
-            where: { id: studentId },
-            select: { classId: true },
-        });
-        if (student === null || student === void 0 ? void 0 : student.classId) {
-            const classGroup = await db_1.prisma.classGroup.findUnique({ where: { id: student.classId } });
-            teacherId = (_h = classGroup === null || classGroup === void 0 ? void 0 : classGroup.teacherId) !== null && _h !== void 0 ? _h : null;
-        }
         if (!teacherId) {
-            // Eğer sınıfı yoksa rastgele bir öğretmen seç (veya hata ver, ama burada ilk öğretmeni bulalım)
-            const anyTeacher = await db_1.prisma.user.findFirst({ where: { role: 'teacher' } });
-            teacherId = (_j = anyTeacher === null || anyTeacher === void 0 ? void 0 : anyTeacher.id) !== null && _j !== void 0 ? _j : null;
+            const student = await db_1.prisma.user.findUnique({
+                where: { id: studentId },
+                select: { classId: true },
+            });
+            if (student === null || student === void 0 ? void 0 : student.classId) {
+                const classGroup = await db_1.prisma.classGroup.findUnique({ where: { id: student.classId } });
+                teacherId = (_h = classGroup === null || classGroup === void 0 ? void 0 : classGroup.teacherId) !== null && _h !== void 0 ? _h : null;
+            }
+            if (!teacherId) {
+                // Eğer sınıfı yoksa rastgele bir öğretmen seç (veya hata ver, ama burada ilk öğretmeni bulalım)
+                const anyTeacher = await db_1.prisma.user.findFirst({ where: { role: 'teacher' } });
+                teacherId = (_j = anyTeacher === null || anyTeacher === void 0 ? void 0 : anyTeacher.id) !== null && _j !== void 0 ? _j : null;
+            }
         }
         notificationBody = `${req.user.name} size yeni bir soru gönderdi (Soru Havuzu / Genel).`;
     }
@@ -1872,11 +1876,48 @@ router.get('/messages', (0, auth_1.authenticate)('student'), async (req, res) =>
         });
     }));
 });
-// Öğrencinin mesaj gönderebileceği öğretmen listesi
-router.get('/teachers', (0, auth_1.authenticate)('student'), async (_req, res) => {
+// Öğrencinin derslerine giren öğretmenler listesi
+router.get('/teachers', (0, auth_1.authenticate)('student'), async (req, res) => {
+    var _a;
+    const studentId = req.user.id;
+    // Öğrencinin dahil olduğu sınıf gruplarını bul
+    const classGroups = await db_1.prisma.classGroup.findMany({
+        where: {
+            students: {
+                some: { studentId }
+            }
+        },
+        select: { teacherId: true }
+    });
+    const teacherIdsFromGroups = classGroups.map(cg => cg.teacherId);
+    // Öğrencinin ana sınıfının öğretmenini bul
+    const student = await db_1.prisma.user.findUnique({
+        where: { id: studentId },
+        select: { classId: true }
+    });
+    let mainTeacherId = null;
+    if (student === null || student === void 0 ? void 0 : student.classId) {
+        const mainClass = await db_1.prisma.classGroup.findUnique({
+            where: { id: student.classId },
+            select: { teacherId: true }
+        });
+        mainTeacherId = (_a = mainClass === null || mainClass === void 0 ? void 0 : mainClass.teacherId) !== null && _a !== void 0 ? _a : null;
+    }
+    const allRelevantTeacherIds = Array.from(new Set([
+        ...(mainTeacherId ? [mainTeacherId] : []),
+        ...teacherIdsFromGroups
+    ]));
     const teachersData = await db_1.prisma.user.findMany({
-        where: { role: 'teacher' },
-        select: { id: true, name: true, email: true },
+        where: {
+            id: { in: allRelevantTeacherIds },
+            role: 'teacher'
+        },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            subjectAreas: true
+        },
     });
     return res.json(teachersData);
 });

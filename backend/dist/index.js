@@ -15,6 +15,8 @@ const routes_student_1 = __importDefault(require("./routes.student"));
 const routes_parent_1 = __importDefault(require("./routes.parent"));
 const routes_admin_1 = __importDefault(require("./routes.admin"));
 const routes_questionbank_1 = __importDefault(require("./routes.questionbank"));
+const aiRoutes_1 = __importDefault(require("./aiRoutes"));
+const routes_assignmentRoutes_1 = __importDefault(require("./routes.assignmentRoutes"));
 // Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -87,6 +89,8 @@ app.use('/teacher', routes_teacher_1.default);
 app.use('/student', routes_student_1.default);
 app.use('/parent', routes_parent_1.default);
 app.use('/questionbank', routes_questionbank_1.default);
+app.use('/api/ai', aiRoutes_1.default);
+app.use('/assignments', routes_assignmentRoutes_1.default);
 // Chrome DevTools isteği (CSP hatasını önlemek için boş yanıt)
 app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {
     res.status(204).end();
