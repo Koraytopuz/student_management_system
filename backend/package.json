@@ -47,6 +47,7 @@
     "jsonwebtoken": "^9.0.3",
     "livekit-server-sdk": "^2.15.0",
     "multer": "^2.0.2",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.17.2",
     "pg": "^8.18.0",
     "prisma": "^7.3.0",

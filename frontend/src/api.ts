@@ -325,6 +325,7 @@ export interface TeacherListItem {
   id: string;
   name: string;
   email: string;
+  subjectAreas?: string[];
 }
 
 export interface StudentAiChatMessage {
@@ -616,6 +617,23 @@ export interface TeacherHelpRequestItem {
   response?: HelpResponsePayload;
 }
 
+export type HomeworkStatus = 'PENDING' | 'COMPLETED' | 'LATE';
+
+export interface HomeworkItem {
+  id: string;
+  title: string;
+  description?: string;
+  dueDate: string;
+  status: HomeworkStatus;
+  studentId: string;
+  teacherId?: string;
+  teacherName?: string;
+  studentName?: string;
+  lessonId: string;
+  lessonName?: string;
+  createdAt: string;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
 
 /** Backend URL - uploads vb. relative yollar için kullanılır */
@@ -803,6 +821,11 @@ export function getStudentAssignments(token: string) {
   return apiRequest<StudentAssignment[]>('/student/assignments', {}, token);
 }
 
+/** Bireysel ödevler – öğrenci veya veli için */
+export function getStudentHomeworks(token: string, studentId: string) {
+  return apiRequest<HomeworkItem[]>(`/assignments/student/${studentId}`, {}, token);
+}
+
 export function getStudentAssignmentDetail(token: string, assignmentId: string) {
   return apiRequest<StudentAssignmentDetail>(`/student/assignments/${assignmentId}`, {}, token);
 }
@@ -904,6 +927,7 @@ export function createStudentHelpRequest(
     message?: string;
     studentAnswer?: string;
     image?: File;
+    teacherId?: string;
   },
 ) {
   const formData = new FormData();
@@ -912,6 +936,7 @@ export function createStudentHelpRequest(
   if (payload.message) formData.append('message', payload.message);
   if (payload.studentAnswer) formData.append('studentAnswer', payload.studentAnswer);
   if (payload.image) formData.append('image', payload.image);
+  if (payload.teacherId) formData.append('teacherId', payload.teacherId);
 
   return apiRequest<StudentHelpRequest>(
     '/student/help-requests',
@@ -1370,6 +1395,42 @@ export function createTeacherAssignment(
     {
       method: 'POST',
       body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+/** Bireysel ödev oluşturma – tek öğrenci ve ders bazlı */
+export function createTeacherHomework(
+  token: string,
+  payload: { studentId: string; lessonId: string; title: string; description?: string; dueDate: string },
+) {
+  return apiRequest<HomeworkItem>(
+    '/assignments/create',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+/** Öğretmenin atadığı bireysel ödevler listesi */
+export function getTeacherHomeworks(token: string) {
+  return apiRequest<HomeworkItem[]>('/assignments/teacher/my-assignments', {}, token);
+}
+
+/** Öğrenci için ödev durumunu güncelleme (optimistic update için kullanılır) */
+export function updateHomeworkStatus(
+  token: string,
+  homeworkId: string,
+  status: HomeworkStatus = 'COMPLETED',
+) {
+  return apiRequest<{ id: string; status: HomeworkStatus; completed: boolean }>(
+    `/assignments/status/${homeworkId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
     },
     token,
   );

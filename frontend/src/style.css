@@ -2348,6 +2348,210 @@ button:disabled {
   }
 }
 
+/* ============================================================================
+   AI QUESTION PARSER – Admin Page
+   ============================================================================ */
+
+.question-parser-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 1.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.question-parser-header h1 {
+  margin: 0.25rem 0 0.4rem;
+  font-size: 1.8rem;
+}
+
+.question-parser-header p {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--color-text-muted);
+  max-width: 640px;
+}
+
+.question-parser-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.question-parser-panel {
+  background: var(--glass-bg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--glass-border);
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+}
+
+.question-parser-dropzone {
+  border-radius: 1.1rem;
+  border: 2px dashed rgba(148, 163, 184, 0.7);
+  background: rgba(15, 23, 42, 0.02);
+  padding: 1.25rem 1.1rem;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.1s ease;
+}
+
+.question-parser-dropzone.is-dragging {
+  border-color: var(--color-primary);
+  background: rgba(37, 99, 235, 0.06);
+  transform: translateY(-1px);
+}
+
+.question-parser-dropzone-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+}
+
+.dropzone-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.98rem;
+}
+
+.dropzone-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.dropzone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.selected-file {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.dropzone-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.question-parser-actions {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.question-parser-actions button {
+  min-width: 180px;
+}
+
+.analyze-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.analyze-loading .spinner {
+  width: 18px;
+  height: 18px;
+}
+
+.question-parser-error {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.7rem;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.question-parser-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.question-parser-results-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.question-parser-results-header p {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.question-grid {
+  margin-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.9rem;
+}
+
+.question-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.question-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.question-card-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.question-index {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.question-text {
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.question-options {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.88rem;
+}
+
+.question-options li {
+  margin-bottom: 0.1rem;
+}
+
+.question-meta {
+  margin-top: 0.25rem;
+}
+
+.question-parser-footer {
+  margin-top: 0.75rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1024px) {
+  .question-parser-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ========================================
    LIVE CLASS - GOOGLE MEET STYLE
    ======================================== */

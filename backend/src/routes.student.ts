@@ -1356,14 +1356,15 @@ router.post(
   helpRequestUpload.single('image'),
   async (req: AuthenticatedRequest, res: express.Response) => {
     const studentId = req.user!.id;
-    const { assignmentId, questionId, message, studentAnswer } = req.body as {
+    const { assignmentId, questionId, message, studentAnswer, teacherId: requestedTeacherId } = req.body as {
       assignmentId?: string;
       questionId?: string;
       message?: string;
       studentAnswer?: string;
+      teacherId?: string;
     };
 
-    let teacherId: string | null = null;
+    let teacherId: string | null = requestedTeacherId || null;
     let notificationBody = '';
 
     // Görsel yüklendiyse taşı
@@ -1385,11 +1386,13 @@ router.post(
         return res.status(404).json({ error: 'Görev bulunamadı' });
       }
 
-      teacherId =
-        (assignment as any).createdByTeacherId ??
-        (assignment.classId
-          ? (await prisma.classGroup.findUnique({ where: { id: assignment.classId } }))?.teacherId
-          : null);
+      if (!teacherId) {
+        teacherId =
+          (assignment as any).createdByTeacherId ??
+          (assignment.classId
+            ? (await prisma.classGroup.findUnique({ where: { id: assignment.classId } }))?.teacherId
+            : null);
+      }
 
       const testTitle =
         assignment.test?.title ??
@@ -1418,20 +1421,22 @@ router.post(
       }
     } else {
       // Genel soru (Fotoğraflı veya mesajlı)
-      const student = await prisma.user.findUnique({
-        where: { id: studentId },
-        select: { classId: true },
-      });
-
-      if (student?.classId) {
-        const classGroup = await prisma.classGroup.findUnique({ where: { id: student.classId } });
-        teacherId = classGroup?.teacherId ?? null;
-      }
-
       if (!teacherId) {
-        // Eğer sınıfı yoksa rastgele bir öğretmen seç (veya hata ver, ama burada ilk öğretmeni bulalım)
-        const anyTeacher = await prisma.user.findFirst({ where: { role: 'teacher' } });
-        teacherId = anyTeacher?.id ?? null;
+        const student = await prisma.user.findUnique({
+          where: { id: studentId },
+          select: { classId: true },
+        });
+
+        if (student?.classId) {
+          const classGroup = await prisma.classGroup.findUnique({ where: { id: student.classId } });
+          teacherId = classGroup?.teacherId ?? null;
+        }
+
+        if (!teacherId) {
+          // Eğer sınıfı yoksa rastgele bir öğretmen seç (veya hata ver, ama burada ilk öğretmeni bulalım)
+          const anyTeacher = await prisma.user.findFirst({ where: { role: 'teacher' } });
+          teacherId = anyTeacher?.id ?? null;
+        }
       }
 
       notificationBody = `${req.user!.name} size yeni bir soru gönderdi (Soru Havuzu / Genel).`;
@@ -2282,15 +2287,58 @@ router.get(
   },
 );
 
-// Öğrencinin mesaj gönderebileceği öğretmen listesi
+// Öğrencinin derslerine giren öğretmenler listesi
 router.get(
   '/teachers',
   authenticate('student'),
-  async (_req: AuthenticatedRequest, res: express.Response) => {
-    const teachersData = await prisma.user.findMany({
-      where: { role: 'teacher' },
-      select: { id: true, name: true, email: true },
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const studentId = req.user!.id;
+
+    // Öğrencinin dahil olduğu sınıf gruplarını bul
+    const classGroups = await prisma.classGroup.findMany({
+      where: {
+        students: {
+          some: { studentId }
+        }
+      },
+      select: { teacherId: true }
     });
+
+    const teacherIdsFromGroups = classGroups.map(cg => cg.teacherId);
+
+    // Öğrencinin ana sınıfının öğretmenini bul
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: { classId: true }
+    });
+
+    let mainTeacherId: string | null = null;
+    if (student?.classId) {
+      const mainClass = await prisma.classGroup.findUnique({
+        where: { id: student.classId },
+        select: { teacherId: true }
+      });
+      mainTeacherId = mainClass?.teacherId ?? null;
+    }
+
+    const allRelevantTeacherIds = Array.from(new Set([
+      ...(mainTeacherId ? [mainTeacherId] : []),
+      ...teacherIdsFromGroups
+    ]));
+
+    const teachersData = await prisma.user.findMany({
+      where: {
+        id: { in: allRelevantTeacherIds },
+        role: 'teacher'
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        subjectAreas: true
+      },
+    });
+
     return res.json(teachersData);
   },
 );

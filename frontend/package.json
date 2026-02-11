@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react-swc": "^4.2.3",
@@ -16,8 +17,11 @@
     "vite": "^7.2.4"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
     "@livekit/components-react": "^2.9.19",
     "@livekit/components-styles": "^1.2.0",
+    "axios": "^1.13.5",
+    "canvas-confetti": "^1.9.4",
     "dayjs": "^1.11.19",
     "framer-motion": "^12.34.0",
     "jspdf": "^4.1.0",
@@ -26,7 +30,9 @@
     "pdfjs-dist": "^5.4.624",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-hook-form": "^7.71.1",
     "react-router-dom": "^7.13.0",
-    "recharts": "^2.12.7"
+    "recharts": "^2.12.7",
+    "zod": "^4.3.6"
   }
 }

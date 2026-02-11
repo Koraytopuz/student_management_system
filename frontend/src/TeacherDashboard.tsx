@@ -10,7 +10,6 @@ import {
   FileSpreadsheet,
   FileDown,
   Layers,
-  Library,
   MessageCircle,
   Send,
   Sparkles,
@@ -20,6 +19,7 @@ import {
   X,
   BarChart3,
 } from 'lucide-react';
+import axios from 'axios';
 import { useAuth } from './AuthContext';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -75,6 +75,7 @@ import {
   getStudentPerformanceReport,
   resolveContentUrl,
   type AnnualReportData,
+  getApiBaseUrl,
 } from './api';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -87,7 +88,6 @@ if (typeof pdfjsLib.GlobalWorkerOptions !== 'undefined') {
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { LiveClassOverlay } from './LiveClassOverlay';
-import { QuestionBankTab } from './QuestionBankTab';
 import { CoachingTab } from './CoachingTab';
 import { ParentOperationsTab } from './ParentOperationsTab';
 
@@ -99,11 +99,18 @@ type TeacherTab =
   | 'students'
   | 'parents'
   | 'tests'
-  | 'questionbank'
   | 'support'
   | 'notifications'
   | 'coaching'
   | 'reports';
+
+type ParsedPdfQuestion = {
+  question_text: string;
+  options: string[];
+  correct_option?: string | null;
+  difficulty: string;
+  topic: string;
+};
 
 type AiMessage = {
   id: string;
@@ -1095,14 +1102,6 @@ export const TeacherDashboard: React.FC = () => {
         onClick: () => setActiveTab('tests'),
       },
       {
-        id: 'questionbank',
-        label: 'Soru Bankası',
-        icon: <Library size={18} />,
-        description: 'AI soru üret',
-        active: activeTab === 'questionbank',
-        onClick: () => setActiveTab('questionbank'),
-      },
-      {
         id: 'support',
         label: 'Yardım Talepleri',
         icon: <MessageCircle size={18} />,
@@ -1168,7 +1167,6 @@ export const TeacherDashboard: React.FC = () => {
       content: 'Ders İçeriği',
       live: 'Canlı Ders',
       tests: 'Test & Sorular',
-      questionbank: 'Soru Bankası',
       support: 'Yardım Talepleri',
       notifications: 'Bildirimler',
       calendar: 'Takvim & Etüt',
@@ -1662,9 +1660,6 @@ export const TeacherDashboard: React.FC = () => {
           }}
         />
       )}
-      {activeTab === 'questionbank' && token && (
-        <QuestionBankTab token={token} />
-      )}
       {activeTab === 'support' && (
         <TeacherSupport
           token={token}
@@ -1749,7 +1744,7 @@ export const TeacherDashboard: React.FC = () => {
           )}
         </div>
       )}
-      {(activeTab === 'tests' || activeTab === 'questionbank') && (
+      {activeTab === 'tests' && (
         <TeacherAiAssistant
           open={aiOpen}
           onToggle={() => setAiOpen((prev) => !prev)}
@@ -2476,6 +2471,147 @@ const TeacherTests: React.FC<{
     [aiGenResult],
   );
 
+  // AI PDF Ayrıştırıcı durumları
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfParsing, setPdfParsing] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfQuestions, setPdfQuestions] = useState<ParsedPdfQuestion[]>([]);
+  const [pdfSaving, setPdfSaving] = useState(false);
+  const [pdfSaveMessage, setPdfSaveMessage] = useState<string | null>(null);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
+
+  const handlePdfFileChange = (file: File | null) => {
+    if (!file) {
+      setPdfFile(null);
+      return;
+    }
+    if (file.type !== 'application/pdf') {
+      setPdfError('Lütfen yalnızca PDF dosyası seçin.');
+      setPdfFile(null);
+      return;
+    }
+    setPdfError(null);
+    setPdfSaveMessage(null);
+    setShowPdfPreview(false);
+    setPdfFile(file);
+  };
+
+  const handlePdfAnalyze = async () => {
+    if (!token) {
+      setPdfError('Bu özelliği kullanmak için giriş yapmalısınız.');
+      return;
+    }
+    if (!pdfFile) {
+      setPdfError('Lütfen önce bir PDF dosyası seçin.');
+      return;
+    }
+
+    setPdfParsing(true);
+    setPdfError(null);
+    setPdfSaveMessage(null);
+    setShowPdfPreview(false);
+    setPdfQuestions([]);
+
+    try {
+      const baseUrl = getApiBaseUrl();
+      const formData = new FormData();
+      formData.append('file', pdfFile);
+
+      const response = await axios.post<{
+        success: boolean;
+        data?: ParsedPdfQuestion[];
+        error?: string;
+      }>(`${baseUrl}/api/ai/parse-pdf`, formData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.data.success || !Array.isArray(response.data.data)) {
+        setPdfError(
+          response.data.error ??
+            'Yapay zeka yanıtı beklenmedik formatta döndü. Lütfen tekrar deneyin.',
+        );
+        setPdfQuestions([]);
+        return;
+      }
+
+      setPdfQuestions(response.data.data);
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const serverMessage =
+          (err.response?.data as { error?: string } | undefined)?.error ?? err.message;
+        setPdfError(serverMessage || 'PDF analiz edilirken bir hata oluştu.');
+      } else {
+        const message =
+          err instanceof Error ? err.message : 'PDF analiz edilirken bir hata oluştu.';
+        setPdfError(message);
+      }
+      setPdfQuestions([]);
+    } finally {
+      setPdfParsing(false);
+    }
+  };
+
+  const handlePdfSaveAll = async () => {
+    if (!token) {
+      setPdfError('Bu özelliği kullanmak için giriş yapmalısınız.');
+      return;
+    }
+    if (!aiGenSubject || !aiGenGrade) {
+      setPdfError('Lütfen üstte sınıf ve ders bilgisini seçin.');
+      return;
+    }
+    if (pdfQuestions.length === 0) {
+      setPdfError('Önce bir PDF analiz ederek soru çıkarın.');
+      return;
+    }
+
+    setPdfSaving(true);
+    setPdfError(null);
+    setPdfSaveMessage(null);
+
+    try {
+      const baseUrl = getApiBaseUrl();
+      const payload = {
+        subjectId: aiGenSubject,
+        gradeLevel: aiGenGrade,
+        questions: pdfQuestions,
+      };
+
+      const response = await axios.post<{
+        success: boolean;
+        saved?: number;
+        error?: string;
+      }>(`${baseUrl}/api/ai/save-parsed-questions`, payload, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.data.success) {
+        setPdfError(response.data.error ?? 'Sorular veritabanına kaydedilemedi.');
+        return;
+      }
+
+      const savedCount = response.data.saved ?? pdfQuestions.length;
+      setPdfSaveMessage(`${savedCount} soru başarıyla soru bankasına kaydedildi.`);
+      setShowPdfPreview(true);
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const serverMessage =
+          (err.response?.data as { error?: string } | undefined)?.error ?? err.message;
+        setPdfError(serverMessage || 'Sorular kaydedilirken bir hata oluştu.');
+      } else {
+        const message =
+          err instanceof Error ? err.message : 'Sorular kaydedilirken bir hata oluştu.';
+        setPdfError(message);
+      }
+    } finally {
+      setPdfSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!assignDraft.studentId && students[0]) {
       setAssignDraft((p) => ({ ...p, studentId: students[0].id }));
@@ -2887,6 +3023,191 @@ const TeacherTests: React.FC<{
             </div>
           )}
         </GlassCard>
+
+        <GlassCard
+          title="AI PDF Ayrıştırıcı"
+          subtitle="PDF test kitaplarındaki soruları hızlıca soru bankasına aktar"
+        >
+          <div style={{ display: 'grid', gap: '0.6rem' }}>
+            <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+              Üstte seçtiğiniz <strong>sınıf</strong> ve <strong>ders</strong> bilgisi bu PDF’ten
+              çıkan sorular için kullanılacaktır.
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '0.6rem',
+                alignItems: 'center',
+              }}
+            >
+              <label
+                className="ghost-btn"
+                style={{ cursor: 'pointer', marginRight: '0.25rem' }}
+              >
+                PDF Seç
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  style={{ display: 'none' }}
+                  onChange={(e) => handlePdfFileChange(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              {pdfFile && (
+                <span style={{ fontSize: '0.85rem' }}>
+                  Seçilen dosya: <strong>{pdfFile.name}</strong>
+                </span>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+              }}
+            >
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={handlePdfAnalyze}
+                disabled={pdfParsing || !pdfFile}
+              >
+                {pdfParsing ? 'Analiz Ediliyor...' : 'PDF’ten Soruları Çıkar'}
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={handlePdfSaveAll}
+                disabled={
+                  pdfSaving ||
+                  pdfQuestions.length === 0 ||
+                  !aiGenSubject ||
+                  !aiGenGrade
+                }
+              >
+                {pdfSaving ? 'Kaydediliyor...' : 'Tümünü Soru Bankasına Kaydet'}
+              </button>
+              {pdfQuestions.length > 0 && (
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Ayrıştırılan soru sayısı: <strong>{pdfQuestions.length}</strong>
+                </span>
+              )}
+            </div>
+
+            {pdfError && (
+              <div
+                style={{
+                  marginTop: '0.4rem',
+                  fontSize: '0.8rem',
+                  color: '#fecaca',
+                }}
+              >
+                {pdfError}
+              </div>
+            )}
+
+            {pdfSaveMessage && (
+              <div
+                style={{
+                  marginTop: '0.4rem',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.5rem',
+                  alignItems: 'center',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    color: '#22c55e',
+                    textShadow: '0 0 10px rgba(34,197,94,0.45)',
+                  }}
+                >
+                  {pdfSaveMessage}
+                </span>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setShowPdfPreview((prev) => !prev)}
+                  style={{
+                    padding: '0.25rem 0.65rem',
+                    fontSize: '0.8rem',
+                    borderRadius: 999,
+                  }}
+                >
+                  {showPdfPreview ? 'Önizlemeyi Gizle' : 'Kaydedilen Soruları Gör'}
+                </button>
+              </div>
+            )}
+
+            {showPdfPreview && pdfQuestions.length > 0 && (
+              <div
+                style={{
+                  marginTop: '0.6rem',
+                  padding: '0.75rem',
+                  borderRadius: 10,
+                  background: 'rgba(15,23,42,0.7)',
+                  border: '1px solid rgba(51,65,85,0.9)',
+                  fontSize: '0.8rem',
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                }}
+              >
+                {Object.entries(
+                  pdfQuestions.reduce<Record<string, ParsedPdfQuestion[]>>((acc, q) => {
+                    const key = (q.topic ?? 'Genel').toString().trim() || 'Genel';
+                    if (!acc[key]) acc[key] = [];
+                    acc[key].push(q);
+                    return acc;
+                  }, {}),
+                ).map(([topic, questions]) => (
+                  <div
+                    key={topic}
+                    style={{
+                      padding: '0.5rem 0',
+                      borderTop: '1px solid rgba(51,65,85,0.8)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        marginBottom: '0.25rem',
+                        color: '#a5b4fc',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: '0.5rem',
+                      }}
+                    >
+                      <span>{topic}</span>
+                      <span style={{ fontSize: '0.75rem', color: '#e5e7eb' }}>
+                        {questions.length} soru
+                      </span>
+                    </div>
+                    {questions.slice(0, 3).map((q, idx) => (
+                      <div
+                        key={`${topic}-${idx}-${q.question_text.slice(0, 20)}`}
+                        style={{
+                          padding: '0.35rem 0',
+                          borderTop: idx === 0 ? 'none' : '1px dashed rgba(71,85,105,0.8)',
+                        }}
+                      >
+                        <div style={{ fontWeight: 500, marginBottom: '0.1rem' }}>
+                          {idx + 1}. Soru
+                        </div>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{q.question_text}</div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </GlassCard>
+
         <GlassCard title="Test Dosyası Yükle" subtitle="PDF gibi bir dosyayı test olarak ekleyin">
           <div style={{ display: 'grid', gap: '0.6rem' }}>
             <input

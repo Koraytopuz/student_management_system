@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification, getSubjectsList, uploadAdminStudentImage, resolveContentUrl, getStudentPerformanceReport, type AnnualReportData } from './api';
 import { useAuth } from './AuthContext';
 import {
@@ -9,6 +10,7 @@ import {
 } from './components/DashboardPrimitives';
 import { AnnualPerformanceReport } from './AnnualPerformanceReport';
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
+import { useNavigate } from 'react-router-dom';
 
 interface AdminSummary {
   teacherCount: number;
@@ -79,6 +81,7 @@ function formatParentPhoneForDisplay(phone?: string): string {
 
 export const AdminDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -108,6 +111,21 @@ export const AdminDashboard: React.FC = () => {
   const [assignState, setAssignState] = useState({
     parentId: '',
     studentId: '',
+  });
+
+  const [editingTeacherId, setEditingTeacherId] = useState<string | null>(null);
+  const [editTeacher, setEditTeacher] = useState<{
+    name: string;
+    email: string;
+    subjectAreas: string[];
+    assignedGrades: string[];
+    password: string;
+  }>({
+    name: '',
+    email: '',
+    subjectAreas: [],
+    assignedGrades: [],
+    password: '',
   });
 
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
@@ -145,6 +163,35 @@ export const AdminDashboard: React.FC = () => {
   const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>([]);
   const [adminNotificationsLoading, setAdminNotificationsLoading] = useState(false);
   const [activeComplaintId, setActiveComplaintId] = useState<string | null>(null);
+
+  const handleEditTeacher = (teacher: Teacher) => {
+    setEditingTeacherId(teacher.id);
+    setEditTeacher({
+      name: teacher.name,
+      email: teacher.email,
+      subjectAreas: teacher.subjectAreas ?? [],
+      assignedGrades: teacher.assignedGrades ?? [],
+      password: '',
+    });
+  };
+
+  const handleDeleteTeacher = async (teacher: Teacher) => {
+    if (!token) return;
+    const confirmed = window.confirm(
+      `"${teacher.name}" adlı öğretmeni silmek istediğinize emin misiniz?`,
+    );
+    if (!confirmed) return;
+    try {
+      await apiRequest(
+        `/admin/teachers/${teacher.id}`,
+        { method: 'DELETE' },
+        token,
+      );
+      setTeachers((prev) => prev.filter((t) => t.id !== teacher.id));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   useEffect(() => {
     if (!token || activeTab !== 'notifications') return;
@@ -225,6 +272,14 @@ export const AdminDashboard: React.FC = () => {
         description: 'Yıllık gelişim',
         active: activeTab === 'reports',
         onClick: () => setActiveTab('reports'),
+      },
+      {
+        id: 'ai-question-parser',
+        label: 'AI PDF Ayrıştırıcı',
+        icon: <span>🤖</span>,
+        description: 'PDF soru bankası',
+        active: false,
+        onClick: () => navigate('/admin/question-parser'),
       },
     ],
     [activeTab, adminNotifications],
@@ -331,6 +386,38 @@ export const AdminDashboard: React.FC = () => {
       );
       setTeachers((prev) => [...prev, created]);
       setNewTeacher({ name: '', email: '', password: '', subjectAreas: [], assignedGrades: [] });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function handleUpdateTeacher(e: React.FormEvent) {
+    e.preventDefault();
+    if (!token || !editingTeacherId) return;
+    try {
+      const updated = await apiRequest<Teacher>(
+        `/admin/teachers/${editingTeacherId}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: editTeacher.name,
+            email: editTeacher.email,
+            subjectAreas: editTeacher.subjectAreas,
+            assignedGrades: editTeacher.assignedGrades,
+            password: editTeacher.password || undefined,
+          }),
+        },
+        token,
+      );
+      setTeachers((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      setEditingTeacherId(null);
+      setEditTeacher({
+        name: '',
+        email: '',
+        subjectAreas: [],
+        assignedGrades: [],
+        password: '',
+      });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -934,43 +1021,228 @@ export const AdminDashboard: React.FC = () => {
               <div className="empty-state">Henüz öğretmen kaydı yok.</div>
             )}
             {teachers.map((t) => (
-              <div key={t.id} className="list-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                {t.profilePictureUrl ? (
-                  <img
-                    src={resolveContentUrl(t.profilePictureUrl)}
-                    alt={t.name}
-                    style={{
-                      width: '2.5rem',
-                      height: '2.5rem',
-                      borderRadius: '50%',
-                      objectFit: 'cover',
-                    }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: '2.5rem',
-                      height: '2.5rem',
-                      borderRadius: '50%',
-                      background: 'var(--color-primary-soft)',
-                      color: 'var(--color-primary)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '0.85rem',
-                      fontWeight: 700,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {t.name.slice(0, 2).toUpperCase()}
+              <div
+                key={t.id}
+                className="list-row flex items-center justify-between gap-3 flex-nowrap"
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {t.profilePictureUrl ? (
+                    <img
+                      src={resolveContentUrl(t.profilePictureUrl)}
+                      alt={t.name}
+                      style={{
+                        width: '2.5rem',
+                        height: '2.5rem',
+                        borderRadius: '50%',
+                        objectFit: 'cover',
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: '2.5rem',
+                        height: '2.5rem',
+                        borderRadius: '50%',
+                        background: 'var(--color-primary-soft)',
+                        color: 'var(--color-primary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.85rem',
+                        fontWeight: 700,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {t.name.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex flex-col truncate">
+                    <strong className="text-sm font-semibold truncate">{t.name}</strong>
+                    <small className="text-xs text-slate-300 truncate">{t.email}</small>
                   </div>
-                )}
-                <div style={{ flex: 1 }}>
-                  <strong>{t.name}</strong>
-                  <small>{t.email}</small>
+                </div>
+                <div className="flex items-center gap-2 pl-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleEditTeacher(t)}
+                    aria-label="Öğretmeni düzenle"
+                    className="p-2 rounded-full text-slate-300 hover:text-sky-400 hover:bg-slate-800/60 transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTeacher(t)}
+                    aria-label="Öğretmeni sil"
+                    className="p-2 rounded-full text-slate-300 hover:text-red-400 hover:bg-slate-800/60 transition-transform transition-colors transform hover:scale-110"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))}
+          </div>
+          <div style={{ marginTop: '1rem' }}>
+            <h3 style={{ marginBottom: '0.5rem' }}>Öğretmen Düzenle</h3>
+            {editingTeacherId ? (
+              <form onSubmit={handleUpdateTeacher} className="form">
+                <div className="field">
+                  <span>İsim</span>
+                  <input
+                    value={editTeacher.name}
+                    onChange={(e) =>
+                      setEditTeacher((prev) => ({ ...prev, name: e.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <span>E-posta</span>
+                  <input
+                    type="email"
+                    value={editTeacher.email}
+                    onChange={(e) =>
+                      setEditTeacher((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <span>Hangi sınıflara giriyor?</span>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '0.4rem',
+                      marginTop: '0.25rem',
+                    }}
+                  >
+                    {['4', '5', '6', '7', '8', '9', '10', '11', '12'].map((grade) => {
+                      const selected = editTeacher.assignedGrades.includes(grade);
+                      return (
+                        <button
+                          key={grade}
+                          type="button"
+                          className={selected ? 'primary-btn' : 'ghost-btn'}
+                          onClick={() =>
+                            setEditTeacher((prev) => ({
+                              ...prev,
+                              assignedGrades: selected
+                                ? prev.assignedGrades.filter((g) => g !== grade)
+                                : [...prev.assignedGrades, grade],
+                            }))
+                          }
+                          style={
+                            selected
+                              ? { padding: '0.25rem 0.6rem', fontSize: '0.8rem' }
+                              : {
+                                  padding: '0.25rem 0.6rem',
+                                  fontSize: '0.8rem',
+                                  border: '1px solid rgba(209,213,219,0.9)',
+                                  background: '#f9fafb',
+                                  color: '#111827',
+                                }
+                          }
+                        >
+                          {grade}. Sınıf
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="field">
+                  <span>Hangi derslere giriyor?</span>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '0.4rem',
+                      marginTop: '0.25rem',
+                    }}
+                  >
+                    {subjectsLoading && (
+                      <span style={{ fontSize: '0.85rem' }}>Yükleniyor...</span>
+                    )}
+                    {!subjectsLoading &&
+                      subjects.map((s) => {
+                        const selected = editTeacher.subjectAreas.includes(s.name);
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            className={selected ? 'primary-btn' : 'ghost-btn'}
+                            onClick={() =>
+                              setEditTeacher((prev) => ({
+                                ...prev,
+                                subjectAreas: selected
+                                  ? prev.subjectAreas.filter((name) => name !== s.name)
+                                  : [...prev.subjectAreas, s.name],
+                              }))
+                            }
+                            style={
+                              selected
+                                ? { padding: '0.25rem 0.6rem', fontSize: '0.8rem' }
+                                : {
+                                    padding: '0.25rem 0.6rem',
+                                    fontSize: '0.8rem',
+                                    border: '1px solid rgba(209,213,219,0.9)',
+                                    background: '#f9fafb',
+                                    color: '#111827',
+                                  }
+                            }
+                          >
+                            {s.name}
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+                <div className="field">
+                  <span>Yeni Şifre (opsiyonel)</span>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="Boş bırakırsanız değişmez"
+                    value={editTeacher.password}
+                    onChange={(e) =>
+                      setEditTeacher((prev) => ({ ...prev, password: e.target.value }))
+                    }
+                  />
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '0.75rem',
+                    marginTop: '0.5rem',
+                    alignItems: 'center',
+                  }}
+                >
+                  <button type="submit" className="primary-btn">
+                    Kaydet
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => {
+                      setEditingTeacherId(null);
+                      setEditTeacher({
+                        name: '',
+                        email: '',
+                        subjectAreas: [],
+                        assignedGrades: [],
+                        password: '',
+                      });
+                    }}
+                  >
+                    İptal
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <p style={{ fontSize: '0.85rem', color: 'rgba(148,163,184,0.9)' }}>
+                Düzenlemek için listeden bir öğretmenin yanındaki kalem ikonuna tıklayın.
+              </p>
+            )}
           </div>
         </GlassCard>
       )}

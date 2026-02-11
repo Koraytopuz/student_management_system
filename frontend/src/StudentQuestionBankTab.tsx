@@ -15,9 +15,11 @@ import {
   type StudentAssignmentDetail,
   type StudentQuestionBankMetaResponse,
   type StudentQuestionBankSubjectMeta,
+  type TeacherListItem,
   getStudentQuestionBankMeta,
   startStudentQuestionBankTest,
   createStudentHelpRequest,
+  getStudentTeachers,
 } from './api';
 import { GlassCard } from './components/DashboardPrimitives';
 
@@ -51,8 +53,15 @@ export function StudentQuestionBankTab({
   const [askTeacherSending, setAskTeacherSending] = useState(false);
   const [askTeacherSuccess, setAskTeacherSuccess] = useState(false);
   const [askTeacherError, setAskTeacherError] = useState<string | null>(null);
+  const [teachers, setTeachers] = useState<TeacherListItem[]>([]);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [teachersLoading, setTeachersLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +91,29 @@ export function StudentQuestionBankTab({
       cancelled = true;
     };
   }, [token, gradeLevel]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchTeachers = async () => {
+      setTeachersLoading(true);
+      try {
+        const list = await getStudentTeachers(token);
+        if (cancelled) return;
+        setTeachers(list);
+        if (list.length > 0) {
+          setSelectedTeacherId(list[0].id);
+        }
+      } catch (err) {
+        console.error('Öğretmenler yüklenemedi:', err);
+      } finally {
+        if (!cancelled) setTeachersLoading(false);
+      }
+    };
+    fetchTeachers();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const gradeLevels = useMemo(
     () => ['4', '5', '6', '7', '8', '9', '10', '11', '12'],
@@ -141,6 +173,93 @@ export function StudentQuestionBankTab({
     }
   };
 
+  const stopCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+  };
+
+  const handleCloseCamera = () => {
+    stopCamera();
+    setCameraOpen(false);
+  };
+
+  const handleOpenCamera = async () => {
+    setCameraError(null);
+
+    // Tarayıcı getUserMedia desteklemiyorsa eski input davranışına düş
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      cameraInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      setCameraOpen(true);
+
+      // Video elementine stream'i bağla
+      window.setTimeout(() => {
+        const video = cameraVideoRef.current;
+        if (video) {
+          // eslint-disable-next-line no-param-reassign
+          (video as any).srcObject = stream;
+          void video.play().catch(() => {
+            // ignore play errors
+          });
+        }
+      }, 0);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? `Kameraya erişilemedi: ${err.message}`
+          : 'Kameraya erişim izni verilmedi veya desteklenmiyor.';
+      setCameraError(message);
+      stopCamera();
+    }
+  };
+
+  const handleCapturePhoto = () => {
+    const video = cameraVideoRef.current;
+    if (!video) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        const file = new File([blob], `soru-${Date.now()}.jpg`, { type: 'image/jpeg' });
+        setAskTeacherFile(file);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setAskTeacherPreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      },
+      'image/jpeg',
+      0.9,
+    );
+
+    handleCloseCamera();
+  };
+
+  useEffect(
+    () => () => {
+      stopCamera();
+    },
+    [],
+  );
+
   const handleAskTeacher = async () => {
     if (!askTeacherFile && !askTeacherMessage.trim()) {
       setAskTeacherError('Lütfen bir fotoğraf ekleyin veya bir mesaj yazın.');
@@ -153,6 +272,7 @@ export function StudentQuestionBankTab({
       await createStudentHelpRequest(token, {
         message: askTeacherMessage.trim() || undefined,
         image: askTeacherFile || undefined,
+        teacherId: selectedTeacherId || undefined,
       });
       setAskTeacherSuccess(true);
       setAskTeacherMessage('');
@@ -321,33 +441,95 @@ export function StudentQuestionBankTab({
         </div>
 
         <div className="space-y-4">
-          <h3 className="text-sm font-medium text-white/80 flex items-center gap-2 px-1">
+          <h3 className="text-sm font-medium text-white flex items-center gap-2 px-1">
             <Camera className="w-4 h-4 text-rose-400" />
             Öğretmene Sor
           </h3>
-          <GlassCard className="p-5 space-y-4 border-white/5 relative overflow-hidden group">
+          <GlassCard className="p-5 space-y-4 border-white/10 bg-slate-900/90 relative overflow-hidden group shadow-lg shadow-rose-900/20">
             <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/5 blur-3xl rounded-full -mr-16 -mt-16 pointer-events-none group-hover:bg-rose-500/10 transition-colors" />
 
             <div className="space-y-3">
-              <p className="text-xs text-white/60 leading-relaxed">
+              <p className="text-xs text-white/80 leading-relaxed">
                 Çözemediğin bir soru mu var? Fotoğrafını çek veya galeriden yükle, öğretmenin anında görsün!
               </p>
 
-              <div className="flex gap-2">
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '0.5rem',
+                  flexWrap: 'wrap',
+                  marginTop: '0.25rem',
+                }}
+              >
                 <button
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="flex-1 flex flex-col items-center justify-center gap-2 p-3 bg-white/5 border border-dashed border-white/10 rounded-2xl hover:bg-white/10 hover:border-rose-500/30 transition-all group/btn"
+                  type="button"
+                  onClick={handleOpenCamera}
+                  className="ghost-btn"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.45rem 1rem',
+                    fontSize: '0.8rem',
+                    borderRadius: 999,
+                  }}
                 >
-                  <Camera className="w-5 h-5 text-rose-400 group-hover/btn:scale-110 transition-transform" />
-                  <span className="text-[10px] text-white/70 uppercase tracking-widest font-bold">Kamera</span>
+                  <Camera className="w-4 h-4" />
+                  <span>Kamera</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 flex flex-col items-center justify-center gap-2 p-3 bg-white/5 border border-dashed border-white/10 rounded-2xl hover:bg-white/10 hover:border-indigo-500/30 transition-all group/btn"
+                  className="ghost-btn"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.45rem 1rem',
+                    fontSize: '0.8rem',
+                    borderRadius: 999,
+                  }}
                 >
-                  <Upload className="w-5 h-5 text-indigo-400 group-hover/btn:scale-110 transition-transform" />
-                  <span className="text-[10px] text-white/70 uppercase tracking-widest font-bold">Dosya</span>
+                  <Upload className="w-4 h-4" />
+                  <span>Dosya</span>
                 </button>
+              </div>
+
+              <div style={{ marginTop: '0.75rem' }}>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'rgba(255,255,255,0.85)',
+                    marginBottom: '0.25rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  Soru Sormak İstediğin Öğretmen
+                </label>
+                <select
+                  value={selectedTeacherId}
+                  onChange={(e) => setSelectedTeacherId(e.target.value)}
+                  className="ghost-btn"
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    fontSize: '0.85rem',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                  }}
+                  disabled={teachersLoading}
+                >
+                  {teachers.length === 0 && !teachersLoading ? (
+                    <option value="">Öğretmen bulunamadı</option>
+                  ) : (
+                    teachers.map((t) => (
+                      <option key={t.id} value={t.id} style={{ background: '#0b1220' }}>
+                        {t.name} {t.subjectAreas && t.subjectAreas.length > 0 ? `(${t.subjectAreas.join(', ')})` : ''}
+                      </option>
+                    ))
+                  )}
+                </select>
               </div>
 
               <input
@@ -355,7 +537,7 @@ export function StudentQuestionBankTab({
                 type="file"
                 accept="image/*"
                 onChange={handleFileChange}
-                className="hidden"
+                style={{ display: 'none' }}
               />
               <input
                 ref={cameraInputRef}
@@ -363,7 +545,7 @@ export function StudentQuestionBankTab({
                 accept="image/*"
                 capture="environment"
                 onChange={handleFileChange}
-                className="hidden"
+                style={{ display: 'none' }}
               />
 
               {askTeacherPreview && (
@@ -425,6 +607,82 @@ export function StudentQuestionBankTab({
               )}
             </div>
           </GlassCard>
+
+          {cameraOpen && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 80,
+                background: 'rgba(0,0,0,0.8)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1rem',
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  maxWidth: 480,
+                  background: '#0b1220',
+                  borderRadius: 16,
+                  padding: '1rem',
+                  border: '1px solid rgba(148,163,184,0.5)',
+                  color: '#e5e7eb',
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Kamera ile Fotoğraf Çek</div>
+                <p
+                  style={{
+                    fontSize: '0.8rem',
+                    color: 'var(--color-text-muted)',
+                    margin: '0 0 0.75rem 0',
+                  }}
+                >
+                  Lütfen çözmek istediğin soruyu kameraya göster ve &quot;Fotoğraf Çek&quot; tuşuna bas.
+                </p>
+                <div
+                  style={{
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    background: '#000',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <video
+                    ref={cameraVideoRef}
+                    autoPlay
+                    playsInline
+                    style={{ width: '100%', maxHeight: 320, display: 'block' }}
+                  />
+                </div>
+                {cameraError && (
+                  <p style={{ fontSize: '0.8rem', color: '#f87171', marginBottom: '0.5rem' }}>
+                    {cameraError}
+                  </p>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={handleCloseCamera}
+                    style={{ flex: 1 }}
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={handleCapturePhoto}
+                    style={{ flex: 1 }}
+                  >
+                    Fotoğraf Çek
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

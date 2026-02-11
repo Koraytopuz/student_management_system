@@ -1,18 +1,9 @@
 import React from 'react';
-import {
-  Radar,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  ResponsiveContainer,
-  Legend,
-  Tooltip,
-} from 'recharts';
 import { CalendarDays, Clock, PlayCircle, HelpCircle, Download } from 'lucide-react';
 
 import type { AnnualReportData } from './api';
-import { resolveContentUrl } from './api';
+import { YearlyProgressReportCard } from './YearlyProgressReportCard';
+import { AnnualPerformanceChart } from './AnnualPerformanceChart';
 
 // Use types from API or keep local aliases
 type SubjectKey = 'matematik' | 'fen' | 'turkce' | 'sosyal' | 'yabanci';
@@ -49,17 +40,12 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
   const data = reportData || null;
 
   if (!data) {
-     return <div className="p-8 text-center text-slate-400">Veri yükleniyor veya rapor bulunamadı.</div>;
+    return (
+      <div className="p-8 text-center text-slate-400">
+        Veri yükleniyor veya rapor bulunamadı.
+      </div>
+    );
   }
-
-  // Use data from props
-  const effectiveStudent = {
-      name: data.student.name,
-      className: data.student.className,
-      avatarUrl: resolveContentUrl(data.student.avatarUrl),
-      annualScore: data.student.annualScore,
-      annualRankPercentile: data.student.annualRankPercentile
-  };
 
   const handlePrint = () => {
     if (typeof window !== 'undefined') {
@@ -71,142 +57,14 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
     <div className="annual-report-page">
       <div className="annual-report-print">
         {/* HEADER / KİMLİK KARTI */}
-        <section className="glass-card annual-report-header">
-          <div className="annual-report-header-main">
-            <div className="annual-report-identity">
-              <div className="annual-report-avatar">
-                {effectiveStudent.avatarUrl ? (
-                  <img
-                    src={effectiveStudent.avatarUrl}
-                    alt={effectiveStudent.name}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <span className="text-3xl lg:text-4xl font-semibold tracking-tight">
-                    {effectiveStudent.name
-                      .split(' ')
-                      .map((p) => p[0])
-                      .join('')
-                      .slice(0, 2)}
-                  </span>
-                )}
-              </div>
-              <div className="annual-report-title-block">
-                <p className="annual-report-eyebrow">
-                  Yıllık Gelişim Raporu
-                </p>
-                <h1>Yıl Sonu Gelişim Raporu</h1>
-                <p className="annual-report-subtitle">
-                  {effectiveStudent.name} · {effectiveStudent.className}
-                </p>
-                <p className="annual-report-helper">
-                  Yıl boyu performansının kişiselleştirilmiş özeti.
-                </p>
-              </div>
-            </div>
-
-            <div className="annual-report-score">
-              <div className="annual-report-score-row">
-                <div className="annual-report-score-text">
-                  <p className="annual-report-score-label">Yıllık Genel Başarı Puanı</p>
-                  <div className="annual-report-score-value">
-                    <span>{effectiveStudent.annualScore.toFixed(1)}</span>
-                    <span className="annual-report-score-denominator">/10</span>
-                  </div>
-                </div>
-                <div className="annual-report-rank-pill">
-                  <div className="annual-report-rank-inner">
-                    <span>TOP</span>
-                    <strong>{effectiveStudent.annualRankPercentile}</strong>
-                    <span className="annual-report-rank-caption">percentile</span>
-                  </div>
-                </div>
-              </div>
-              <p className="annual-report-score-description">
-                Bu skor; ders başarıları, dijital efor ve odaklanma metriklerinin birleşimiyle hesaplanmış
-                yıllık genel performans indeksidir.
-              </p>
-            </div>
-          </div>
+        <section className="annual-report-header">
+          <YearlyProgressReportCard reportData={data} />
         </section>
 
         {/* ÜST GRID: RADAR + DİJİTAL EFOR */}
         <section className="annual-report-top-grid">
           {/* RADAR CHART */}
-          <div className="glass-card annual-report-card annual-report-card--radar">
-            <div className="annual-report-card-header">
-              <div>
-                <p className="annual-report-eyebrow">
-                  Chart 01 · Karşılaştırmalı Analiz
-                </p>
-                <h2 className="annual-report-card-title">Ders Bazlı Yıllık Performans</h2>
-                <p className="annual-report-card-helper">
-                  Öğrencinin yıl sonu ders performansı, sınıf ortalaması ile radar grafiği üzerinde
-                  karşılaştırmalı olarak gösterilmiştir.
-                </p>
-              </div>
-              <div className="annual-report-legend">
-                <span className="annual-report-legend-item">
-                  <span className="annual-report-legend-swatch annual-report-legend-swatch--student" />
-                  Öğrenci
-                </span>
-                <span className="annual-report-legend-item">
-                  <span className="annual-report-legend-swatch annual-report-legend-swatch--class" />
-                  Sınıf Ort.
-                </span>
-              </div>
-            </div>
-            <div className="annual-report-radar-shell">
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={data.radar} outerRadius="80%">
-                  <PolarGrid stroke="rgba(148,163,184,0.35)" />
-                  <PolarAngleAxis
-                    dataKey="axis"
-                    tick={{ fill: '#cbd5f5', fontSize: 11 }}
-                    tickLine={false}
-                  />
-                  <PolarRadiusAxis
-                    angle={30}
-                    domain={[0, 100]}
-                    tick={{ fill: 'rgba(148,163,184,0.7)', fontSize: 10 }}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <Radar
-                    name="Öğrenci"
-                    dataKey="student"
-                    stroke="#34d399"
-                    fill="#34d399"
-                    fillOpacity={0.4}
-                  />
-                  <Radar
-                    name="Sınıf Ort."
-                    dataKey="classAvg"
-                    stroke="rgba(148,163,184,0.9)"
-                    fill="rgba(148,163,184,0.45)"
-                    fillOpacity={0.2}
-                  />
-                  <Legend
-                    wrapperStyle={{
-                      paddingTop: 12,
-                      fontSize: 11,
-                    }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#020617',
-                      borderRadius: 12,
-                      border: '1px solid rgba(148,163,184,0.5)',
-                      padding: '8px 10px',
-                      fontSize: 11,
-                    }}
-                    labelStyle={{ marginBottom: 4, color: '#e5e7eb' }}
-                    formatter={(value: number) => [`${value.toFixed(0)} puan`, '']}
-                  />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          <AnnualPerformanceChart reportData={data} />
 
           {/* DİJİTAL EFOR GRIDİ */}
           <div className="glass-card annual-report-card annual-report-card--effort">

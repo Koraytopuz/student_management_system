@@ -4,6 +4,7 @@ import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { HelpCircle, Camera, Image, Trash2, Loader2 } from 'lucide-react';
 import { DrawingCanvas } from './DrawingCanvas';
 import { Breadcrumb } from './components/DashboardPrimitives';
+import { getStudentTeachers } from './api';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
@@ -31,8 +32,15 @@ interface PdfTestOverlayProps {
   onTimeUp?: (answers: Record<number, string>) => void;
   onClose: () => void;
   onSubmit: (answers: Record<number, string>) => Promise<void>;
-  onAskTeacher?: (questionId: string, message?: string, studentAnswer?: string, image?: File) => Promise<void>;
+  onAskTeacher?: (questionId: string, message?: string, studentAnswer?: string, image?: File, teacherId?: string) => Promise<void>;
   submitting?: boolean;
+  token?: string | null;
+}
+
+interface TeacherListItem {
+  id: string;
+  name: string;
+  subjectAreas?: string[];
 }
 
 function formatCountdown(seconds: number): string {
@@ -52,6 +60,7 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
   onSubmit,
   onAskTeacher,
   submitting = false,
+  token,
 }) => {
   const [numPages, setNumPages] = useState(0);
   const [pageImages, setPageImages] = useState<Record<number, string>>({});
@@ -69,6 +78,9 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
   const [askTeacherSending, setAskTeacherSending] = useState(false);
   const [askTeacherFile, setAskTeacherFile] = useState<File | null>(null);
   const [askTeacherPreview, setAskTeacherPreview] = useState<string | null>(null);
+  const [teachers, setTeachers] = useState<TeacherListItem[]>([]);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [teachersLoading, setTeachersLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const drawingLineWidth = 3;
@@ -216,6 +228,30 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
     fileInputRef.current?.click();
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    const fetchTeachers = async () => {
+      if (!token || !askTeacherOpen) return;
+      setTeachersLoading(true);
+      try {
+        const list = await getStudentTeachers(token);
+        if (cancelled) return;
+        setTeachers(list);
+        if (list.length > 0) {
+          setSelectedTeacherId(list[0].id);
+        }
+      } catch (err) {
+        console.error('Öğretmenler yüklenemedi:', err);
+      } finally {
+        if (!cancelled) setTeachersLoading(false);
+      }
+    };
+    fetchTeachers();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, askTeacherOpen]);
+
   const handleAskTeacher = async () => {
     if (!onAskTeacher) return;
     setAskTeacherSending(true);
@@ -225,6 +261,7 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
         askTeacherMessage.trim() || undefined,
         answers[pageKey] || undefined,
         askTeacherFile || undefined,
+        selectedTeacherId || undefined,
       );
       setAskTeacherOpen(false);
       setAskTeacherMessage('');
@@ -822,6 +859,36 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
             <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 1rem 0' }}>
               Öğretmeniniz hangi test ve hangi soruda takıldığınızı görecek. Sesli veya görüntülü çözüm gönderebilir.
             </p>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)', marginBottom: '0.25rem', fontWeight: 600 }}>
+                Hangi Öğretmene Sormak İstiyorsun?
+              </label>
+              <select
+                value={selectedTeacherId}
+                onChange={(e) => setSelectedTeacherId(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.6rem',
+                  borderRadius: 8,
+                  background: '#1a2234',
+                  color: '#e5e7eb',
+                  border: '1px solid rgba(148,163,184,0.4)',
+                  fontSize: '0.9rem',
+                }}
+                disabled={teachersLoading}
+              >
+                {teachers.length === 0 && !teachersLoading ? (
+                  <option value="">Öğretmen bulunamadı</option>
+                ) : (
+                  teachers.map((t) => (
+                    <option key={t.id} value={t.id} style={{ background: '#0b1220' }}>
+                      {t.name} {t.subjectAreas && t.subjectAreas.length > 0 ? `(${t.subjectAreas.join(', ')})` : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
             <textarea
               placeholder="Ek not (isteğe bağlı)"
               value={askTeacherMessage}

@@ -10,6 +10,8 @@ import studentRoutes from './routes.student';
 import parentRoutes from './routes.parent';
 import adminRoutes from './routes.admin';
 import questionBankRoutes from './routes.questionbank';
+import aiRoutes from './aiRoutes';
+import assignmentRoutes from './routes.assignmentRoutes';
 
 // Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
 dotenv.config();
@@ -93,6 +95,8 @@ app.use('/teacher', teacherRoutes);
 app.use('/student', studentRoutes);
 app.use('/parent', parentRoutes);
 app.use('/questionbank', questionBankRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/assignments', assignmentRoutes);
 
 // Chrome DevTools isteği (CSP hatasını önlemek için boş yanıt)
 app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {

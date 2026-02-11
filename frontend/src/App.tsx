@@ -7,6 +7,11 @@ import { TeacherDashboard } from './TeacherDashboard';
 import { StudentDashboard } from './StudentDashboard';
 import { ParentDashboard } from './ParentDashboard';
 import { AdminDashboard } from './AdminDashboard';
+import { AdminReports } from './AdminReports';
+import { QuestionParserPage } from './pages/admin/QuestionParserPage';
+import { TeacherAssignmentsPage } from './pages/teacher/Assignments';
+import { StudentMyHomeworksPage } from './pages/student/MyHomeworks';
+import { ParentChildHomeworksPage } from './pages/parent/ChildHomeworks';
 
 const ProtectedRoute: React.FC<{
   children: React.ReactElement;
@@ -98,6 +103,15 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </button>
               )}
               {panelTitle && <span className="panel-pill">{panelTitle}</span>}
+              {user.role === 'admin' && (
+                <Link
+                  to="/admin/reports"
+                  className="ghost-btn"
+                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                >
+                  Raporlar
+                </Link>
+              )}
               <span className="user-pill">
                 {user.name} ({user.role})
               </span>
@@ -166,11 +180,31 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
+        path="/teacher/assignments"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="teacher">
+              <TeacherAssignmentsPage />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
         path="/student"
         element={
           <Layout>
             <ProtectedRoute requiredRole="student">
               <StudentDashboard />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/student/homeworks"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="student">
+              <StudentMyHomeworksPage />
             </ProtectedRoute>
           </Layout>
         }
@@ -186,11 +220,41 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
+        path="/parent/child-homeworks"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="parent">
+              <ParentChildHomeworksPage />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
         path="/admin"
         element={
           <Layout>
             <ProtectedRoute requiredRole="admin">
               <AdminDashboard />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/admin/reports"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="admin">
+              <AdminReports />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/admin/question-parser"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="admin">
+              <QuestionParserPage />
             </ProtectedRoute>
           </Layout>
         }

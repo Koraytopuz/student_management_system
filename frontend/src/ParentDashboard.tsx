@@ -396,36 +396,112 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
 
   return (
     <GlassCard title="Şikayet / Öneri" subtitle="Admin’e iletilir (isteğe bağlı öğretmen seçimi)">
-      <div style={{ display: 'grid', gap: '0.75rem' }}>
-        <select
-          value={form.aboutTeacherId}
-          onChange={(e) => setForm((p) => ({ ...p, aboutTeacherId: e.target.value }))}
-          disabled={loadingTeachers}
-        >
-          <option value="">{loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}</option>
-          {teachers.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
+      <div style={{ display: 'grid', gap: '0.85rem' }}>
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '0.75rem',
+              color: 'rgba(248,250,252,0.7)',
+              marginBottom: '0.25rem',
+              fontWeight: 600,
+            }}
+          >
+            Öğretmen (opsiyonel)
+          </label>
+          <select
+            value={form.aboutTeacherId}
+            onChange={(e) => setForm((p) => ({ ...p, aboutTeacherId: e.target.value }))}
+            disabled={loadingTeachers}
+            className="w-full text-sm"
+            style={{
+              padding: '0.55rem 0.75rem',
+              borderRadius: 12,
+              border: '1px solid rgba(148,163,184,0.4)',
+              background: 'rgba(15,23,42,0.9)',
+              color: '#e5e7eb',
+            }}
+          >
+            <option value="">
+              {loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}
             </option>
-          ))}
-        </select>
-        <input
-          type="text"
-          placeholder="Konu"
-          value={form.subject}
-          onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
-        />
-        <textarea
-          placeholder="Açıklama"
-          value={form.body}
-          onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
-          rows={6}
-          style={{ resize: 'vertical' }}
-        />
+            {teachers.map((t) => (
+              <option key={t.id} value={t.id} style={{ background: '#020617' }}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '0.75rem',
+              color: 'rgba(248,250,252,0.7)',
+              marginBottom: '0.25rem',
+              fontWeight: 600,
+            }}
+          >
+            Konu
+          </label>
+          <input
+            type="text"
+            placeholder="Örn: Sınıf, öğretmen, sistem ile ilgili geri bildirim"
+            value={form.subject}
+            onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
+            className="w-full text-sm"
+            style={{
+              padding: '0.55rem 0.75rem',
+              borderRadius: 12,
+              border: '1px solid rgba(148,163,184,0.4)',
+              background: 'rgba(15,23,42,0.9)',
+              color: '#e5e7eb',
+            }}
+          />
+        </div>
+
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '0.75rem',
+              color: 'rgba(248,250,252,0.7)',
+              marginBottom: '0.25rem',
+              fontWeight: 600,
+            }}
+          >
+            Açıklama
+          </label>
+          <textarea
+            placeholder="Lütfen geri bildiriminizi detaylı şekilde yazın."
+            value={form.body}
+            onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
+            rows={5}
+            className="w-full text-sm"
+            style={{
+              resize: 'vertical',
+              padding: '0.6rem 0.75rem',
+              borderRadius: 12,
+              border: '1px solid rgba(148,163,184,0.4)',
+              background: 'rgba(15,23,42,0.9)',
+              color: '#e5e7eb',
+              minHeight: 96,
+            }}
+          />
+        </div>
+
         {error && <div className="error">{error}</div>}
-        {success && <div style={{ color: '#10b981', fontSize: '0.9rem' }}>{success}</div>}
+        {success && (
+          <div style={{ color: '#22c55e', fontSize: '0.85rem', fontWeight: 500 }}>{success}</div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button type="button" className="primary-btn" onClick={() => handleSubmit().catch(() => {})} disabled={saving}>
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={() => handleSubmit().catch(() => {})}
+            disabled={saving}
+          >
             {saving ? 'Gönderiliyor...' : 'Gönder'}
           </button>
         </div>

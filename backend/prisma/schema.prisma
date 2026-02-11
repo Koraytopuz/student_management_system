@@ -175,6 +175,13 @@ enum CoachingNoteVisibility {
   shared_with_parent
 }
 
+/// Bireysel ödevler için durum bilgisi
+enum HomeworkStatus {
+  PENDING
+  COMPLETED
+  LATE
+}
+
 enum BadgeCategory {
   questions_solved
   tests_completed
@@ -231,6 +238,10 @@ model User {
   coachingNotesAsCoach     CoachingNote[]     @relation("CoachingNotesCoach")
   studentBadges            StudentBadge[]
   focusSessions            StudentFocusSession[]
+  /// Bireysel öğrenci ödevleri – öğrenci rolü için
+  homeworksAsStudent       Homework[]         @relation("HomeworkStudent")
+  /// Bireysel öğrenci ödevleri – öğretmen rolü için
+  homeworksAsTeacher       Homework[]         @relation("HomeworkTeacher")
 
   @@unique([email, role])
   @@map("users")
@@ -255,6 +266,7 @@ model Subject {
   testAssets       TestAsset[]
   questionBank     QuestionBank[]
   curriculumTopics CurriculumTopic[]
+  homeworks        Homework[]
 
   @@map("subjects")
 }
@@ -933,4 +945,26 @@ model StudentFocusSession {
 
   @@index([studentId])
   @@map("student_focus_sessions")
+}
+
+/// Bireysel öğrenci ödev sistemi için basit Homework modeli
+model Homework {
+  id          String         @id @default(cuid())
+  title       String
+  description String?
+  dueDate     DateTime       @map("due_date")
+  status      HomeworkStatus @default(PENDING)
+  studentId   String         @map("student_id")
+  teacherId   String         @map("teacher_id")
+  subjectId   String         @map("subject_id")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  student User   @relation("HomeworkStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  teacher User   @relation("HomeworkTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, dueDate])
+  @@index([teacherId, dueDate])
+  @@index([subjectId])
+  @@map("homeworks")
 }

@@ -1254,7 +1254,7 @@ export const StudentDashboard: React.FC = () => {
             setPdfTestStartedAtMs(null);
             setPdfTestRemainingSeconds(null);
           }}
-          onAskTeacher={async (questionId, message, studentAnswer, image) => {
+          onAskTeacher={async (questionId, message, studentAnswer, image, teacherId) => {
             if (!token) return;
             try {
               await createStudentHelpRequest(token, {
@@ -1263,6 +1263,7 @@ export const StudentDashboard: React.FC = () => {
                 message: message || undefined,
                 studentAnswer: studentAnswer || undefined,
                 image,
+                teacherId,
               });
               // eslint-disable-next-line no-alert
               alert('Öğretmenine bildirim gönderildi. Sesli veya görüntülü çözümle en kısa sürede dönüş yapılacak.');
@@ -1271,6 +1272,7 @@ export const StudentDashboard: React.FC = () => {
               alert(e instanceof Error ? e.message : 'Bildirim gönderilemedi.');
             }
           }}
+          token={token}
           onSubmit={async (ans) => {
             if (!token || !activePdfAssignment) return;
             setPdfTestSubmitting(true);
@@ -1428,9 +1430,44 @@ export const StudentDashboard: React.FC = () => {
                         const res = await getStudentTestFeedback(
                           token,
                           lastTestResult.testResultId,
-                          'pdf',
                         );
                         setAiFeedback(res.feedback);
+                      } catch (e) {
+                        // eslint-disable-next-line no-alert
+                        alert(
+                          e instanceof Error
+                            ? e.message
+                            : 'Detaylı yorum alınamadı.',
+                        );
+                      } finally {
+                        setAiFeedbackLoading(false);
+                      }
+                    }}
+                  >
+                    {aiFeedbackLoading
+                      ? 'AI yorum hazırlanıyor...'
+                      : 'Detaylı AI yorumunu göster'}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.7rem',
+                      border: '1px solid rgba(59,130,246,0.9)',
+                      background: 'rgba(30,64,175,0.5)',
+                      color: '#bfdbfe',
+                    }}
+                    disabled={aiFeedbackLoading}
+                    onClick={async () => {
+                      if (!token || !lastTestResult.testResultId) return;
+                      setAiFeedbackLoading(true);
+                      try {
+                        const res = await getStudentTestFeedback(
+                          token,
+                          lastTestResult.testResultId,
+                          'pdf',
+                        );
                         if (res.attachment) {
                           const blob = new Blob(
                             [
@@ -1447,22 +1484,23 @@ export const StudentDashboard: React.FC = () => {
                           a.download = res.attachment.filename;
                           a.click();
                           URL.revokeObjectURL(url);
+                        } else {
+                          // eslint-disable-next-line no-alert
+                          alert('İndirilebilir PDF bulunamadı.');
                         }
                       } catch (e) {
                         // eslint-disable-next-line no-alert
                         alert(
                           e instanceof Error
                             ? e.message
-                            : 'Detaylı yorum alınamadı.',
+                            : 'PDF indirilemedi.',
                         );
                       } finally {
                         setAiFeedbackLoading(false);
                       }
                     }}
                   >
-                    {aiFeedbackLoading
-                      ? 'AI yorum hazırlanıyor...'
-                      : 'Detaylı AI yorumu göster ve PDF indir'}
+                    PDF indir
                   </button>
                 </div>
               )}
@@ -1952,6 +1990,59 @@ const TestSolveOverlay: React.FC<{
               >
                 Kapat
               </button>
+            </div>
+            <div
+              style={{
+                maxHeight: 180,
+                overflowY: 'auto',
+                padding: '0.75rem 0.9rem',
+                borderRadius: 14,
+                background: 'rgba(15,23,42,0.95)',
+                border: '1px solid rgba(51,65,85,0.9)',
+                fontSize: '0.9rem',
+                marginBottom: '0.5rem',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  color: '#a5b4fc',
+                  marginBottom: '0.35rem',
+                }}
+              >
+                Soru Metni
+              </div>
+              <div
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  marginBottom:
+                    Array.isArray((question as any).choices) &&
+                    (question as any).choices.length > 0
+                      ? '0.5rem'
+                      : 0,
+                }}
+              >
+                {question.text}
+              </div>
+              {Array.isArray((question as any).choices) && (question as any).choices.length > 0 && (
+                <ul
+                  style={{
+                    margin: 0,
+                    paddingLeft: '1.1rem',
+                    listStyle: 'disc',
+                    opacity: 0.95,
+                  }}
+                >
+                  {(question as any).choices.map((choice: string, idx: number) => (
+                    <li key={idx} style={{ marginBottom: '0.15rem' }}>
+                      {choice}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <div
               style={{
@@ -3393,36 +3484,112 @@ const StudentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
 
   return (
     <GlassCard title="Şikayet / Öneri" subtitle="Admin’e iletilir (isteğe bağlı öğretmen seçimi)">
-      <div style={{ display: 'grid', gap: '0.75rem' }}>
-        <select
-          value={form.aboutTeacherId}
-          onChange={(e) => setForm((p) => ({ ...p, aboutTeacherId: e.target.value }))}
-          disabled={loadingTeachers}
-        >
-          <option value="">{loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}</option>
-          {teachers.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
+      <div style={{ display: 'grid', gap: '0.85rem' }}>
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '0.75rem',
+              color: 'rgba(248,250,252,0.7)',
+              marginBottom: '0.25rem',
+              fontWeight: 600,
+            }}
+          >
+            Öğretmen (opsiyonel)
+          </label>
+          <select
+            value={form.aboutTeacherId}
+            onChange={(e) => setForm((p) => ({ ...p, aboutTeacherId: e.target.value }))}
+            disabled={loadingTeachers}
+            className="w-full text-sm"
+            style={{
+              padding: '0.55rem 0.75rem',
+              borderRadius: 12,
+              border: '1px solid rgba(148,163,184,0.4)',
+              background: 'rgba(15,23,42,0.9)',
+              color: '#e5e7eb',
+            }}
+          >
+            <option value="">
+              {loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}
             </option>
-          ))}
-        </select>
-        <input
-          type="text"
-          placeholder="Konu"
-          value={form.subject}
-          onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
-        />
-        <textarea
-          placeholder="Açıklama"
-          value={form.body}
-          onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
-          rows={6}
-          style={{ resize: 'vertical' }}
-        />
+            {teachers.map((t) => (
+              <option key={t.id} value={t.id} style={{ background: '#020617' }}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '0.75rem',
+              color: 'rgba(248,250,252,0.7)',
+              marginBottom: '0.25rem',
+              fontWeight: 600,
+            }}
+          >
+            Konu
+          </label>
+          <input
+            type="text"
+            placeholder="Örn: Sınıf ortamı, ders anlatımı..."
+            value={form.subject}
+            onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
+            className="w-full text-sm"
+            style={{
+              padding: '0.55rem 0.75rem',
+              borderRadius: 12,
+              border: '1px solid rgba(148,163,184,0.4)',
+              background: 'rgba(15,23,42,0.9)',
+              color: '#e5e7eb',
+            }}
+          />
+        </div>
+
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '0.75rem',
+              color: 'rgba(248,250,252,0.7)',
+              marginBottom: '0.25rem',
+              fontWeight: 600,
+            }}
+          >
+            Açıklama
+          </label>
+          <textarea
+            placeholder="Geri bildiriminizi mümkün olduğunca detaylı yazın."
+            value={form.body}
+            onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
+            rows={5}
+            className="w-full text-sm"
+            style={{
+              resize: 'vertical',
+              padding: '0.6rem 0.75rem',
+              borderRadius: 12,
+              border: '1px solid rgba(148,163,184,0.4)',
+              background: 'rgba(15,23,42,0.9)',
+              color: '#e5e7eb',
+              minHeight: 96,
+            }}
+          />
+        </div>
+
         {error && <div className="error">{error}</div>}
-        {success && <div style={{ color: '#10b981', fontSize: '0.9rem' }}>{success}</div>}
+        {success && (
+          <div style={{ color: '#22c55e', fontSize: '0.85rem', fontWeight: 500 }}>{success}</div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button type="button" className="primary-btn" onClick={() => handleSubmit().catch(() => {})} disabled={saving}>
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={() => handleSubmit().catch(() => {})}
+            disabled={saving}
+          >
             {saving ? 'Gönderiliyor...' : 'Gönder'}
           </button>
         </div>
