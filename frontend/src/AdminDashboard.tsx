@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
-import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification, getSubjectsList, uploadAdminStudentImage, resolveContentUrl, getStudentPerformanceReport, type AnnualReportData } from './api';
+import { Pencil, Trash2, BookOpen } from 'lucide-react';
+import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification, getSubjectsList, uploadAdminStudentImage, resolveContentUrl } from './api';
 import { useAuth } from './AuthContext';
 import {
   DashboardLayout,
@@ -8,9 +8,13 @@ import {
   MetricCard,
   TagChip,
 } from './components/DashboardPrimitives';
-import { AnnualPerformanceReport } from './AnnualPerformanceReport';
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
-import { useNavigate } from 'react-router-dom';
+import { QuestionParserPage } from './pages/admin/QuestionParserPage';
+import OpticalScanningPage from './pages/admin/OpticalScanningPage';
+import { PersonalizedReport } from './pages/admin/PersonalizedReport';
+import { AdminReports } from './AdminReports';
+import ExamManagement from './pages/admin/ExamManagement';
+import { QuestionBankTab } from './QuestionBankTab';
 
 interface AdminSummary {
   teacherCount: number;
@@ -28,13 +32,21 @@ interface Teacher {
   profilePictureUrl?: string;
 }
 
+interface ClassGroup {
+  id: string;
+  name: string;
+  gradeLevel: string;
+  stream?: string | null;
+}
+
 interface Student {
   id: string;
   name: string;
   email: string;
-   gradeLevel?: string;
-   parentPhone?: string;
-   profilePictureUrl?: string;
+  gradeLevel?: string;
+  classId?: string;
+  parentPhone?: string;
+  profilePictureUrl?: string;
 }
 
 interface Parent {
@@ -81,7 +93,6 @@ function formatParentPhoneForDisplay(phone?: string): string {
 
 export const AdminDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
-  const navigate = useNavigate();
   const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -100,10 +111,12 @@ export const AdminDashboard: React.FC = () => {
     name: '',
     email: '',
     gradeLevel: '',
+    classId: '',
     parentPhone: '',
     password: '',
     profilePictureUrl: '',
   });
+  const [classGroups, setClassGroups] = useState<ClassGroup[]>([]);
   const [newParent, setNewParent] = useState({
     name: '',
     email: '',
@@ -133,6 +146,7 @@ export const AdminDashboard: React.FC = () => {
     name: string;
     email: string;
     gradeLevel: string;
+    classId: string;
     parentPhone: string;
     password: string;
     profilePictureUrl: string;
@@ -140,6 +154,7 @@ export const AdminDashboard: React.FC = () => {
     name: '',
     email: '',
     gradeLevel: '',
+    classId: '',
     parentPhone: '',
     password: '',
     profilePictureUrl: '',
@@ -147,9 +162,7 @@ export const AdminDashboard: React.FC = () => {
 
   const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
-  const [reportStudentId, setReportStudentId] = useState<string | null>(null);
-  const [reportData, setReportData] = useState<AnnualReportData | null>(null);
-  const [reportLoading, setReportLoading] = useState(false);
+
 
   type AdminTab =
     | 'overview'
@@ -158,7 +171,12 @@ export const AdminDashboard: React.FC = () => {
     | 'parents'
     | 'notifications'
     | 'complaints'
-    | 'reports';
+    | 'reports'
+    | 'personalized-report'
+    | 'ai-question-parser'
+    | 'optical-scanning'
+    | 'exam-management'
+    | 'questionbank';
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>([]);
   const [adminNotificationsLoading, setAdminNotificationsLoading] = useState(false);
@@ -202,17 +220,7 @@ export const AdminDashboard: React.FC = () => {
       .finally(() => setAdminNotificationsLoading(false));
   }, [token, activeTab]);
 
-  useEffect(() => {
-    if (!token || !reportStudentId || activeTab !== 'reports') {
-      setReportData(null);
-      return;
-    }
-    setReportLoading(true);
-    getStudentPerformanceReport(token, reportStudentId)
-      .then(setReportData)
-      .catch(() => setReportData(null))
-      .finally(() => setReportLoading(false));
-  }, [token, reportStudentId, activeTab]);
+
 
   const sidebarItems = useMemo<SidebarItem[]>(
     () => [
@@ -274,12 +282,44 @@ export const AdminDashboard: React.FC = () => {
         onClick: () => setActiveTab('reports'),
       },
       {
+        id: 'personalized-report',
+        label: 'Kişiye Özel Rapor',
+        icon: <span>📋</span>,
+        description: 'Sınav analiz PDF',
+        active: activeTab === 'personalized-report',
+        onClick: () => setActiveTab('personalized-report'),
+      },
+      {
         id: 'ai-question-parser',
         label: 'AI PDF Ayrıştırıcı',
         icon: <span>🤖</span>,
         description: 'PDF soru bankası',
-        active: false,
-        onClick: () => navigate('/admin/question-parser'),
+        active: activeTab === 'ai-question-parser',
+        onClick: () => setActiveTab('ai-question-parser'),
+      },
+      {
+        id: 'optical-scanning',
+        label: 'Optik Tarama',
+        icon: <span>📄</span>,
+        description: 'Optik form analizi',
+        active: activeTab === 'optical-scanning',
+        onClick: () => setActiveTab('optical-scanning'),
+      },
+      {
+        id: 'exam-management',
+        label: 'Sınav Yönetimi',
+        icon: <span>📝</span>,
+        description: 'Sınav oluştur ve yönet',
+        active: activeTab === 'exam-management',
+        onClick: () => setActiveTab('exam-management'),
+      },
+      {
+        id: 'questionbank',
+        label: 'Soru Havuzu',
+        icon: <BookOpen size={18} />,
+        description: 'Soru Bankası',
+        active: activeTab === 'questionbank',
+        onClick: () => setActiveTab('questionbank'),
       },
     ],
     [activeTab, adminNotifications],
@@ -294,6 +334,11 @@ export const AdminDashboard: React.FC = () => {
       notifications: 'Bildirimler',
       complaints: 'Şikayet / Öneri',
       reports: 'Yıllık Rapor',
+      'personalized-report': 'Kişiye Özel Rapor',
+      'ai-question-parser': 'AI PDF Ayrıştırıcı',
+      'optical-scanning': 'Optik Tarama',
+      'exam-management': 'Sınav Yönetimi',
+      'questionbank': 'Soru Havuzu',
     };
     const items: BreadcrumbItem[] = [
       { label: 'Ana Sayfa', onClick: activeTab !== 'overview' ? () => setActiveTab('overview') : undefined },
@@ -360,6 +405,13 @@ export const AdminDashboard: React.FC = () => {
       .then(setAdminNotifications)
       .catch(() => setAdminNotifications([]))
       .finally(() => setAdminNotificationsLoading(false));
+  }, [token, activeTab]);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'students') return;
+    apiRequest<ClassGroup[]>('/admin/class-groups', {}, token)
+      .then(setClassGroups)
+      .catch(() => setClassGroups([]));
   }, [token, activeTab]);
 
   async function handleAddTeacher(e: React.FormEvent) {
@@ -450,6 +502,7 @@ export const AdminDashboard: React.FC = () => {
             name: newStudent.name,
             email: newStudent.email,
             gradeLevel: newStudent.gradeLevel,
+            classId: newStudent.classId || undefined,
             parentPhone: normalizedParentPhone,
             password: newStudent.password,
             profilePictureUrl: newStudent.profilePictureUrl || undefined,
@@ -458,7 +511,7 @@ export const AdminDashboard: React.FC = () => {
         token,
       );
       setStudents((prev) => [...prev, created]);
-      setNewStudent({ name: '', email: '', gradeLevel: '', parentPhone: '', password: '', profilePictureUrl: '' });
+      setNewStudent({ name: '', email: '', gradeLevel: '', classId: '', parentPhone: '', password: '', profilePictureUrl: '' });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -513,6 +566,7 @@ export const AdminDashboard: React.FC = () => {
       name: s.name,
       email: s.email,
       gradeLevel: s.gradeLevel ?? '',
+      classId: s.classId ?? '',
       parentPhone: s.parentPhone ? formatParentPhoneForDisplay(s.parentPhone) : '',
       password: '',
       profilePictureUrl: s.profilePictureUrl || '',
@@ -543,6 +597,7 @@ export const AdminDashboard: React.FC = () => {
             name: editStudent.name,
             email: editStudent.email,
             gradeLevel: editStudent.gradeLevel,
+            classId: editStudent.classId || undefined,
             parentPhone: normalizedParentPhone,
             password: editStudent.password || undefined,
             profilePictureUrl: editStudent.profilePictureUrl || undefined,
@@ -560,9 +615,6 @@ export const AdminDashboard: React.FC = () => {
   if (!token) {
     return <div>Önce yönetici olarak giriş yapmalısınız.</div>;
   }
-
-  const reportStudent =
-    (reportStudentId && students.find((s) => s.id === reportStudentId)) || students[0] || null;
 
   return (
     <DashboardLayout
@@ -731,6 +783,8 @@ export const AdminDashboard: React.FC = () => {
         </GlassCard>
       )}
 
+      {activeTab === 'questionbank' && <QuestionBankTab token={token} />}
+
       {activeTab === 'complaints' && (
         <div className="dual-grid">
           <GlassCard
@@ -802,95 +856,99 @@ export const AdminDashboard: React.FC = () => {
                 );
               }
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '1rem' }}>{current.subject}</div>
-                    <div
-                      style={{
-                        fontSize: '0.85rem',
-                        color: 'var(--color-text-muted)',
-                        marginTop: '0.25rem',
-                      }}
-                    >
-                      Gönderen: {current.fromUser?.name ?? '-'} ({current.fromRole})
-                      {current.aboutTeacher?.name
-                        ? ` · Öğretmen: ${current.aboutTeacher.name}`
-                        : ''}
-                      {' · '}
+                <div style={{ padding: '1rem' }}>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <h3 style={{ fontSize: '1.1rem', marginBottom: '0.25rem' }}>{current.subject}</h3>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      Gönderen: {current.fromUser.name} ({current.fromRole}) &bull;{' '}
                       {new Date(current.createdAt).toLocaleString('tr-TR')}
                     </div>
                   </div>
                   <div
                     style={{
-                      padding: '0.75rem 0.85rem',
-                      borderRadius: 10,
-                      border: '1px solid var(--color-border-subtle)',
-                      maxHeight: 260,
-                      overflowY: 'auto',
+                      background: 'var(--surface-sunken)',
+                      padding: '1rem',
+                      borderRadius: 8,
+                      marginBottom: '1rem',
                       whiteSpace: 'pre-wrap',
-                      fontSize: '0.9rem',
                     }}
                   >
                     {current.body}
                   </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: '0.5rem',
-                      justifyContent: 'flex-end',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: '0.8rem',
-                        color: 'var(--color-text-muted)',
-                        marginRight: '0.25rem',
-                      }}
-                    >
-                      Durum: {current.status}
-                    </span>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {current.status === 'open' && (
+                      <button
+                        className="btn btn-primary"
+                        onClick={async () => {
+                          if (!token) return;
+                          try {
+                            const updated = await apiRequest<Complaint>(
+                              `/admin/complaints/${current.id}`,
+                              {
+                                method: 'PUT',
+                                body: JSON.stringify({ status: 'reviewed' }),
+                              },
+                              token,
+                            );
+                            setComplaints((prev) =>
+                              prev.map((c) => (c.id === updated.id ? updated : c)),
+                            );
+                          } catch (e) {
+                            setError((e as Error).message);
+                          }
+                        }}
+                      >
+                        İnceleniyor Olarak İşaretle
+                      </button>
+                    )}
+                    {current.status !== 'closed' && (
+                      <button
+                        className="btn btn-secondary"
+                        onClick={async () => {
+                          if (!token) return;
+                          try {
+                            const updated = await apiRequest<Complaint>(
+                              `/admin/complaints/${current.id}`,
+                              {
+                                method: 'PUT',
+                                body: JSON.stringify({ status: 'closed' }),
+                              },
+                              token,
+                            );
+                            setComplaints((prev) =>
+                              prev.map((c) => (c.id === updated.id ? updated : c)),
+                            );
+                          } catch (e) {
+                            setError((e as Error).message);
+                          }
+                        }}
+                      >
+                        Kapat
+                      </button>
+                    )}
                     <button
-                      type="button"
-                      className="ghost-btn"
+                      className="btn btn-secondary"
+                      style={{ marginLeft: 'auto', backgroundColor: '#ef4444', color: 'white' }}
                       onClick={async () => {
                         if (!token) return;
+                        if (!window.confirm('Bu şikayeti silmek istediğinize emin misiniz?')) return;
                         try {
-                          const updated = await apiRequest<Complaint>(
+                          await apiRequest(
                             `/admin/complaints/${current.id}`,
-                            { method: 'PUT', body: JSON.stringify({ status: 'reviewed' }) },
+                            { method: 'DELETE' },
                             token,
                           );
-                          setComplaints((prev) =>
-                            prev.map((x) => (x.id === updated.id ? updated : x)),
-                          );
+                          setComplaints((prev) => prev.filter((c) => c.id !== current.id));
+                          if (activeComplaintId === current.id) {
+                            setActiveComplaintId(null);
+                          }
                         } catch (e) {
                           setError((e as Error).message);
                         }
                       }}
                     >
-                      İncelendi
-                    </button>
-                    <button
-                      type="button"
-                      className="primary-btn"
-                      onClick={async () => {
-                        if (!token) return;
-                        try {
-                          const updated = await apiRequest<Complaint>(
-                            `/admin/complaints/${current.id}`,
-                            { method: 'PUT', body: JSON.stringify({ status: 'closed' }) },
-                            token,
-                          );
-                          setComplaints((prev) =>
-                            prev.map((x) => (x.id === updated.id ? updated : x)),
-                          );
-                        } catch (e) {
-                          setError((e as Error).message);
-                        }
-                      }}
-                    >
-                      Şikayeti Kapat
+                      <Trash2 size={16} />
+                      <span className="ml-1">Sil</span>
                     </button>
                   </div>
                 </div>
@@ -899,6 +957,32 @@ export const AdminDashboard: React.FC = () => {
           </GlassCard>
         </div>
       )}
+
+
+
+      {activeTab === 'reports' && (
+        <AdminReports />
+      )}
+
+      {activeTab === 'personalized-report' && (
+        <PersonalizedReport />
+      )}
+
+      {activeTab === 'ai-question-parser' && (
+        <GlassCard title="AI PDF Ayrıştırıcı" subtitle="Otomatik PDF tarama ve soru ayrıştırma">
+          <QuestionParserPage />
+        </GlassCard>
+      )}
+
+      {activeTab === 'optical-scanning' && (
+        <GlassCard
+          title="Optik Tarama ve Analiz"
+          subtitle="Optik form dosyalarını yükleyin, sonuçları inceleyin ve öğrencilere gönderin."
+        >
+          <OpticalScanningPage />
+        </GlassCard>
+      )}
+
 
       {activeTab === 'teachers' && (
         <GlassCard
@@ -1252,76 +1336,97 @@ export const AdminDashboard: React.FC = () => {
           title="Öğrenciler"
           subtitle="Öğrenci kayıtlarını yönetin. Yeni öğrenciler için şifre ve sınıf atamasını buradan yapın."
         >
-          <form onSubmit={handleAddStudent} className="form" style={{ marginBottom: '0.75rem' }}>
-            <div className="field">
-              <span>İsim</span>
-              <input
-                value={newStudent.name}
-                onChange={(e) =>
-                  setNewStudent((s) => ({ ...s, name: e.target.value }))
-                }
-                required
-              />
+          <form onSubmit={handleAddStudent} className="form" style={{ marginBottom: '0.75rem', maxWidth: '100%' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+              <div className="field">
+                <span>İsim</span>
+                <input
+                  value={newStudent.name}
+                  onChange={(e) =>
+                    setNewStudent((s) => ({ ...s, name: e.target.value }))
+                  }
+                  required
+                />
+              </div>
+              <div className="field">
+                <span>E-posta</span>
+                <input
+                  type="email"
+                  value={newStudent.email}
+                  onChange={(e) =>
+                    setNewStudent((s) => ({ ...s, email: e.target.value }))
+                  }
+                  required
+                />
+              </div>
+              <div className="field">
+                <span>Sınıf</span>
+                <select
+                  value={newStudent.gradeLevel}
+                  onChange={(e) =>
+                    setNewStudent((s) => ({
+                      ...s,
+                      gradeLevel: e.target.value,
+                    }))
+                  }
+                  required
+                >
+                  <option value="">Seçin</option>
+                  {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'].map((grade) => (
+                    <option key={grade} value={grade}>
+                      {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <span>Sınıf Grubu (Sınav bildirimleri için)</span>
+                <select
+                  value={newStudent.classId}
+                  onChange={(e) =>
+                    setNewStudent((s) => ({
+                      ...s,
+                      classId: e.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Seçin (opsiyonel)</option>
+                  {classGroups.map((cg) => (
+                    <option key={cg.id} value={cg.id}>
+                      {cg.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <span>Veli Telefonu</span>
+                <input
+                  placeholder="555 123 45 67"
+                  value={newStudent.parentPhone}
+                  onChange={(e) =>
+                    setNewStudent((s) => ({
+                      ...s,
+                      parentPhone: e.target.value.replace(/[^\d\s]/g, ''),
+                    }))
+                  }
+                />
+              </div>
+              <div className="field">
+                <span>Şifre</span>
+                <input
+                  type="password"
+                  value={newStudent.password}
+                  onChange={(e) =>
+                    setNewStudent((s) => ({
+                      ...s,
+                      password: e.target.value,
+                    }))
+                  }
+                  required
+                />
+              </div>
             </div>
-            <div className="field">
-              <span>E-posta</span>
-              <input
-                type="email"
-                value={newStudent.email}
-                onChange={(e) =>
-                  setNewStudent((s) => ({ ...s, email: e.target.value }))
-                }
-                required
-              />
-            </div>
-            <div className="field">
-              <span>Sınıf</span>
-              <select
-                value={newStudent.gradeLevel}
-                onChange={(e) =>
-                  setNewStudent((s) => ({
-                    ...s,
-                    gradeLevel: e.target.value,
-                  }))
-                }
-                required
-              >
-                <option value="">Seçin</option>
-                {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'].map((grade) => (
-                  <option key={grade} value={grade}>
-                    {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <span>Veli Telefonu</span>
-              <input
-                placeholder="555 123 45 67"
-                value={newStudent.parentPhone}
-                onChange={(e) =>
-                  setNewStudent((s) => ({
-                    ...s,
-                    parentPhone: e.target.value.replace(/[^\d\s]/g, ''),
-                  }))
-                }
-              />
-            </div>
-            <div className="field">
-              <span>Şifre</span>
-              <input
-                type="password"
-                value={newStudent.password}
-                onChange={(e) =>
-                  setNewStudent((s) => ({
-                    ...s,
-                    password: e.target.value,
-                  }))
-                }
-                required
-              />
-            </div>
-            <div className="field">
+            <div className="field" style={{ marginTop: '0.5rem' }}>
               <span>Profil Resmi</span>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 {newStudent.profilePictureUrl && (
@@ -1348,7 +1453,9 @@ export const AdminDashboard: React.FC = () => {
                 />
               </div>
             </div>
-            <button type="submit">Öğrenci Ekle</button>
+            <div style={{ marginTop: '1rem' }}>
+              <button type="submit">Öğrenci Ekle</button>
+            </div>
           </form>
           <div className="dual-grid">
             <div className="list-stack">
@@ -1411,7 +1518,6 @@ export const AdminDashboard: React.FC = () => {
                         type="button"
                         className="ghost-btn"
                         onClick={() => {
-                          setReportStudentId(s.id);
                           setActiveTab('reports');
                         }}
                       >
@@ -1432,75 +1538,96 @@ export const AdminDashboard: React.FC = () => {
             <div>
               <h3 style={{ marginBottom: '0.5rem' }}>Öğrenci Düzenle</h3>
               {editingStudentId ? (
-                <form onSubmit={handleUpdateStudent} className="form">
-                  <div className="field">
-                    <span>İsim</span>
-                    <input
-                      value={editStudent.name}
-                      onChange={(e) =>
-                        setEditStudent((s) => ({ ...s, name: e.target.value }))
-                      }
-                      required
-                    />
+                <form onSubmit={handleUpdateStudent} className="form" style={{ maxWidth: '100%' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                    <div className="field">
+                      <span>İsim</span>
+                      <input
+                        value={editStudent.name}
+                        onChange={(e) =>
+                          setEditStudent((s) => ({ ...s, name: e.target.value }))
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="field">
+                      <span>E-posta</span>
+                      <input
+                        type="email"
+                        value={editStudent.email}
+                        onChange={(e) =>
+                          setEditStudent((s) => ({ ...s, email: e.target.value }))
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="field">
+                      <span>Sınıf</span>
+                      <select
+                        value={editStudent.gradeLevel}
+                        onChange={(e) =>
+                          setEditStudent((s) => ({
+                            ...s,
+                            gradeLevel: e.target.value,
+                          }))
+                        }
+                        required
+                      >
+                        <option value="">Seçin</option>
+                        {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'].map((grade) => (
+                          <option key={grade} value={grade}>
+                            {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <span>Sınıf Grubu (Sınav bildirimleri için)</span>
+                      <select
+                        value={editStudent.classId}
+                        onChange={(e) =>
+                          setEditStudent((s) => ({
+                            ...s,
+                            classId: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Seçin (opsiyonel)</option>
+                        {classGroups.map((cg) => (
+                          <option key={cg.id} value={cg.id}>
+                            {cg.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <span>Veli Telefonu</span>
+                      <input
+                        placeholder="555 123 45 67"
+                        value={editStudent.parentPhone}
+                        onChange={(e) =>
+                          setEditStudent((s) => ({
+                            ...s,
+                            parentPhone: e.target.value.replace(/[^\d\s]/g, ''),
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="field">
+                      <span>Yeni Şifre (opsiyonel)</span>
+                      <input
+                        type="password"
+                        value={editStudent.password}
+                        onChange={(e) =>
+                          setEditStudent((s) => ({
+                            ...s,
+                            password: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
                   </div>
-                  <div className="field">
-                    <span>E-posta</span>
-                    <input
-                      type="email"
-                      value={editStudent.email}
-                      onChange={(e) =>
-                        setEditStudent((s) => ({ ...s, email: e.target.value }))
-                      }
-                      required
-                    />
-                  </div>
-                  <div className="field">
-                    <span>Sınıf</span>
-                    <select
-                      value={editStudent.gradeLevel}
-                      onChange={(e) =>
-                        setEditStudent((s) => ({
-                          ...s,
-                          gradeLevel: e.target.value,
-                        }))
-                      }
-                      required
-                    >
-                      <option value="">Seçin</option>
-                      {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'].map((grade) => (
-                        <option key={grade} value={grade}>
-                          {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="field">
-                    <span>Veli Telefonu</span>
-                    <input
-                      placeholder="555 123 45 67"
-                      value={editStudent.parentPhone}
-                      onChange={(e) =>
-                        setEditStudent((s) => ({
-                          ...s,
-                          parentPhone: e.target.value.replace(/[^\d\s]/g, ''),
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <span>Yeni Şifre (opsiyonel)</span>
-                    <input
-                      type="password"
-                      value={editStudent.password}
-                      onChange={(e) =>
-                        setEditStudent((s) => ({
-                          ...s,
-                          password: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="field">
+                  <div className="field" style={{ marginTop: '0.5rem' }}>
                     <span>Profil Resmi</span>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       {editStudent.profilePictureUrl && (
@@ -1527,7 +1654,7 @@ export const AdminDashboard: React.FC = () => {
                       />
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
                     <button type="submit" className="primary-btn">
                       Kaydet
                     </button>
@@ -1650,22 +1777,8 @@ export const AdminDashboard: React.FC = () => {
         </GlassCard>
       )}
 
-      {activeTab === 'reports' && (
-        <GlassCard
-          title="Yıllık Gelişim Raporu"
-          subtitle={
-            reportStudent
-              ? `${reportStudent.name} için yıllık performans özeti`
-              : 'Öğrenci bulunamadı'
-          }
-        >
-          {reportLoading ? (
-            <div className="empty-state">Rapor verileri hazırlanıyor...</div>
-          ) : (
-            <AnnualPerformanceReport reportData={reportData} />
-          )}
-        </GlassCard>
-      )}
+      {activeTab === 'exam-management' && <ExamManagement token={token!} />}
+
     </DashboardLayout>
   );
 };

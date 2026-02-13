@@ -2072,6 +2072,7 @@ export interface ReportSubjectTopic {
   name: string;
   correct: number;
   incorrect: number;
+  blank: number;
   masteryPercent: number;
 }
 
@@ -2110,6 +2111,154 @@ export function getStudentPerformanceReport(token: string, studentId: string) {
   return apiRequest<AnnualReportData>(`/teacher/students/${studentId}/performance`, {}, token);
 }
 
+// --- Kişiye Özel Sınav Analiz ---
+
+export interface ExamListItem {
+  id: number;
+  name: string;
+  type: string;
+  date: string;
+}
+
+export function getExamsList(token: string) {
+  return apiRequest<{ exams: ExamListItem[] }>('/api/exams', {}, token);
+}
+
+export interface ExamAnalysisTopic {
+  lessonName: string;
+  topicName: string;
+  totalQuestion: number;
+  correct: number;
+  wrong: number;
+  empty: number;
+  net: number;
+  priorityLevel: 'ONE' | 'TWO' | 'THREE';
+}
+
+export interface Projection {
+  currentScore: number;
+  projectedScore: number;
+  currentRank: number | null;
+  projectedRank: number | null;
+}
+
+export interface ExamAnalysisResponse {
+  examId: number;
+  examName: string;
+  examType: string;
+  date: string;
+  totalNet: number;
+  score: number;
+  percentile: number;
+  topicPriorities: ExamAnalysisTopic[];
+  priorityCounts: { one: number; two: number; three: number };
+  projection?: Projection;
+}
+
+export interface ProgressPoint {
+  examId: number;
+  examName: string;
+  examType: string;
+  date: string;
+  score: number;
+  totalNet: number;
+}
+
+export interface ProgressResponse {
+  studentId: string;
+  exams: ProgressPoint[];
+  averageScore: number;
+  averageNet: number;
+}
+
+export function getAnalysisProgress(token: string, studentId: string, limit?: number) {
+  const q = limit ? `?limit=${limit}` : '';
+  return apiRequest<ProgressResponse>(`/api/analysis/${studentId}/progress${q}`, {}, token);
+}
+
+// Sadece geliştirme amaçlı: 12. sınıf sayısal Ali için örnek TYT sınavı
+export function createSampleExamForAli12Say(token: string) {
+  return apiRequest<{
+    success: boolean;
+    message?: string;
+    student: { id: string; name: string; gradeLevel?: string | null; classId?: string | null };
+    exam?: { id: number; name: string; type: string; date: string };
+  }>(
+    '/admin/debug/create-sample-exam-ali-12-say',
+    { method: 'POST' },
+    token,
+  );
+}
+
+export async function sendAnalysisPdf(
+  token: string,
+  studentId: string,
+  examId: number,
+  target: 'parent' | 'student'
+): Promise<{ success: boolean; message?: string }> {
+  return apiRequest<{ success: boolean; message?: string }>(
+    '/api/analysis/send',
+    {
+      method: 'POST',
+      body: JSON.stringify({ studentId, examId, target }),
+    },
+    token
+  );
+}
+
+export function getExamAnalysis(token: string, studentId: string, examId: number) {
+  return apiRequest<ExamAnalysisResponse>(
+    `/api/analysis/${studentId}/${examId}`,
+    {},
+    token,
+  );
+}
+
+async function requestAnalysisPdfBlob(
+  token: string,
+  studentId: string,
+  examId: number,
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}/api/analysis/report`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ studentId, examId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message ?? err.error ?? 'PDF indirilemedi');
+  }
+  return res.blob();
+}
+
+export async function downloadAnalysisPdf(
+  token: string,
+  studentId: string,
+  examId: number,
+): Promise<void> {
+  const blob = await requestAnalysisPdfBlob(token, studentId, examId);
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `analiz-raporu-${studentId}-${examId}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
+export async function getAnalysisPdfObjectUrl(
+  token: string,
+  studentId: string,
+  examId: number,
+): Promise<string> {
+  const blob = await requestAnalysisPdfBlob(token, studentId, examId);
+  return window.URL.createObjectURL(blob);
+}
+
 /**
  * Uzak medya veya yüklemeler için tam URL oluşturur.
  * '/uploads' ile başlayan yolları API base URL'i ile birleştirir.
@@ -2120,4 +2269,36 @@ export function resolveContentUrl(url?: string | null): string {
     return `${getApiBaseUrl()}${url}`;
   }
   return url;
+}
+
+export interface ExamSimple {
+  id: number;
+  name: string;
+  type: string;
+  date: string;
+  questionCount: number;
+  fileUrl: string;
+  answerKey?: Record<string, string>;
+  myAnswers?: Record<string, string>;
+  groupName?: string;
+  answers?: Record<string, string>; // Add answers for backend compatibility if needed
+}
+
+export async function getStudentExamDetail(token: string, examId: number) {
+  return apiRequest<ExamSimple>(`/api/student/exams/${examId}`, { method: 'GET' }, token);
+}
+
+export async function submitStudentExamAnswers(
+  token: string,
+  examId: number,
+  answers: Record<string, string>
+) {
+  return apiRequest<void>(
+    `/api/student/exams/${examId}/submit`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
+    },
+    token
+  );
 }

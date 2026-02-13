@@ -90,6 +90,7 @@ import { useApiState } from './hooks/useApiState';
 import { LiveClassOverlay } from './LiveClassOverlay';
 import { CoachingTab } from './CoachingTab';
 import { ParentOperationsTab } from './ParentOperationsTab';
+import { QuestionBankTab } from './QuestionBankTab';
 
 type TeacherTab =
   | 'overview'
@@ -99,6 +100,9 @@ type TeacherTab =
   | 'students'
   | 'parents'
   | 'tests'
+  | 'support'
+  | 'tests'
+  | 'questionbank'
   | 'support'
   | 'notifications'
   | 'coaching'
@@ -1102,6 +1106,14 @@ export const TeacherDashboard: React.FC = () => {
         onClick: () => setActiveTab('tests'),
       },
       {
+        id: 'questionbank',
+        label: 'Soru Havuzu',
+        icon: <BookOpen size={18} />,
+        description: 'Soru Bankası',
+        active: activeTab === 'questionbank',
+        onClick: () => setActiveTab('questionbank'),
+      },
+      {
         id: 'support',
         label: 'Yardım Talepleri',
         icon: <MessageCircle size={18} />,
@@ -1167,6 +1179,7 @@ export const TeacherDashboard: React.FC = () => {
       content: 'Ders İçeriği',
       live: 'Canlı Ders',
       tests: 'Test & Sorular',
+      questionbank: 'Soru Havuzu',
       support: 'Yardım Talepleri',
       notifications: 'Bildirimler',
       calendar: 'Takvim & Etüt',
@@ -1659,6 +1672,9 @@ export const TeacherDashboard: React.FC = () => {
             assignmentsState.run(() => getTeacherAssignments(token)).catch(() => {});
           }}
         />
+      )}
+      {activeTab === 'questionbank' && (
+        <QuestionBankTab token={token} />
       )}
       {activeTab === 'support' && (
         <TeacherSupport
@@ -2463,6 +2479,52 @@ const TeacherTests: React.FC<{
       .catch(() => setAiGenSubjects([]))
       .finally(() => setAiGenSubjectsLoading(false));
   }, [token, aiGenGrade]);
+
+  // --- Asset Upload için Müfredat Konuları ve Dersleri ---
+  const [assetCurriculumSubjects, setAssetCurriculumSubjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [assetCurriculumSubjectsLoading, setAssetCurriculumSubjectsLoading] = useState(false);
+  const [assetCurriculumTopics, setAssetCurriculumTopics] = useState<CurriculumTopic[]>([]);
+  const [assetCurriculumTopicsLoading, setAssetCurriculumTopicsLoading] = useState(false);
+
+  // Sınıf değişince Dersleri getir (Asset)
+  useEffect(() => {
+    if (!token || !assetDraft.gradeLevel) {
+      setAssetCurriculumSubjects([]);
+      return;
+    }
+    setAssetCurriculumSubjectsLoading(true);
+    getCurriculumSubjects(token, assetDraft.gradeLevel)
+      .then((subjects) => {
+        setAssetCurriculumSubjects(subjects);
+        // Eğer mevcut seçili ders yeni listede yoksa ilk derse geç veya boşalt
+        if (subjects.length > 0) {
+           const exists = subjects.some(s => s.id === assetDraft.subjectId);
+           if (!exists) {
+             setAssetDraft(p => ({ ...p, subjectId: subjects[0].id }));
+           }
+        } else {
+             setAssetDraft(p => ({ ...p, subjectId: '' }));
+        }
+      })
+      .catch(() => setAssetCurriculumSubjects([]))
+      .finally(() => setAssetCurriculumSubjectsLoading(false));
+  }, [token, assetDraft.gradeLevel]);
+
+  // Sınıf veya Ders değişince Konuları getir (Asset)
+  useEffect(() => {
+    if (!token || !assetDraft.subjectId || !assetDraft.gradeLevel) {
+      setAssetCurriculumTopics([]);
+      return;
+    }
+    setAssetCurriculumTopicsLoading(true);
+    getCurriculumTopics(token, {
+      subjectId: assetDraft.subjectId,
+      gradeLevel: assetDraft.gradeLevel,
+    })
+      .then((topics) => setAssetCurriculumTopics(topics))
+      .catch(() => setAssetCurriculumTopics([]))
+      .finally(() => setAssetCurriculumTopicsLoading(false));
+  }, [token, assetDraft.subjectId, assetDraft.gradeLevel]);
   const [aiGenAttachment, setAiGenAttachment] = useState<{ filename: string; mimeType: string; data: string } | null>(null);
   const [aiGenAnswerKey, setAiGenAnswerKey] = useState<Record<string, string> | null>(null);
   const [aiGenSavingAsTest, setAiGenSavingAsTest] = useState(false);
@@ -3216,30 +3278,66 @@ const TeacherTests: React.FC<{
               value={assetDraft.title}
               onChange={(e) => setAssetDraft((p) => ({ ...p, title: e.target.value }))}
             />
-            <select
-              value={assetDraft.subjectId}
-              onChange={(e) => setAssetDraft((p) => ({ ...p, subjectId: e.target.value }))}
-            >
-              <option value="sub1">Matematik</option>
-              <option value="sub2">Fizik</option>
-              <option value="sub3">Biyoloji</option>
-              <option value="sub4">Kimya</option>
-            </select>
-            <input
-              type="text"
-              placeholder="Konu"
-              value={assetDraft.topic}
-              onChange={(e) => setAssetDraft((p) => ({ ...p, topic: e.target.value }))}
-            />
+
             <select
               value={assetDraft.gradeLevel}
               onChange={(e) => setAssetDraft((p) => ({ ...p, gradeLevel: e.target.value }))}
             >
+              <option value="4">4. Sınıf</option>
+              <option value="5">5. Sınıf</option>
+              <option value="6">6. Sınıf</option>
+              <option value="7">7. Sınıf</option>
+              <option value="8">8. Sınıf</option>
               <option value="9">9. Sınıf</option>
               <option value="10">10. Sınıf</option>
               <option value="11">11. Sınıf</option>
               <option value="12">12. Sınıf</option>
+              <option value="TYT">TYT</option>
+              <option value="AYT">AYT</option>
             </select>
+
+            <select
+              value={assetDraft.subjectId}
+              onChange={(e) => setAssetDraft((p) => ({ ...p, subjectId: e.target.value }))}
+            >
+               {assetCurriculumSubjectsLoading ? (
+                <option>Yükleniyor...</option>
+              ) : assetCurriculumSubjects.length > 0 ? (
+                assetCurriculumSubjects.map((sub) => (
+                  <option key={sub.id} value={sub.id}>
+                    {sub.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="sub_matematik">Matematik</option>
+                  <option value="sub_fizik">Fizik</option>
+                  <option value="sub_biyoloji">Biyoloji</option>
+                  <option value="sub_kimya">Kimya</option>
+                </>
+              )}
+            </select>
+            
+            {(assetCurriculumTopics.length > 0) ? (
+               <select
+                value={assetDraft.topic}
+                onChange={(e) => setAssetDraft((p) => ({ ...p, topic: e.target.value }))}
+              >
+                <option value="">Konu seçin</option>
+                {assetCurriculumTopics.map((t) => (
+                  <option key={t.id} value={t.topicName}>
+                    {t.kazanimKodu ? `${t.kazanimKodu} - ${t.topicName}` : t.topicName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+               <input
+                type="text"
+                placeholder={assetCurriculumTopicsLoading ? 'Konular yükleniyor...' : 'Konu'}
+                value={assetDraft.topic}
+                onChange={(e) => setAssetDraft((p) => ({ ...p, topic: e.target.value }))}
+              />
+            )}
 
             <div
               onClick={() => assetInputRef.current?.click()}

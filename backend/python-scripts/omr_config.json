@@ -1,0 +1,286 @@
+{
+    "templates": {
+        "YKS_STANDARD": {
+            "name": "YKS Standart Optik Form",
+            "description": "Standart YKS sınav formu - 120 soru",
+            "alignment_markers": {
+                "type": "corners",
+                "positions": [
+                    {
+                        "x": 50,
+                        "y": 50
+                    },
+                    {
+                        "x": 2450,
+                        "y": 50
+                    },
+                    {
+                        "x": 50,
+                        "y": 3450
+                    },
+                    {
+                        "x": 2450,
+                        "y": 3450
+                    }
+                ]
+            },
+            "regions": {
+                "student_number": {
+                    "name": "Öğrenci Numarası",
+                    "x": 150,
+                    "y": 250,
+                    "width": 400,
+                    "height": 800,
+                    "grid": {
+                        "rows": 10,
+                        "columns": 8,
+                        "bubble_radius": 15,
+                        "row_spacing": 80,
+                        "col_spacing": 50
+                    },
+                    "reading_order": "column_major"
+                },
+                "answers": {
+                    "name": "Cevaplar",
+                    "sections": [
+                        {
+                            "subject": "Turkce",
+                            "x": 750,
+                            "y": 250,
+                            "width": 300,
+                            "height": 1000,
+                            "question_count": 40,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E"
+                            ],
+                            "grid": {
+                                "rows": 40,
+                                "columns": 5,
+                                "bubble_radius": 12,
+                                "row_spacing": 25,
+                                "col_spacing": 60
+                            }
+                        },
+                        {
+                            "subject": "Mat",
+                            "x": 1150,
+                            "y": 250,
+                            "width": 300,
+                            "height": 1000,
+                            "question_count": 40,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E"
+                            ],
+                            "grid": {
+                                "rows": 40,
+                                "columns": 5,
+                                "bubble_radius": 12,
+                                "row_spacing": 25,
+                                "col_spacing": 60
+                            }
+                        },
+                        {
+                            "subject": "Fen",
+                            "x": 1550,
+                            "y": 250,
+                            "width": 300,
+                            "height": 1000,
+                            "question_count": 20,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E"
+                            ],
+                            "grid": {
+                                "rows": 20,
+                                "columns": 5,
+                                "bubble_radius": 12,
+                                "row_spacing": 25,
+                                "col_spacing": 60
+                            }
+                        },
+                        {
+                            "subject": "Sosyal",
+                            "x": 1950,
+                            "y": 250,
+                            "width": 300,
+                            "height": 1000,
+                            "question_count": 20,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E"
+                            ],
+                            "grid": {
+                                "rows": 20,
+                                "columns": 5,
+                                "bubble_radius": 12,
+                                "row_spacing": 25,
+                                "col_spacing": 60
+                            }
+                        }
+                    ]
+                }
+            },
+            "detection_params": {
+                "bubble_fill_threshold": 0.4,
+                "min_bubble_area": 100,
+                "max_bubble_area": 500,
+                "gaussian_blur_kernel": 5,
+                "adaptive_threshold_block_size": 51,
+                "adaptive_threshold_c": 2
+            }
+        },
+        "LGS_STANDARD": {
+            "name": "LGS Standart Optik Form",
+            "description": "Standart LGS sınav formu - 90 soru",
+            "alignment_markers": {
+                "type": "corners",
+                "positions": [
+                    {
+                        "x": 50,
+                        "y": 50
+                    },
+                    {
+                        "x": 2450,
+                        "y": 50
+                    },
+                    {
+                        "x": 50,
+                        "y": 3450
+                    },
+                    {
+                        "x": 2450,
+                        "y": 3450
+                    }
+                ]
+            },
+            "regions": {
+                "student_number": {
+                    "name": "Öğrenci Numarası",
+                    "x": 200,
+                    "y": 300,
+                    "width": 400,
+                    "height": 800,
+                    "grid": {
+                        "rows": 10,
+                        "columns": 8,
+                        "bubble_radius": 15,
+                        "row_spacing": 80,
+                        "col_spacing": 50
+                    },
+                    "reading_order": "column_major"
+                },
+                "answers": {
+                    "name": "Cevaplar",
+                    "sections": [
+                        {
+                            "subject": "Turkce",
+                            "x": 800,
+                            "y": 300,
+                            "width": 300,
+                            "height": 800,
+                            "question_count": 20,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D"
+                            ],
+                            "grid": {
+                                "rows": 20,
+                                "columns": 4,
+                                "bubble_radius": 12,
+                                "row_spacing": 40,
+                                "col_spacing": 75
+                            }
+                        },
+                        {
+                            "subject": "Mat",
+                            "x": 1200,
+                            "y": 300,
+                            "width": 300,
+                            "height": 800,
+                            "question_count": 20,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D"
+                            ],
+                            "grid": {
+                                "rows": 20,
+                                "columns": 4,
+                                "bubble_radius": 12,
+                                "row_spacing": 40,
+                                "col_spacing": 75
+                            }
+                        },
+                        {
+                            "subject": "Fen",
+                            "x": 1600,
+                            "y": 300,
+                            "width": 300,
+                            "height": 800,
+                            "question_count": 20,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D"
+                            ],
+                            "grid": {
+                                "rows": 20,
+                                "columns": 4,
+                                "bubble_radius": 12,
+                                "row_spacing": 40,
+                                "col_spacing": 75
+                            }
+                        },
+                        {
+                            "subject": "Sosyal",
+                            "x": 2000,
+                            "y": 300,
+                            "width": 300,
+                            "height": 800,
+                            "question_count": 30,
+                            "options": [
+                                "A",
+                                "B",
+                                "C",
+                                "D"
+                            ],
+                            "grid": {
+                                "rows": 30,
+                                "columns": 4,
+                                "bubble_radius": 12,
+                                "row_spacing": 27,
+                                "col_spacing": 75
+                            }
+                        }
+                    ]
+                }
+            },
+            "detection_params": {
+                "bubble_fill_threshold": 0.4,
+                "min_bubble_area": 100,
+                "max_bubble_area": 500,
+                "gaussian_blur_kernel": 5,
+                "adaptive_threshold_block_size": 51,
+                "adaptive_threshold_c": 2
+            }
+        }
+    }
+}

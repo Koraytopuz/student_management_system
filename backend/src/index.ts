@@ -12,6 +12,8 @@ import adminRoutes from './routes.admin';
 import questionBankRoutes from './routes.questionbank';
 import aiRoutes from './aiRoutes';
 import assignmentRoutes from './routes.assignmentRoutes';
+import analysisRoutes from './routes.analysis';
+import examRoutes from './routes.exam';
 
 // Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
 dotenv.config();
@@ -86,6 +88,24 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Demo kullanıcı kontrolü (geliştirme - admin var mı?)
+app.get('/auth/check-demo', async (_req, res) => {
+  try {
+    const { prisma } = await import('./db');
+    const admin = await prisma.user.findFirst({
+      where: { email: 'admin@example.com', role: 'admin' },
+      select: { id: true, email: true, name: true, role: true },
+    });
+    return res.json({
+      adminExists: !!admin,
+      admin: admin ? { email: admin.email, name: admin.name } : null,
+      hint: admin ? 'Şifre: sky123' : 'Seed çalıştırın: npx prisma db seed',
+    });
+  } catch (e) {
+    return res.status(500).json({ error: String(e) });
+  }
+});
+
 // Kimlik doğrulama
 app.post('/auth/login', loginHandler);
 
@@ -96,6 +116,8 @@ app.use('/student', studentRoutes);
 app.use('/parent', parentRoutes);
 app.use('/questionbank', questionBankRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api', examRoutes);   // examRoutes önce - GET /api/exams examAssignments ile dönsün
+app.use('/api', analysisRoutes);
 app.use('/assignments', assignmentRoutes);
 
 // Chrome DevTools isteği (CSP hatasını önlemek için boş yanıt)

@@ -8,7 +8,7 @@ type ParsedQuestion = {
   question_text: string;
   options: string[];
   correct_option?: string | null;
-  difficulty: string;
+  difficulty?: string;
   topic: string;
 };
 
@@ -43,9 +43,19 @@ export const QuestionParserPage: React.FC = () => {
         setSubjectsLoading(true);
         const list = await getSubjectsList(token);
         if (!cancelled) {
-          setSubjects(list);
-          if (list.length > 0 && !selectedSubjectId) {
-            setSelectedSubjectId(list[0].id);
+          // Aynı ders ismi birden fazla geldiyse tekilleştir
+          const byName = new Map<string, SubjectItem>();
+          list.forEach((s) => {
+            const key = s.name.trim().toLowerCase();
+            if (!byName.has(key)) {
+              byName.set(key, s);
+            }
+          });
+          const deduped = Array.from(byName.values());
+
+          setSubjects(deduped);
+          if (deduped.length > 0 && !selectedSubjectId) {
+            setSelectedSubjectId(deduped[0].id);
           }
         }
       } catch {
@@ -142,6 +152,18 @@ export const QuestionParserPage: React.FC = () => {
       }
 
       setQuestions(response.data.data);
+
+      // Eğer öğretmen üstte "Konu Başlığı" alanını doldurmadıysa ve
+      // AI her soru için bir topic ürettiyse, ilk dolu topic'i otomatik
+      // olarak alanına yazalım. Böylece konu başlığı boş gibi görünmez.
+      if (!topic.trim()) {
+        const firstTopic = response.data.data.find(
+          (q) => typeof q.topic === 'string' && q.topic.trim().length > 0,
+        )?.topic;
+        if (firstTopic && firstTopic.trim().length > 0) {
+          setTopic(firstTopic.trim());
+        }
+      }
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const serverData = err.response?.data as ParsePdfResponse | undefined;
@@ -236,7 +258,7 @@ export const QuestionParserPage: React.FC = () => {
           <h1>PDF Soru Bankası Yükle</h1>
           <p>
             PDF test kitaplarındaki çoktan seçmeli soruları Google Gemini ile otomatik olarak
-            ayrıştırın. Sorular, şıklar, doğru cevap, zorluk ve konu başlığı olarak
+            ayrıştırın. Sorular, şıklar, doğru cevap ve konu başlığı olarak
             yapılandırılmış biçimde elde edilir.
           </p>
         </div>
@@ -366,7 +388,7 @@ export const QuestionParserPage: React.FC = () => {
                         onChange={(e) => setGradeLevel(e.target.value)}
                         className="field-input"
                       >
-                        {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'TYT', 'AYT'].map(
+                        {['4', '5', '6', '7', '8', '9', '10', '11', '12', 'LGS', 'TYT', 'AYT'].map(
                           (g) => (
                             <option key={g} value={g}>
                               {g}
@@ -404,9 +426,6 @@ export const QuestionParserPage: React.FC = () => {
                         <span className="badge">
                           {q.topic || 'Konu belirtilmedi'}
                         </span>
-                        <span className={difficultyBadgeClass(q.difficulty)}>
-                          Zorluk: {q.difficulty || 'Bilinmiyor'}
-                        </span>
                       </div>
                       <span className="question-index">Soru {index + 1}</span>
                     </div>
@@ -435,25 +454,28 @@ export const QuestionParserPage: React.FC = () => {
               </div>
 
               <div className="question-parser-footer">
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={handleSaveAll}
-                  disabled={
-                    saveLoading ||
-                    questions.length === 0 ||
-                    !selectedSubjectId ||
-                    !gradeLevel ||
-                    !topic.trim()
-                  }
-                >
-                  {saveLoading ? 'Kaydediliyor...' : 'Tümünü Veritabanına Kaydet'}
-                </button>
-                {saveMessage && (
-                  <span className="question-parser-success" style={{ marginLeft: '0.75rem' }}>
-                    {saveMessage}
-                  </span>
-                )}
+                <div className="question-parser-footer-actions">
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={handleSaveAll}
+                    disabled={
+                      saveLoading ||
+                      questions.length === 0 ||
+                      !selectedSubjectId ||
+                      !gradeLevel ||
+                      !topic.trim()
+                    }
+                  >
+                    {saveLoading ? 'Kaydediliyor...' : 'Tümünü Veritabanına Kaydet'}
+                  </button>
+
+                  {saveMessage && (
+                    <div className="question-parser-success">
+                      {saveMessage}
+                    </div>
+                  )}
+                </div>
               </div>
             </>
           )}

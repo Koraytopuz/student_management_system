@@ -15,6 +15,7 @@ interface DrawingCanvasProps {
   color?: string;
   lineWidth?: number;
   eraserWidth?: number;
+  readonly?: boolean;
 }
 
 export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
@@ -30,6 +31,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   color = '#111827',
   lineWidth,
   eraserWidth,
+  readonly = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [ctx, setCtx] = useState<CanvasRenderingContext2D | null>(null);
@@ -89,7 +91,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!ctx) return;
+    if (readonly || !ctx) return;
     if (event.pointerType === 'mouse' && event.buttons !== 1) return;
 
     const { x, y } = getPos(event);
@@ -215,6 +217,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           background: '#ffffff',
           boxShadow: '0 18px 40px rgba(15,23,42,0.25)',
           maxWidth: '100%',
+          pointerEvents: readonly ? 'none' : 'auto',
           ...(canvasDisplayWidth != null && canvasDisplayHeight != null
             ? { width: canvasDisplayWidth, height: canvasDisplayHeight }
             : {}),

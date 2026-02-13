@@ -20,6 +20,9 @@ import {
   AlertCircle,
   CheckCircle,
   Wand2,
+  Folder,
+  List,
+  ChevronDown,
 } from 'lucide-react';
 import { GlassCard } from './components/DashboardPrimitives';
 import {
@@ -43,7 +46,7 @@ import type {
 
 
 interface QuestionBankTabProps {
-  token: string;
+  token: string | null;
 }
 
 const BLOOM_LEVELS: { value: BloomLevel; label: string }[] = [
@@ -141,6 +144,59 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     count: 10,
   });
 
+  // Folder View States
+  const [viewMode, setViewMode] = useState<'list' | 'folder'>('list');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+
+  // Group questions for folder view
+  const folderStructure = useMemo(() => {
+    const structure: Record<string, Record<string, Record<string, number>>> = {};
+
+    questions.forEach((q) => {
+      const grade = q.gradeLevel;
+      const subject = q.subject?.name || 'Diğer';
+      const topic = q.topic || 'Diğer';
+
+      if (!structure[grade]) structure[grade] = {};
+      if (!structure[grade][subject]) structure[grade][subject] = {};
+      if (!structure[grade][subject][topic]) structure[grade][subject][topic] = 0;
+
+      structure[grade][subject][topic]++;
+    });
+
+    return structure;
+  }, [questions]);
+
+  const toggleFolder = (id: string) => {
+    const next = new Set(expandedFolders);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setExpandedFolders(next);
+  };
+
+  const handleTopicSelect = (grade: string, subject: string, topic: string) => {
+    // Subject name to ID finding is tricky because we only have name here.
+    // Ideally we should filter by exact match on the client side since we are in "Folder View" of *loaded* questions.
+    // OR we change filters.
+    // Let's filter the current view by these parameters.
+    setFilters({
+      ...filters,
+      gradeLevel: grade,
+      topic: topic,
+      // subjectId: subjects.find(s => s.name === subject)?.id // This might be ambiguous if names duplicate
+    }); 
+    // Since filtering by subject ID is better, let's try to find it.
+    const subjItem = subjects.find(s => s.name === subject);
+    if (subjItem) {
+        setFilters(prev => ({ ...prev, subjectId: subjItem.id }));
+    }
+    
+    setViewMode('list');
+  };
+
   const filteredSubjects = useMemo(() => {
     const seen = new Set<string>();
     return subjects.filter((s) => {
@@ -228,6 +284,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   }, []);
 
   const loadSubjects = async () => {
+    if (!token) return;
     try {
       const data = await getSubjectsList(token);
       setSubjects(data);
@@ -237,6 +294,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   };
 
   const loadStats = async () => {
+    if (!token) return;
     try {
       const data = await getQuestionBankStats(token);
       setStats(data);
@@ -246,6 +304,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   };
 
   const loadData = async () => {
+    if (!token) return;
     setLoading(true);
     setError(null);
     try {
@@ -313,6 +372,10 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   };
 
   const handleSaveQuestion = async () => {
+    if (!token) {
+      setError('Oturum süresi dolmuş olabilir. Lütfen sayfayı yenileyin.');
+      return;
+    }
     if (!formData.subjectId || !formData.gradeLevel || !formData.topic || !formData.text || !formData.correctAnswer) {
       setError('Lütfen zorunlu alanları doldurun');
       return;
@@ -338,6 +401,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   };
 
   const handleDeleteQuestion = async (id: string) => {
+    if (!token) return;
     if (!window.confirm('Bu soruyu silmek istediğinize emin misiniz?')) return;
     
     try {
@@ -351,6 +415,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   };
 
   const handleApproveQuestion = async (id: string) => {
+    if (!token) return;
     try {
       await approveQuestionBankItem(token, id);
       setSuccessMessage('Soru onaylandı');
@@ -371,6 +436,10 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   };
 
   const handleGenerateAI = async () => {
+    if (!token) {
+      setError('Oturum yok.');
+      return;
+    }
     if (!aiForm.subjectId || !aiForm.topic) {
       setError('Lütfen ders ve konu seçin');
       return;
@@ -442,6 +511,15 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
             <Sparkles className="w-3.5 h-3.5" />
             AI ile Üret
           </button>
+          <button
+             onClick={() => setViewMode(viewMode === 'list' ? 'folder' : 'list')}
+             className="qb-header-btn qb-header-btn--ghost"
+             type="button"
+             title={viewMode === 'list' ? 'Klasör Görünümü' : 'Liste Görünümü'}
+          >
+            {viewMode === 'list' ? <Folder className="w-4 h-4" /> : <List className="w-4 h-4" />}
+          </button>
+          <div className="w-px h-6 bg-white/10 mx-1"></div>
           <button
             onClick={() => toggleAddCard()}
             className={`qb-header-btn qb-header-btn--blue ${showAddCard ? 'qb-header-btn--active' : ''}`}
@@ -964,7 +1042,76 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
         )}
       </GlassCard>
 
-      {/* Questions List */}
+
+      {/* Questions List or Folder View */}
+      {viewMode === 'folder' ? (
+        <GlassCard className="p-4">
+            <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
+                <Folder className="w-5 h-5 text-yellow-500" />
+                Soru Klasörleri
+            </h3>
+          {Object.entries(folderStructure).sort((a, b) => {
+              // Numerik sıralama (4, 5, ... 9, 10, 11, 12, TYT, AYT)
+              const order = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'TYT', 'AYT'];
+              return order.indexOf(a[0]) - order.indexOf(b[0]);
+          }).map(([grade, subjects]) => (
+            <div key={grade} className="mb-2">
+              <button
+                onClick={() => toggleFolder(grade)}
+                className="flex items-center gap-2 w-full p-2 hover:bg-white/5 rounded-lg text-left transition select-none"
+              >
+                {expandedFolders.has(grade) ? <ChevronDown className="w-4 h-4 text-white/50" /> : <ChevronRight className="w-4 h-4 text-white/50" />}
+                <Folder className="w-5 h-5 text-yellow-500/80" />
+                <span className="font-medium text-white">{grade}. Sınıf</span>
+                <span className="text-xs text-white/50 ml-auto bg-white/10 px-2 py-0.5 rounded-full">
+                    {Object.values(subjects).reduce((acc, topics) => acc + Object.values(topics).reduce((a, b) => a + b, 0), 0)} Soru
+                </span>
+              </button>
+
+              {expandedFolders.has(grade) && (
+                <div className="pl-6 mt-1 space-y-1 animate-in slide-in-from-top-1 fade-in duration-200">
+                  {Object.entries(subjects).sort().map(([subject, topics]) => (
+                    <div key={subject}>
+                        <button
+                            onClick={() => toggleFolder(`${grade}-${subject}`)}
+                            className="flex items-center gap-2 w-full p-2 hover:bg-white/5 rounded-lg text-left transition select-none"
+                        >
+                            {expandedFolders.has(`${grade}-${subject}`) ? <ChevronDown className="w-4 h-4 text-white/50" /> : <ChevronRight className="w-4 h-4 text-white/50" />}
+                            <Folder className="w-4 h-4 text-blue-400/80" />
+                            <span className="text-white/90">{subject}</span>
+                            <span className="text-xs text-white/50 ml-auto">{Object.values(topics).reduce((a, b) => a + b, 0)}</span>
+                        </button>
+
+                        {expandedFolders.has(`${grade}-${subject}`) && (
+                            <div className="pl-6 mt-1 space-y-0.5 animate-in slide-in-from-top-1 fade-in duration-200">
+                                {Object.entries(topics).sort().map(([topic, count]) => (
+                                     <button
+                                        key={topic}
+                                        onClick={() => handleTopicSelect(grade, subject, topic)}
+                                        className="flex items-center gap-2 w-full p-2 hover:bg-white/5 rounded-lg text-left transition group"
+                                    >
+                                        <List className="w-3.5 h-3.5 text-white/30 group-hover:text-purple-400 transition" />
+                                        <span className="text-sm text-white/70 group-hover:text-white transition">{topic}</span>
+                                        <span className="text-xs text-white/30 ml-auto">{count}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {Object.keys(folderStructure).length === 0 && (
+              <div className="text-center py-12 text-white/50">
+                  <Folder className="w-12 h-12 mx-auto mb-2 opacity-20" />
+                  <p>Klasörlenecek içerik bulunamadı</p>
+                  <p className="text-xs mt-1 opacity-70">Filtreleriniz sonucu boş olabilir veya henüz soru eklenmemiş.</p>
+              </div>
+          )}
+        </GlassCard>
+      ) : (
       <GlassCard className="p-4">
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -1065,6 +1212,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
           </div>
         )}
       </GlassCard>
+      )}
 
 
 

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Bell, BookOpen, CalendarCheck, ClipboardList, MessageSquare, PhoneCall, BarChart3, Video } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import {
+  apiRequest,
+  downloadAnalysisPdf,
   getParentCalendar,
   getParentChildSummary,
   getParentChildFeedback,
@@ -296,6 +298,8 @@ export const ParentDashboard: React.FC = () => {
           meetings={meetingsState.data ?? []}
           onJoinMeeting={handleJoinMeeting}
           loading={summaryState.loading}
+          token={token}
+          onMarkNotificationRead={() => notificationsState.run(() => getParentNotifications(token!, 50)).catch(() => {})}
         />
       )}
       {activeTab === 'calendar' && (
@@ -312,13 +316,39 @@ export const ParentDashboard: React.FC = () => {
               <div className="empty-state">Henüz bildirim yok.</div>
             )}
             {(notificationsState.data ?? []).map((item) => (
-              <div className="list-row" key={item.id}>
-                <div>
+              <div className="list-row" key={item.id} style={{ alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
                   <strong>{item.title}</strong>
                   <small>{item.body}</small>
                   <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.75 }}>
                     {new Date(item.createdAt).toLocaleDateString('tr-TR')}
                   </small>
+                  {item.type === 'analysis_report_ready' &&
+                    item.relatedEntityType === 'analysis_report' &&
+                    item.relatedEntityId &&
+                    token && (
+                      <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={async () => {
+                            if (!token) return;
+                            try {
+                              const payload = JSON.parse(item.relatedEntityId!) as { studentId: string; examId: number };
+                              await downloadAnalysisPdf(token, payload.studentId, payload.examId);
+                              if (!item.read) {
+                                await apiRequest(`/parent/notifications/${item.id}/read`, { method: 'PUT' }, token);
+                                notificationsState.run(() => getParentNotifications(token, 50)).catch(() => {});
+                              }
+                            } catch (e) {
+                              alert(e instanceof Error ? e.message : 'PDF indirilemedi.');
+                            }
+                          }}
+                        >
+                          PDF İndir / Görüntüle
+                        </button>
+                      </div>
+                    )}
                 </div>
                 <TagChip label={item.read ? 'Okundu' : 'Yeni'} tone={item.read ? 'success' : 'warning'} />
               </div>
@@ -544,7 +574,9 @@ const ParentOverview: React.FC<{
   meetings: ParentMeeting[];
   onJoinMeeting: () => void;
   loading: boolean;
-}> = ({ summary, notifications, meetings, onJoinMeeting, loading }) => {
+  token: string | null;
+  onMarkNotificationRead: () => void;
+}> = ({ summary, notifications, meetings, onJoinMeeting, loading, token, onMarkNotificationRead }) => {
   const quick = summary?.quickStats;
 
   return (
@@ -646,10 +678,33 @@ const ParentOverview: React.FC<{
             {loading && <div className="empty-state">Bildirimler yükleniyor...</div>}
             {!loading && notifications.length === 0 && <div className="empty-state">Bildirim bulunamadı.</div>}
             {notifications.map((item) => (
-              <div className="list-row" key={item.id}>
-                <div>
+              <div className="list-row" key={item.id} style={{ alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
                   <strong>{item.title}</strong>
                   <small>{item.body}</small>
+                  {item.type === 'analysis_report_ready' &&
+                    item.relatedEntityType === 'analysis_report' &&
+                    item.relatedEntityId &&
+                    token && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={async () => {
+                            if (!token) return;
+                            try {
+                              const payload = JSON.parse(item.relatedEntityId!) as { studentId: string; examId: number };
+                              await downloadAnalysisPdf(token, payload.studentId, payload.examId);
+                              if (!item.read) onMarkNotificationRead();
+                            } catch (e) {
+                              alert(e instanceof Error ? e.message : 'PDF indirilemedi.');
+                            }
+                          }}
+                        >
+                          PDF İndir / Görüntüle
+                        </button>
+                      </div>
+                    )}
                 </div>
                 <TagChip label={item.read ? 'Okundu' : 'Yeni'} tone={item.read ? 'success' : 'warning'} />
               </div>

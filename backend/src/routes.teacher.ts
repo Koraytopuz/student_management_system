@@ -3382,9 +3382,10 @@ router.get(
     // Using TestResult sum is faster if correct/incorrect counts are stored there.
     const questionStats = await prisma.testResult.aggregate({
       where: { studentId },
-      _sum: { correctCount: true, incorrectCount: true }
+      _sum: { correctCount: true, incorrectCount: true, blankCount: true }
     });
-    const solvedQuestions = (questionStats._sum.correctCount || 0) + (questionStats._sum.incorrectCount || 0);
+    const solvedQuestions =
+      (questionStats._sum.correctCount || 0) + (questionStats._sum.incorrectCount || 0);
 
     // 2. Subject/Topic Performance
     const testResults: any[] = await (prisma.testResult as any).findMany({
@@ -3397,11 +3398,14 @@ router.get(
     });
 
     // Group by Subject -> Topic
-    const subjectMap = new Map<string, {
-      id: string;
-      name: string;
-      topics: Map<string, { correct: number; incorrect: number }>
-    }>();
+    const subjectMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        topics: Map<string, { correct: number; incorrect: number; blank: number }>;
+      }
+    >();
 
     for (const res of testResults) {
       if (!res.test || !res.test.subject) continue;
@@ -3416,11 +3420,12 @@ router.get(
       const subEntry = subjectMap.get(subId)!;
 
       if (!subEntry.topics.has(topic)) {
-        subEntry.topics.set(topic, { correct: 0, incorrect: 0 });
+        subEntry.topics.set(topic, { correct: 0, incorrect: 0, blank: 0 });
       }
       const topicEntry = subEntry.topics.get(topic)!;
       topicEntry.correct += res.correctCount;
       topicEntry.incorrect += res.incorrectCount;
+      topicEntry.blank += res.blankCount;
     }
 
     // Transform to frontend format
@@ -3444,28 +3449,43 @@ router.get(
       const key = mapToFrontendKey(subData.name);
       if (key === 'diger') continue; // Şimdilik sadece ana dersleri göster
 
-      const topicsList = [];
+      const topicsList: any[] = [];
       let totalCorrect = 0;
       let totalIncorrect = 0;
+      let totalBlank = 0;
 
       for (const [topicName, stats] of subData.topics.entries()) {
-        const total = stats.correct + stats.incorrect;
+        const total = stats.correct + stats.incorrect + stats.blank;
         const mastery = total > 0 ? Math.round((stats.correct / total) * 100) : 0;
         topicsList.push({
           id: topicName,
           name: topicName,
           correct: stats.correct,
           incorrect: stats.incorrect,
+          blank: stats.blank,
           masteryPercent: mastery
         });
         totalCorrect += stats.correct;
         totalIncorrect += stats.incorrect;
+        totalBlank += stats.blank;
       }
 
       if (topicsList.length > 0) {
         subjectsOutput.push({
           id: key,
           label: subData.name,
+          summary: {
+            totalQuestions: totalCorrect + totalIncorrect + totalBlank,
+            correct: totalCorrect,
+            incorrect: totalIncorrect,
+            blank: totalBlank,
+            correctPercent:
+              totalCorrect + totalIncorrect + totalBlank > 0
+                ? Math.round(
+                    (totalCorrect / (totalCorrect + totalIncorrect + totalBlank)) * 100,
+                  )
+                : 0
+          },
           topics: topicsList
         });
 
@@ -3494,16 +3514,148 @@ router.get(
     }
 
     // 0-10 arası puan. (Mastery % 70, Attendance % 30 ağırlıklı)
-    const annualScore = ((avgMastery / 10) * 0.7) + ((attendanceRate / 10) * 0.3);
+    const annualScore = (avgMastery / 10) * 0.7 + (attendanceRate / 10) * 0.3;
 
-    // Mock percentile rank (Real rank requires comparing with all students, leaving as mock/random for now)
-    const annualRankPercentile = 80 + Math.floor(Math.random() * 19);
+    // --- Gerçekçi yüzdelik dilim hesabı ---
+    // Aynı sınıftaki öğrenciler arasında sınav ortalamasına göre sıralama yapılır.
+    let annualRankPercentile = 0;
+    try {
+      // Öğrencinin sınıf seviyesi (ör. "9", "10", "11", "12", "MEZUN")
+      const gradeLevel = (student as any).gradeLevel as string | null;
+
+      // Aynı sınıf seviyesindeki tüm öğrencileri bul
+      const classmates = await prisma.user.findMany({
+        where: {
+          role: 'student',
+          ...(gradeLevel ? { gradeLevel } : {}),
+        },
+        select: { id: true },
+      });
+
+      const classStudentIds = classmates.map((c) => c.id);
+
+      if (classStudentIds.length > 0) {
+        // Sınav sonuçlarından her öğrenci için ortalama puan
+        const grouped = await (prisma as any).examResult.groupBy({
+          by: ['studentId'],
+          where: { studentId: { in: classStudentIds } },
+          _avg: { score: true },
+        });
+
+        if (grouped.length > 0) {
+          const scores = grouped.map((g: any) => ({
+            studentId: g.studentId as string,
+            score: (g._avg.score as number | null) ?? 0,
+          }));
+
+          // Seçili öğrencinin ortalama puanı
+          const selfScoreEntry = scores.find((s) => s.studentId === student.id);
+          const selfScore =
+            selfScoreEntry?.score ??
+            // Eğer henüz sınav sonucu yoksa yıllık skoru 0-10'dan 0-100'e ölçekleyerek kullan
+            Number((annualScore * 10).toFixed(1));
+
+          // Artan sırada sıralama
+          const sorted = [...scores].sort((a, b) => a.score - b.score);
+          const index = sorted.findIndex((s) => s.studentId === student.id);
+
+          if (index >= 0) {
+            // Bu öğrenciden düşük veya eşit puana sahip öğrencilerin yüzdesi (1–100)
+            const percentile = Math.round(((index + 1) / sorted.length) * 100);
+            annualRankPercentile = Math.max(1, Math.min(100, percentile));
+          } else {
+            // Öğrencinin henüz skoru yoksa, skor dağılımına göre yaklaşık yüzdelik
+            const lowerOrEqual = sorted.filter((s) => s.score <= selfScore).length;
+            const percentile = Math.round((lowerOrEqual / sorted.length) * 100);
+            annualRankPercentile = Math.max(1, Math.min(100, percentile));
+          }
+        } else {
+          // Sınıfta hiç sınav sonucu yoksa ortalama bir değer ver
+          annualRankPercentile = 50;
+        }
+      } else {
+        // Aynı sınıf seviyesinde öğrenci yoksa genel bir tahmin kullan
+        annualRankPercentile = 50;
+      }
+    } catch (e) {
+      // Herhangi bir hata durumunda UI'ın bozulmaması için güvenli varsayılan
+      annualRankPercentile = 50;
+    }
 
     // Mock subjects data if empty (to avoid broken UI if no test results)
     if (subjectsOutput.length === 0) {
       // Return minimal mock data so UI doesn't crash?
       // Or just let it be empty.
     }
+
+    // Basit ama veriye dayalı koç notu – PDF'lerdeki koç yorumuna benzer
+    let strongestSubject: string | null = null;
+    let weakestSubject: string | null = null;
+    if (radarData.length > 0) {
+      const sorted = [...radarData].sort((a, b) => b.student - a.student);
+      strongestSubject = sorted[0]?.axis ?? null;
+      weakestSubject = sorted[sorted.length - 1]?.axis ?? null;
+    }
+
+    const roundedMastery = Math.round(avgMastery || 0);
+    let overallLevel = 'geliştirilebilir';
+    if (roundedMastery >= 80) {
+      overallLevel = 'yüksek';
+    } else if (roundedMastery >= 60) {
+      overallLevel = 'orta';
+    }
+
+    const effortSentences: string[] = [];
+    if (attendanceRate < 60) {
+      effortSentences.push(
+        'Canlı ders katılım oranı şu anda %60\'ın altında. Haftalık programında kaçırdığın dersleri mutlaka telafi listesi oluşturup yeniden izlemelisin.',
+      );
+    } else if (attendanceRate < 85) {
+      effortSentences.push(
+        'Canlı ders katılımın fena değil; hedef, oranı %85 ve üzerine taşımak olmalı. Özellikle sınava yakın dönemlerde devamsızlıklarını en aza indirmeye çalış.',
+      );
+    } else {
+      effortSentences.push(
+        'Canlı ders katılımın oldukça güçlü. Bu istikrarlı devamlılık, yıl içindeki ilerlemenin en önemli gücü.',
+      );
+    }
+
+    if (focusHours < 20) {
+      effortSentences.push(
+        'Odaklı çalışma süren (pomodoro) düşük görünüyor. Her gün en az 1 oturum hedefleyerek başlayabilir ve haftalık toplamı kademeli olarak artırabilirsin.',
+      );
+    } else if (focusHours < 60) {
+      effortSentences.push(
+        'Odaklı çalışma süren orta seviyede. Haftada birkaç gün, 2–3 ardışık pomodoro yaparak özellikle zorlandığın konular için daha derin çalışma blokları oluşturmalısın.',
+      );
+    } else {
+      effortSentences.push(
+        'Odaklı çalışma süren oldukça iyi. Bu süreyi, deneme çözümü sonrası yanlış analizleri ve konu tekrarı ile desteklemen başarıyı daha da kalıcı hale getirir.',
+      );
+    }
+
+    const coachNoteParts: string[] = [];
+    coachNoteParts.push(
+      `Genel başarı seviyen şu anda ${overallLevel} düzeyinde (yaklaşık %${roundedMastery} doğruluk).`,
+    );
+
+    if (strongestSubject) {
+      coachNoteParts.push(
+        `${strongestSubject} dersinde sınıf ortalamasına göre daha güçlü bir tablo görünüyor. Bu dersi, motivasyon kaynağın olarak kullanabilir ve çalışırken önce bu derste ısınma yapabilirsin.`,
+      );
+    }
+    if (weakestSubject) {
+      coachNoteParts.push(
+        `${weakestSubject} dersinde ise gelişim alanların daha belirgin. Bu derste; önce temel konuları netleştirip ardından sık tekrar ve konu odaklı mini denemeler çözmen önerilir.`,
+      );
+    }
+
+    coachNoteParts.push(
+      ...effortSentences,
+      'Her deneme sonrası; doğru, yanlış ve boşlarını ders ve konu bazında tabloya bakarak mutlaka yorumla. Özellikle aynı konularda tekrar eden hataları ayrı bir listeye alıp, önce bu listeyi bitirmeyi haftalık hedef haline getirirsen yıl sonu performansın belirgin şekilde artacaktır.',
+    );
+
+    const coachNote = coachNoteParts.join(' ');
 
     return res.json({
       student: {
@@ -3521,7 +3673,7 @@ router.get(
       },
       subjects: subjectsOutput,
       radar: radarData,
-      coachNote: 'Öğrencinin performansı sistem verilerine dayalı olarak hesaplanmıştır. Düzenli çalışmaya devam ediniz.'
+      coachNote
     });
   },
 );

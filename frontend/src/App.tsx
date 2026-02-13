@@ -11,6 +11,7 @@ import { AdminReports } from './AdminReports';
 import { QuestionParserPage } from './pages/admin/QuestionParserPage';
 import { TeacherAssignmentsPage } from './pages/teacher/Assignments';
 import { StudentMyHomeworksPage } from './pages/student/MyHomeworks';
+import { AnalysisReportPage } from './pages/student/AnalysisReport';
 import { ParentChildHomeworksPage } from './pages/parent/ChildHomeworks';
 
 const ProtectedRoute: React.FC<{
@@ -70,11 +71,22 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const effectivePanelTitle = isAuthRoute ? null : panelTitle;
   const mainClassName = effectivePanelTitle ? 'main main--dashboard' : 'main main--auth';
 
+  const homeLink =
+    user?.role === 'admin'
+      ? '/admin'
+      : user?.role === 'teacher'
+        ? '/teacher'
+        : user?.role === 'student'
+          ? '/student'
+          : user?.role === 'parent'
+            ? '/parent'
+            : '/';
+
   return (
     <div>
       <header className="topbar">
         <div className="topbar-left">
-          <Link to="/" className="logo-text">
+          <Link to={homeLink} className="logo-text">
             {effectivePanelTitle ?? 'Öğrenci Yönetim Sistemi'}
           </Link>
         </div>
@@ -103,15 +115,6 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </button>
               )}
               {panelTitle && <span className="panel-pill">{panelTitle}</span>}
-              {user.role === 'admin' && (
-                <Link
-                  to="/admin/reports"
-                  className="ghost-btn"
-                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
-                >
-                  Raporlar
-                </Link>
-              )}
               <span className="user-pill">
                 {user.name} ({user.role})
               </span>
@@ -205,6 +208,16 @@ const AppRoutes: React.FC = () => {
           <Layout>
             <ProtectedRoute requiredRole="student">
               <StudentMyHomeworksPage />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/student/analysis/:examId"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="student">
+              <AnalysisReportPage />
             </ProtectedRoute>
           </Layout>
         }

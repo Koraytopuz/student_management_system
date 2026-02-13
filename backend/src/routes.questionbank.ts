@@ -4,7 +4,7 @@
  */
 import express, { Request, Response, RequestHandler } from 'express';
 import { prisma as prismaClient } from './db';
-import { authenticate, AuthenticatedRequest } from './auth';
+import { authenticate, authenticateMultiple, AuthenticatedRequest } from './auth';
 import { callGemini } from './ai';
 
 // Cast prisma to any to avoid "questionBank does not exist" type errors
@@ -166,7 +166,8 @@ function parseAIGeneratedQuestions(text: string): Partial<QuestionBankCreateInpu
  */
 router.get(
     '/',
-    authenticate('teacher') as unknown as RequestHandler,
+    authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
+
     async (req: Request, res: Response) => {
         const {
             subjectId,
@@ -231,7 +232,7 @@ router.get(
  */
 router.post(
     '/generate',
-    authenticate('teacher') as unknown as RequestHandler,
+    authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
     async (req: Request, res: Response) => {
         const authReq = req as AuthenticatedRequest;
         const teacherId = authReq.user!.id;
@@ -411,7 +412,7 @@ router.get(
  */
 router.get(
     '/stats',
-    authenticate('teacher') as unknown as RequestHandler,
+    authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
     async (_req: Request, res: Response) => {
         const [
             totalQuestions,
@@ -480,7 +481,7 @@ router.get(
  */
 router.get(
     '/curriculum/subjects',
-    authenticate('teacher') as unknown as RequestHandler,
+    authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
     async (req: Request, res: Response) => {
         const { gradeLevel } = req.query;
 
@@ -518,7 +519,7 @@ router.get(
  */
 router.get(
     '/curriculum/topics',
-    authenticate('teacher') as unknown as RequestHandler,
+    authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
     async (req: Request, res: Response) => {
         const { subjectId, gradeLevel } = req.query;
 
@@ -543,7 +544,7 @@ router.get(
  */
 router.get(
     '/:id',
-    authenticate('teacher') as unknown as RequestHandler,
+    authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
     async (req: Request, res: Response) => {
         const { id } = req.params;
 
@@ -565,7 +566,7 @@ router.get(
  */
 router.post(
     '/',
-    authenticate('teacher') as unknown as RequestHandler,
+    authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
     async (req: Request, res: Response) => {
         const authReq = req as AuthenticatedRequest;
         const teacherId = authReq.user!.id;

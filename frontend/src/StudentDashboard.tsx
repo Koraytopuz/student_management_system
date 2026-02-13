@@ -3,6 +3,7 @@ import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle
 import { useAuth } from './AuthContext';
 import {
   apiRequest,
+  downloadAnalysisPdf,
   getStudentAssignments,
   getStudentAssignmentDetail,
   getStudentCalendar,
@@ -42,6 +43,8 @@ import {
   type TeacherListItem,
   type StudentCoachingSession,
   type StudentBadgeProgress,
+  getStudentExamDetail,
+  submitStudentExamAnswers,
 } from './api';
 import { Breadcrumb, DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
@@ -50,10 +53,12 @@ import { StudentPlanner, type PlannerCreatePayload } from './components/StudentP
 import { DrawingCanvas } from './DrawingCanvas';
 import { LiveClassOverlay } from './LiveClassOverlay';
 import { PdfTestOverlay, type PdfTestAssignment } from './PdfTestOverlay';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { StudentQuestionBankTab } from './StudentQuestionBankTab';
 import { StudentBadgesTab } from './StudentBadges';
 import { FocusZone } from './components/FocusZone';
+import { ExamOpticalFormOverlay, type ExamSimple } from './ExamOpticalFormOverlay';
+import { StudentExamList } from './pages/student/StudentExamList';
 
 type StudentTab =
   | 'overview'
@@ -67,7 +72,8 @@ type StudentTab =
   | 'liveclasses'
   | 'coaching'
   | 'notifications'
-  | 'complaints';
+  | 'complaints'
+  | 'exam-analysis';
 type AssignmentStatus = 'todo' | 'in-progress' | 'done' | 'overdue';
 
 const sortMeetingsByDate = (items: StudentMeeting[]): StudentMeeting[] =>
@@ -309,6 +315,7 @@ export const StudentDashboard: React.FC = () => {
 
   const [notifications, setNotifications] = useState<StudentNotification[]>([]);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const [focusedNotificationId, setFocusedNotificationId] = useState<string | null>(null);
 
@@ -433,6 +440,39 @@ export const StudentDashboard: React.FC = () => {
   const handleOpenContent = (initialDoc?: { url: string; title: string }) => {
     setInitialDocToShow(initialDoc ?? null);
     setShowNotesLibrary(true);
+  };
+
+  const [activeExamToSolve, setActiveExamToSolve] = useState<ExamSimple | null>(null);
+  const [examSubmitting, setExamSubmitting] = useState(false);
+
+  const handleSolveExam = async (examId: number) => {
+    if (!token) return;
+    try {
+      const exam = await getStudentExamDetail(token, examId);
+      setActiveExamToSolve(exam);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert('Sınav detayları alınamadı. ' + (e instanceof Error ? e.message : ''));
+    }
+  };
+
+  const submitExamAnswers = async (answers: Record<number, string>) => {
+    if (!token || !activeExamToSolve) return;
+    setExamSubmitting(true);
+    try {
+       const answersStr = Object.fromEntries(
+           Object.entries(answers).map(([k,v]) => [String(k), v])
+       );
+       await submitStudentExamAnswers(token, activeExamToSolve.id, answersStr);
+       // eslint-disable-next-line no-alert
+       alert('Sınav başarıyla tamamlandı.');
+       setActiveExamToSolve(null);
+    } catch(e) {
+       // eslint-disable-next-line no-alert
+       alert('Gönderim başarısız: ' + (e instanceof Error ? e.message : ''));
+    } finally {
+       setExamSubmitting(false);
+    }
   };
 
   const [activeTest, setActiveTest] = useState<StudentAssignmentDetail | null>(null);
@@ -709,6 +749,7 @@ export const StudentDashboard: React.FC = () => {
     else if (activeTab === 'coaching') items.push({ label: 'Koçluk' });
     else if (activeTab === 'notifications') items.push({ label: 'Bildirimler' });
     else if (activeTab === 'complaints') items.push({ label: 'Şikayet/Öneri' });
+    else if (activeTab === 'exam-analysis') items.push({ label: 'Sınav Analizi' });
     return items;
   }, [activeTab]);
 
@@ -862,6 +903,18 @@ export const StudentDashboard: React.FC = () => {
           setActiveTab('complaints');
         },
       },
+      {
+        id: 'exam-analysis',
+        label: 'Sınav Analizi',
+        icon: <FileText size={18} />,
+        description: 'Detaylı rapor',
+        active: activeTab === 'exam-analysis',
+        onClick: () => {
+          setShowNotesLibrary(false);
+          setActiveTest(null);
+          setActiveTab('exam-analysis');
+        },
+      },
     ],
     [activeTab, assignments.length, plannerTodos.length, unreadNotificationsCount],
   );
@@ -996,8 +1049,14 @@ export const StudentDashboard: React.FC = () => {
           defaultGradeLevel={user?.gradeLevel}
         />
       )}
-      {activeTab === 'grades' && (
-        <StudentGrades progress={progressState.data} charts={chartsState.data} loading={progressState.loading} />
+      {activeTab === 'grades' && token && user && (
+        <StudentGrades
+          progress={progressState.data}
+          charts={chartsState.data}
+          loading={progressState.loading}
+          token={token}
+          user={user}
+        />
       )}
       {activeTab === 'coursenotes' && (
         <NotesLibraryOverlay
@@ -1151,6 +1210,87 @@ export const StudentDashboard: React.FC = () => {
                           </button>
                         </div>
                       )}
+                    {n.type === 'content_assigned' &&
+                      (n.relatedEntityType === 'test' || n.relatedEntityType === 'exam') &&
+                      n.relatedEntityId && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <button
+                            type="button"
+                            className="primary-btn"
+                            onClick={async () => {
+                              if (!user?.id) return;
+                              try {
+                                if (n.relatedEntityType === 'exam') {
+                                    // Handle Exam
+                                    if (!n.read && token) {
+                                        await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
+                                        await loadNotifications();
+                                    }
+                                    handleSolveExam(Number(n.relatedEntityId));
+                                } else {
+                                    // Handle Online Test (Legacy 'test')
+                                    if (!n.read && token) {
+                                      await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
+                                      await loadNotifications();
+                                    }
+                                    navigate(`/student/assignments`);
+                                    setActiveTab('assignments');
+                                }
+                              } catch {
+                                // ignore
+                              }
+                            }}
+                          >
+                            {n.relatedEntityType === 'exam' ? 'Sınavı Çöz' : 'Ödevi Gör'}
+                          </button>
+                        </div>
+                      )}
+                    {n.type === 'analysis_report_ready' &&
+                      n.relatedEntityType === 'analysis_report' &&
+                      n.relatedEntityId && (
+                        <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="primary-btn"
+                            onClick={async () => {
+                              if (!token || !user?.id) return;
+                              try {
+                                const payload = JSON.parse(n.relatedEntityId!) as { studentId: string; examId: number };
+                                await downloadAnalysisPdf(token, payload.studentId, payload.examId);
+                                if (!n.read) {
+                                  await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
+                                  await loadNotifications();
+                                }
+                              } catch (e) {
+                                // eslint-disable-next-line no-alert
+                                alert(e instanceof Error ? e.message : 'PDF indirilemedi.');
+                              }
+                            }}
+                          >
+                            PDF İndir
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-btn"
+                            style={{ border: '1px solid rgba(148,163,184,0.5)' }}
+                            onClick={async () => {
+                              if (!user?.id) return;
+                              try {
+                                const payload = JSON.parse(n.relatedEntityId!) as { studentId: string; examId: number };
+                                if (!n.read && token) {
+                                  await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
+                                  await loadNotifications();
+                                }
+                                navigate(`/student/analysis/${payload.examId}`);
+                              } catch {
+                                // ignore
+                              }
+                            }}
+                          >
+                            Raporu Görüntüle
+                          </button>
+                        </div>
+                      )}
                   </div>
                   <TagChip label={n.read ? 'Okundu' : 'Yeni'} tone={n.read ? 'success' : 'warning'} />
                 </div>
@@ -1161,6 +1301,14 @@ export const StudentDashboard: React.FC = () => {
       )}
       {activeTab === 'complaints' && (
         <StudentComplaints token={token} />
+      )}
+      {activeExamToSolve && (
+        <ExamOpticalFormOverlay
+          exam={activeExamToSolve}
+          onClose={() => setActiveExamToSolve(null)}
+          onSubmit={submitExamAnswers}
+          submitting={examSubmitting}
+        />
       )}
       {activeTest && (
         <TestSolveOverlay
@@ -1627,6 +1775,13 @@ export const StudentDashboard: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      {activeTab === 'grades' && user && token && (
+        <StudentExamList
+          token={token}
+          user={{ id: user.id || '', name: user.name || '', email: user.email || '' }}
+          onSolveExam={handleSolveExam}
+        />
       )}
     </DashboardLayout>
   );
@@ -3255,7 +3410,10 @@ const StudentGrades: React.FC<{
   progress: ProgressOverview | null;
   charts: ProgressCharts | null;
   loading: boolean;
-}> = ({ progress, charts, loading }) => (
+  token: string;
+  user: { id: string; name: string; email: string };
+}> = ({ progress, charts, loading, token, user }) => (
+  <div className="space-y-6">
   <div className="dual-grid">
     <GlassCard
       title="Sınav Performansı"
@@ -3296,6 +3454,8 @@ const StudentGrades: React.FC<{
         {charts?.daily?.length === 0 && <div className="empty-state">Veri bulunamadı.</div>}
       </div>
     </GlassCard>
+  </div>
+  <StudentExamList token={token} user={user} />
   </div>
 );
 

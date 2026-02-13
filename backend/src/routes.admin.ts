@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import { authenticate, AuthenticatedRequest } from './auth';
 import { prisma } from './db';
 import type { Parent, Student, Teacher } from './types';
-import { UserRole } from '@prisma/client';
+import { UserRole, ExamType, PriorityLevel } from '@prisma/client';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -149,6 +149,380 @@ router.get('/parents', authenticate('admin'), async (_req, res) => {
   );
 });
 
+/**
+ * GET /admin/exam-result-students
+ * ExamResult tablosunda en az bir sınav sonucu olan öğrencileri listeler.
+ * Amaç: Kişiye özel rapor ve analiz ekranları için "hangi öğrencinin gerçekten
+ * sınav sonucu var?" sorusuna hızlı cevap vermek.
+ *
+ * Dönüş örneği:
+ * [
+ *   {
+ *     studentId: "ck123...",
+ *     name: "Ali 11. Sınıf 1",
+ *     email: "ali@example.com",
+ *     gradeLevel: "11",
+ *     classId: "cg123...",
+ *     examCount: 3
+ *   },
+ *   ...
+ * ]
+ */
+router.get('/exam-result-students', authenticate('admin'), async (_req, res) => {
+  // 1) ExamResult üzerinden hangi öğrencilerin sonucu olduğunu grup­la
+  const grouped = await (prisma as any).examResult.groupBy({
+    by: ['studentId'],
+    _count: { _all: true },
+  });
+
+  if (grouped.length === 0) {
+    return res.json([]);
+  }
+
+  const studentIds = grouped.map((g: any) => g.studentId);
+
+  // 2) Bu öğrencilerin temel bilgilerini çek
+  const students = await prisma.user.findMany({
+    where: { id: { in: studentIds }, role: 'student' },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      gradeLevel: true,
+      classId: true,
+    },
+  });
+
+  // 3) groupBy sonucuyla birleştir
+  const examCountByStudent: Record<string, number> = {};
+  for (const row of grouped as Array<{ studentId: string; _count: { _all: number } }>) {
+    examCountByStudent[row.studentId] = row._count._all;
+  }
+
+  const result = students.map((s) => ({
+    studentId: s.id,
+    name: s.name,
+    email: s.email,
+    gradeLevel: s.gradeLevel ?? '',
+    classId: s.classId ?? '',
+    examCount: examCountByStudent[s.id] ?? 0,
+  }));
+
+  res.json(result);
+});
+
+/**
+ * POST /admin/debug/create-sample-exam-ali-12-say
+ *
+ * Geliştirme amaçlı yardımcı endpoint:
+ * - Önce 12. Sınıf Sayısal sınıfındaki "Ali" isimli öğrenciyi bulmaya çalışır.
+ * - Bulamazsa gradeLevel=12 ve isminde "Ali" geçen ilk öğrenciyi seçer.
+ * - Hiçbiri yoksa herhangi bir 12. sınıf öğrencisini seçer.
+ * - Bu öğrenci için basit bir TYT denemesi ve ExamResult kaydı oluşturur.
+ *
+ * Böylece Kişiye Özel Rapor ekranında sınav listesini test etmek için
+ * hazır bir örnek veri oluşur.
+ */
+router.post(
+  '/debug/create-sample-exam-ali-12-say',
+  authenticate('admin'),
+  async (_req: AuthenticatedRequest, res) => {
+    try {
+      // 1) Hedef öğrenciyi bul
+      let student = await prisma.user.findFirst({
+        where: {
+          role: 'student',
+          classId: 'c_12_say',
+          name: { contains: 'Ali', mode: 'insensitive' },
+        },
+      });
+
+      if (!student) {
+        student = await prisma.user.findFirst({
+          where: {
+            role: 'student',
+            gradeLevel: '12',
+            name: { contains: 'Ali', mode: 'insensitive' },
+          },
+        });
+      }
+
+      if (!student) {
+        student = await prisma.user.findFirst({
+          where: {
+            role: 'student',
+            gradeLevel: '12',
+          },
+        });
+      }
+
+      if (!student) {
+        return res.status(404).json({
+          success: false,
+          error:
+            '12. sınıf seviyesinde öğrenci bulunamadı. Önce en az bir 12. sınıf öğrencisi oluşturun.',
+        });
+      }
+
+      // 2) Örnek için kullanılacak bir TYT (veya herhangi bir) sınav bul
+      // Not: Bazı ortamlarda `exam` tablosunun ID sequence'i bozulmuş olabildiği için
+      // burada YENİ sınav oluşturmak yerine mevcut bir sınavı kullanıyoruz.
+      let exam = await prisma.exam.findFirst({
+        where: { type: ExamType.TYT },
+        orderBy: { date: 'desc' },
+      });
+
+      if (!exam) {
+        // TYT yoksa, tarihine göre herhangi bir sınavı kullan
+        exam = await prisma.exam.findFirst({
+          orderBy: { date: 'desc' },
+        });
+      }
+
+      if (!exam) {
+        return res.status(400).json({
+          success: false,
+          error:
+            'Örnek sınav sonucu oluşturmak için önce "Sınav Yönetimi" ekranından en az bir sınav oluşturmalısınız.',
+        });
+      }
+
+      // 3) "Detaylı Sınav Analizi" PDF'ine benzeyen örnek veriler oluştur
+      // Dersler: Türkçe, Matematik, Fen Bilimleri, Sosyal Bilgiler, Din, İngilizce
+      // Konular: her dersten 1-2 örnek konu
+
+      // Önce ihtiyaç duyulan ders ve konu kayıtlarını Subject / Topic tablolarında garanti altına alalım
+      const subjectDefs = [
+        { id: 'sub_tyt_turkce', name: 'Türkçe' },
+        { id: 'sub_tyt_matematik', name: 'Matematik' },
+        { id: 'sub_tyt_fen', name: 'Fen Bilimleri' },
+        { id: 'sub_tyt_sosyal', name: 'Sosyal Bilgiler' },
+        { id: 'sub_tyt_din', name: 'Din Kültürü' },
+        { id: 'sub_tyt_ing', name: 'İngilizce' },
+      ] as const;
+
+      const subjectMap: Record<string, { id: string; name: string }> = {};
+      for (const def of subjectDefs) {
+        const s = await prisma.subject.upsert({
+          where: { id: def.id },
+          create: { id: def.id, name: def.name },
+          update: { name: def.name },
+        });
+        subjectMap[def.id] = { id: s.id, name: s.name };
+      }
+
+      const topicDefs = [
+        { id: 'top_tyt_tr_paragraf', name: 'Paragraf', subjectId: 'sub_tyt_turkce' },
+        { id: 'top_tyt_tr_dilbilgisi', name: 'Dil Bilgisi', subjectId: 'sub_tyt_turkce' },
+        { id: 'top_tyt_mat_uslu', name: 'Üslü Sayılar', subjectId: 'sub_tyt_matematik' },
+        { id: 'top_tyt_mat_denklik', name: 'Denklemler', subjectId: 'sub_tyt_matematik' },
+        { id: 'top_tyt_fen_fizik', name: 'Kuvvet ve Hareket', subjectId: 'sub_tyt_fen' },
+        { id: 'top_tyt_sosyal_tarih', name: 'İnkılap Tarihi', subjectId: 'sub_tyt_sosyal' },
+        { id: 'top_tyt_din_inanc', name: 'İnanç', subjectId: 'sub_tyt_din' },
+        { id: 'top_tyt_ing_paragraf', name: 'Okuduğunu Anlama', subjectId: 'sub_tyt_ing' },
+      ] as const;
+
+      const topicMap: Record<string, { id: string; name: string; subjectId: string }> = {};
+      for (const def of topicDefs) {
+        const t = await prisma.topic.upsert({
+          where: { id: def.id },
+          create: { id: def.id, name: def.name },
+          update: { name: def.name },
+        });
+        topicMap[def.id] = { id: t.id, name: t.name, subjectId: def.subjectId };
+      }
+
+      // Örnek netler – referans PDF'e yakın ama tamamen sembolik.
+      // Burada özellikle bazı konuları düşük / orta başarı oranında bırakıyoruz ki
+      // PDF'teki 1. ve 2. öncelik tabloları da dolu gelsin.
+      const lessonStats = [
+        {
+          subjectKey: 'sub_tyt_turkce',
+          correct: 22,
+          wrong: 11,
+          empty: 7,
+          topics: [
+            // Orta başarı (2. öncelik)
+            { topicKey: 'top_tyt_tr_paragraf', total: 20, correct: 8, wrong: 8, empty: 4 },
+            // Yüksek başarı (3. öncelik)
+            { topicKey: 'top_tyt_tr_dilbilgisi', total: 20, correct: 14, wrong: 3, empty: 3 },
+          ],
+        },
+        {
+          subjectKey: 'sub_tyt_matematik',
+          correct: 17,
+          wrong: 9,
+          empty: 4,
+          topics: [
+            // Düşük başarı (1. öncelik)
+            { topicKey: 'top_tyt_mat_uslu', total: 15, correct: 4, wrong: 8, empty: 3 },
+            // Yüksek başarı (3. öncelik)
+            { topicKey: 'top_tyt_mat_denklik', total: 15, correct: 13, wrong: 1, empty: 1 },
+          ],
+        },
+        {
+          subjectKey: 'sub_tyt_fen',
+          correct: 15,
+          wrong: 5,
+          empty: 5,
+          topics: [{ topicKey: 'top_tyt_fen_fizik', total: 15, correct: 10, wrong: 3, empty: 2 }],
+        },
+        {
+          subjectKey: 'sub_tyt_sosyal',
+          correct: 18,
+          wrong: 4,
+          empty: 3,
+          topics: [{ topicKey: 'top_tyt_sosyal_tarih', total: 15, correct: 11, wrong: 2, empty: 2 }],
+        },
+        {
+          subjectKey: 'sub_tyt_din',
+          correct: 8,
+          wrong: 1,
+          empty: 1,
+          topics: [{ topicKey: 'top_tyt_din_inanc', total: 10, correct: 8, wrong: 1, empty: 1 }],
+        },
+        {
+          subjectKey: 'sub_tyt_ing',
+          correct: 11,
+          wrong: 3,
+          empty: 1,
+          topics: [{ topicKey: 'top_tyt_ing_paragraf', total: 10, correct: 7, wrong: 2, empty: 1 }],
+        },
+      ];
+
+      // Genel net ve skor – örnek
+      const totalNet =
+        lessonStats.reduce((sum, l) => sum + (l.correct - l.wrong * 0.25), 0) ?? 65;
+      const score = 430;
+      const percentile = 82;
+
+      // ExamResult kaydı oluştur / güncelle
+      const examResult = await (prisma as any).examResult.upsert({
+        where: {
+          studentId_examId: {
+            studentId: student.id,
+            examId: exam.id,
+          },
+        },
+        create: {
+          studentId: student.id,
+          examId: exam.id,
+          totalNet,
+          score,
+          percentile,
+        },
+        update: {
+          totalNet,
+          score,
+          percentile,
+        },
+      });
+
+      // Mevcut detayları temizleyip örnek ders/konu detaylarını ekleyelim
+      await (prisma as any).examResultDetail.deleteMany({ where: { examResultId: examResult.id } });
+
+      for (const lesson of lessonStats) {
+        const subj = subjectMap[lesson.subjectKey];
+        if (!subj) continue;
+
+        const detail = await (prisma as any).examResultDetail.create({
+          data: {
+            examResultId: examResult.id,
+            lessonId: subj.id,
+            lessonName: subj.name,
+            correct: lesson.correct,
+            wrong: lesson.wrong,
+            empty: lesson.empty,
+            net: lesson.correct - lesson.wrong * 0.25,
+          },
+        });
+
+        for (const t of lesson.topics) {
+          const topic = topicMap[t.topicKey];
+          if (!topic) continue;
+
+          await (prisma as any).topicAnalysis.create({
+            data: {
+              examResultDetailId: detail.id,
+              topicId: topic.id,
+              topicName: topic.name,
+              totalQuestion: t.total,
+              correct: t.correct,
+              wrong: t.wrong,
+              empty: t.empty,
+              net: t.correct - t.wrong * 0.25,
+              priorityLevel:
+                t.correct / (t.total || 1) < 0.3
+                  ? PriorityLevel.ONE
+                  : t.correct / (t.total || 1) < 0.6
+                    ? PriorityLevel.TWO
+                    : PriorityLevel.THREE,
+              lostPoints: t.wrong + t.empty,
+            },
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: 'Örnek TYT sınavı ve sınav sonucu oluşturuldu / güncellendi.',
+        student: {
+          id: student.id,
+          name: student.name,
+          email: student.email,
+          gradeLevel: student.gradeLevel,
+          classId: student.classId,
+        },
+        exam,
+        examResult,
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[admin][debug/create-sample-exam-ali-12-say] Error:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({
+        success: false,
+        // Geliştirme ortamında hata ayrıntısını doğrudan gösterelim ki
+        // frontend'deki hata mesajından sorunu görebilelim.
+        error:
+          process.env.NODE_ENV !== 'production'
+            ? `[debug] Örnek sınav oluşturulamadı: ${message}`
+            : 'Örnek sınav verisi oluşturulurken bir hata oluştu.',
+      });
+    }
+  },
+);
+
+/**
+ * GET /admin/class-groups
+ * Yönetici paneli için tüm sınıf gruplarını listeler.
+ *
+ * Not:
+ * - `ExamManagement` ekranındaki "Sınıf Seç" çoklu seçim listesi bu endpoint'i kullanır.
+ * - Sadece temel alanlar döndürülür; ilişkiler (öğrenciler vb.) gerekirse
+ *   daha sonra ayrı endpoint'lerle eklenebilir.
+ */
+router.get('/class-groups', authenticate('admin'), async (_req, res) => {
+  const groups = await prisma.classGroup.findMany({
+    orderBy: [{ gradeLevel: 'asc' }, { name: 'asc' }],
+    select: {
+      id: true,
+      name: true,
+      gradeLevel: true,
+      stream: true,
+    },
+  });
+
+  res.json(
+    groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      gradeLevel: g.gradeLevel,
+      stream: g.stream,
+    })),
+  );
+});
+
 router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const { name, email, subjectAreas, assignedGrades, password } = req.body as {
     name?: string;
@@ -272,6 +646,14 @@ router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest
       profilePictureUrl: true,
     } as any,
   });
+  // Sınıf atandıysa ClassGroupStudent'a da ekle (sınav bildirimleri için)
+  if (classId && created.id) {
+    await prisma.classGroupStudent.upsert({
+      where: { classGroupId_studentId: { classGroupId: classId, studentId: created.id } },
+      create: { classGroupId: classId, studentId: created.id },
+      update: {},
+    });
+  }
   return res.status(201).json(toStudent(created as any));
 });
 
@@ -365,6 +747,18 @@ router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequ
       profilePictureUrl: true,
     } as any,
   });
+
+  // classId değiştiyse ClassGroupStudent'ı senkronize et (sınav bildirimleri için)
+  if (classId !== undefined) {
+    await prisma.classGroupStudent.deleteMany({ where: { studentId: id } });
+    if (updated.classId) {
+      await prisma.classGroupStudent.upsert({
+        where: { classGroupId_studentId: { classGroupId: updated.classId, studentId: id } },
+        create: { classGroupId: updated.classId, studentId: id },
+        update: {},
+      });
+    }
+  }
 
   return res.json(toStudent(updated as any));
 });
@@ -666,4 +1060,261 @@ router.post(
   },
 );
 
+// ==================== OMR (Optical Mark Recognition) Routes ====================
+
+import {
+  processStandardOMR,
+  validateStudentNumber,
+  createExamResultFromOMR,
+  createProcessingJob,
+  updateProcessingJob,
+  getProcessingJobStatus,
+  processOMRAsync,
+  type OMRResult
+} from './services/opticalService';
+
+// Multer setup for OMR form uploads
+const omrUploadDir = 'uploads/omr-scans';
+if (!fs.existsSync(omrUploadDir)) {
+  fs.mkdirSync(omrUploadDir, { recursive: true });
+}
+
+const omrStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, omrUploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'omr-scan-' + uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const omrUpload = multer({
+  storage: omrStorage,
+  fileFilter: (req, file, cb) => {
+    // Accept only image files
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/tiff'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Sadece resim dosyaları (JPG, PNG, TIFF) yüklenebilir'));
+    }
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  }
+});
+
+/**
+ * POST /admin/omr/upload
+ * Upload a scanned OMR form for processing
+ */
+router.post(
+  '/omr/upload',
+  authenticate('admin'),
+  omrUpload.single('file'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'Dosya yüklenemedi' });
+      }
+
+      const { examId, formType = 'YKS_STANDARD' } = req.body;
+
+      if (!examId) {
+        return res.status(400).json({ error: 'Sınav ID gereklidir' });
+      }
+
+      // Create processing job
+      const jobId = createProcessingJob(parseInt(examId), req.file.path);
+
+      // Start async processing
+      processOMRAsync(jobId, req.file.path, formType, parseInt(examId))
+        .catch(err => console.error('OMR processing error:', err));
+
+      return res.json({
+        success: true,
+        jobId,
+        message: 'Form yüklendi, işleniyor...'
+      });
+    } catch (error: any) {
+      console.error('OMR upload error:', error);
+      return res.status(500).json({
+        error: 'Form yüklenirken hata oluştu',
+        details: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /admin/omr/status/:jobId
+ * Check processing status of an OMR job
+ */
+router.get(
+  '/omr/status/:jobId',
+  authenticate('admin'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      const jobId = String(req.params.jobId);
+      const job = getProcessingJobStatus(jobId);
+
+      if (!job) {
+        return res.status(404).json({ error: 'İşlem bulunamadı' });
+      }
+
+      return res.json(job);
+    } catch (error: any) {
+      console.error('OMR status error:', error);
+      return res.status(500).json({ error: 'Durum sorgulanırken hata oluştu' });
+    }
+  }
+);
+
+/**
+ * POST /admin/omr/validate
+ * Manually validate and correct OMR results
+ */
+router.post(
+  '/omr/validate',
+  authenticate('admin'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      const { jobId, studentNumber, answers, examId } = req.body;
+
+      if (!jobId || !studentNumber || !answers || !examId) {
+        return res.status(400).json({
+          error: 'jobId, studentNumber, answers ve examId gereklidir'
+        });
+      }
+
+      // Validate student
+      const validation = await validateStudentNumber(studentNumber);
+
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: 'Öğrenci bulunamadı',
+          studentNumber
+        });
+      }
+
+      // Create exam result
+      const omrData: OMRResult = {
+        success: true,
+        student_number_detected: studentNumber,
+        answers,
+        confidence_score: 1.0 // Manual validation = 100% confidence
+      };
+
+      const examResult = await createExamResultFromOMR(
+        omrData,
+        parseInt(examId),
+        validation.studentId!
+      );
+
+      // Update job status
+      updateProcessingJob(jobId, {
+        status: 'COMPLETED',
+        studentNumber,
+        confidence: 1.0
+      });
+
+      return res.json({
+        success: true,
+        examResult,
+        student: {
+          id: validation.studentId,
+          name: validation.studentName
+        }
+      });
+    } catch (error: any) {
+      console.error('OMR validation error:', error);
+      return res.status(500).json({
+        error: 'Doğrulama sırasında hata oluştu',
+        details: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /admin/omr/templates
+ * List available form templates
+ */
+router.get(
+  '/omr/templates',
+  authenticate('admin'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      const configPath = path.join(__dirname, '../python-scripts/omr_config.json');
+      const configData = await fs.promises.readFile(configPath, 'utf-8');
+      const config = JSON.parse(configData);
+
+      const templates = Object.entries(config.templates).map(([key, value]: [string, any]) => ({
+        id: key,
+        name: value.name,
+        description: value.description
+      }));
+
+      return res.json(templates);
+    } catch (error: any) {
+      console.error('OMR templates error:', error);
+      return res.status(500).json({ error: 'Şablonlar yüklenirken hata oluştu' });
+    }
+  }
+);
+
+/**
+ * POST /admin/omr/process-batch
+ * Process multiple scanned forms in batch
+ */
+router.post(
+  '/omr/process-batch',
+  authenticate('admin'),
+  omrUpload.array('files', 50), // Max 50 files
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: 'Dosya yüklenemedi' });
+      }
+
+      const { examId, formType = 'YKS_STANDARD' } = req.body;
+
+      if (!examId) {
+        return res.status(400).json({ error: 'Sınav ID gereklidir' });
+      }
+
+      const formTypeStr = String(formType);
+
+      const jobs = files.map(file => {
+        const jobId = createProcessingJob(parseInt(examId), file.path);
+
+        // Start async processing
+        processOMRAsync(jobId, file.path, formTypeStr, parseInt(examId))
+          .catch(err => console.error('Batch OMR processing error:', err));
+
+        return {
+          jobId,
+          filename: file.originalname
+        };
+      });
+
+      return res.json({
+        success: true,
+        message: `${files.length} form yüklendi, işleniyor...`,
+        jobs
+      });
+    } catch (error: any) {
+      console.error('OMR batch upload error:', error);
+      return res.status(500).json({
+        error: 'Toplu yükleme sırasında hata oluştu',
+        details: error.message
+      });
+    }
+  }
+);
+
 export default router;
+

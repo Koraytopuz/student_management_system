@@ -319,6 +319,173 @@ router.get(
   },
 );
 
+// Öğrenciye atanan sınavları listele
+router.get(
+  '/exams',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      const studentId = req.user!.id;
+
+      console.log(`[DEBUG][GET /exams] Fetching exams for student: ${studentId}`);
+
+      // 1. Öğrencinin dahil olduğu sınıf gruplarını bul
+      const studentClasses = await prisma.classGroupStudent.findMany({
+        where: { studentId },
+        select: { classGroupId: true },
+      });
+
+      const user = await prisma.user.findUnique({
+        where: { id: studentId },
+        select: { classId: true },
+      });
+
+      let classGroupIds = studentClasses.map((sc) => sc.classGroupId);
+      if (user?.classId) {
+        classGroupIds.push(user.classId);
+      }
+      classGroupIds = [...new Set(classGroupIds)]; // Unique
+
+      console.log(`[DEBUG][GET /exams] Found classGroupIds:`, classGroupIds);
+
+      if (classGroupIds.length === 0) {
+        console.log(`[DEBUG][GET /exams] No class groups found.`);
+        return res.json([]);
+      }
+
+      // 2. Bu sınıflara atanan sınavları bul
+      // ExamAssignment üzerinden Exam'e gidiyoruz
+      const assignments = await prisma.examAssignment.findMany({
+        where: {
+          classGroupId: { in: classGroupIds },
+        },
+        include: {
+          exam: {
+            include: {
+              // Sonuçları da çekelim ki öğrenci çözüp çözmediğini görsün
+              results: {
+                where: { studentId },
+                select: { id: true, score: true, createdAt: true },
+              },
+            },
+          },
+        },
+        orderBy: {
+          exam: { date: 'desc' }, // En yakın/yeni sınavlar üstte
+        },
+      });
+
+      // Aynı sınav birden fazla sınıfa atanmış olabilir (nadiren), unique hale getirelim
+      const uniqueExamsMap = new Map();
+      assignments.forEach((a) => {
+        const exam = (a as any).exam;
+        if (exam && !uniqueExamsMap.has(exam.id)) {
+          uniqueExamsMap.set(exam.id, exam);
+        }
+      });
+
+      const exams = Array.from(uniqueExamsMap.values());
+
+      return res.json(exams);
+    } catch (error) {
+      console.error('Error fetching student exams:', error);
+      return res.status(500).json({ error: 'Sınavlar listelenirken hata oluştu' });
+    }
+  },
+);
+
+// Tek bir sınavın detayını getir (çözmek için)
+router.get(
+  '/exams/:id',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      const studentId = req.user!.id;
+      const examId = Number(req.params.id);
+
+      if (isNaN(examId)) {
+        return res.status(400).json({ error: 'Geçersiz sınav ID' });
+      }
+
+      const exam = await prisma.exam.findUnique({
+        where: { id: examId },
+        select: {
+          id: true,
+          name: true,
+          questionCount: true,
+          fileUrl: true,
+          type: true,
+          date: true,
+        },
+      });
+
+      if (!exam) {
+        return res.status(404).json({ error: 'Sınav bulunamadı' });
+      }
+
+      return res.json(exam);
+    } catch (error) {
+      console.error('Error fetching exam detail:', error);
+      return res.status(500).json({ error: 'Sınav detayı alınamadı' });
+    }
+  },
+);
+
+// Sınav cevaplarını kaydet
+router.post(
+  '/exams/:id/submit',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    try {
+      const studentId = req.user!.id;
+      const examId = Number(req.params.id);
+      const { answers } = req.body as { answers: Record<string, string> };
+
+      if (isNaN(examId) || !answers) {
+        return res.status(400).json({ error: 'Eksik parametreler' });
+      }
+
+      // Check if result already exists
+      const existing = await prisma.examResult.findUnique({
+        where: {
+          studentId_examId: { studentId, examId },
+        },
+      });
+
+      if (existing) {
+        // Update existing with new answers (allow re-submit if not strictly locked?)
+        // For now, allow update
+        await prisma.examResult.update({
+          where: { studentId_examId: { studentId, examId } },
+          data: {
+            answers: answers as any,
+            gradingStatus: 'pending_grading', // Mark for teacher review/grading
+            // We don't change score yet as we don't have key
+          },
+        });
+      } else {
+        // Create new result with 0 score (ungraded)
+        await prisma.examResult.create({
+          data: {
+            studentId,
+            examId,
+            score: 0,
+            totalNet: 0,
+            percentile: 0,
+            answers: answers as any,
+            gradingStatus: 'pending_grading',
+          },
+        });
+      }
+
+      return res.json({ success: true, message: 'Cevaplarınız kaydedildi.' });
+    } catch (error) {
+      console.error('Error submitting exam answers:', error);
+      return res.status(500).json({ error: 'Cevaplar kaydedilemedi' });
+    }
+  },
+);
+
 // Öğrenci koçluk seansları (sadece kendi seanslarını görür, not içeriği gösterilmez)
 router.get(
   '/coaching',

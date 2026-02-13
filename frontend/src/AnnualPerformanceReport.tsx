@@ -53,6 +53,70 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
     }
   };
 
+  // Progress bar helper – tüm barları 0–100 aralığında tut
+  const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
+
+  // Section 03 · Dijital Efor bar yüzdeleri
+  const attendancePercent = clampPercent(data.digitalEffort.attendanceRate);
+
+  // Hedefe göre normalize (örnek hedefler: 80 odak saati, 3000 video dk, 5000 soru)
+  const focusPercent = clampPercent((data.digitalEffort.focusHours / 80) * 100);
+  const videoPercent = clampPercent((data.digitalEffort.videoMinutes / 3000) * 100);
+  const solvedQuestionsPercent = clampPercent(
+    (data.digitalEffort.solvedQuestions / 5000) * 100,
+  );
+
+  // Ders bazlı özet tablo verisi (PDF'lerdeki gibi ders-toplam-doğru-yanlış-boş-%)
+  const subjectSummaries = data.subjects.map((subject) => {
+    const totals = subject.topics.reduce(
+      (acc: { total: number; correct: number; incorrect: number; blank: number }, t) => {
+        const correct = typeof t.correct === 'number' ? t.correct : 0;
+        const incorrect = typeof t.incorrect === 'number' ? t.incorrect : 0;
+        const blank = typeof t.blank === 'number' ? t.blank : 0;
+        const total = correct + incorrect + blank;
+        acc.correct += correct;
+        acc.incorrect += incorrect;
+        acc.blank += blank;
+        acc.total += total;
+        return acc;
+      },
+      { total: 0, correct: 0, incorrect: 0, blank: 0 },
+    );
+
+    const correctPercent = totals.total > 0 ? (totals.correct / totals.total) * 100 : 0;
+
+    return {
+      id: subject.id,
+      label: subject.label,
+      ...totals,
+      correctPercent,
+    };
+  });
+
+  // Boş sorulara odaklan kartı için konu bazlı boş soru listesi
+  const blankTopicRows = data.subjects.flatMap((subject) =>
+    subject.topics
+      .filter((t) => t.blank && t.blank > 0)
+      .map((t) => {
+        const total = t.correct + t.incorrect + t.blank;
+        return {
+          subjectId: subject.id,
+          subjectLabel: subject.label,
+          topicId: t.id,
+          topicName: t.name,
+          blank: t.blank,
+          correct: t.correct,
+          incorrect: t.incorrect,
+          total,
+          blankPercent: total > 0 ? (t.blank / total) * 100 : 0,
+        };
+      }),
+  );
+
+  blankTopicRows.sort((a, b) => b.blank - a.blank || b.blankPercent - a.blankPercent);
+  const topBlankTopics = blankTopicRows.slice(0, 6);
+  const totalBlankAll = blankTopicRows.reduce((acc, row) => acc + row.blank, 0);
+
   return (
     <div className="annual-report-page">
       <div className="annual-report-print">
@@ -97,12 +161,6 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                   </p>
                   <p className="annual-report-effort-caption">Katıldığı canlı ders oranı</p>
                 </div>
-                <div className="annual-report-effort-bar">
-                  <div
-                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--emerald"
-                    style={{ width: `${data.digitalEffort.attendanceRate}%` }}
-                  />
-                </div>
               </div>
 
               <div className="annual-report-effort-item">
@@ -121,12 +179,6 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                   </p>
                   <p className="annual-report-effort-caption">Toplam pomodoro odak süresi</p>
                 </div>
-                <div className="annual-report-effort-bar">
-                  <div
-                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--sky"
-                    style={{ width: '82%' }}
-                  />
-                </div>
               </div>
 
               <div className="annual-report-effort-item">
@@ -144,12 +196,6 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                   </p>
                   <p className="annual-report-effort-caption">İzlenen toplam ders videosu</p>
                 </div>
-                <div className="annual-report-effort-bar">
-                  <div
-                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--fuchsia"
-                    style={{ width: '68%' }}
-                  />
-                </div>
               </div>
 
               <div className="annual-report-effort-item">
@@ -166,12 +212,6 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                     {data.digitalEffort.solvedQuestions.toLocaleString('tr-TR')}
                   </p>
                   <p className="annual-report-effort-caption">Çözülen toplam soru sayısı</p>
-                </div>
-                <div className="annual-report-effort-bar">
-                  <div
-                    className="annual-report-effort-bar-fill annual-report-effort-bar-fill--amber"
-                    style={{ width: '90%' }}
-                  />
                 </div>
               </div>
             </div>
@@ -194,6 +234,40 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                 </p>
               </div>
             </div>
+
+            {subjectSummaries.length > 0 && (
+              <div className="annual-report-subject-summary">
+                <div className="annual-report-subject-summary-title">
+                  Ders Bazlı Genel Özet
+                </div>
+                <div className="annual-report-subject-summary-table-wrapper">
+                  <table className="annual-report-subject-summary-table">
+                    <thead>
+                      <tr>
+                        <th>Ders</th>
+                        <th>Toplam</th>
+                        <th>Doğru</th>
+                        <th>Yanlış</th>
+                        <th>Boş</th>
+                        <th>Doğru %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subjectSummaries.map((s) => (
+                        <tr key={s.id}>
+                          <td>{s.label}</td>
+                          <td>{s.total}</td>
+                          <td>{s.correct}</td>
+                          <td>{s.incorrect}</td>
+                          <td>{s.blank}</td>
+                          <td>{s.total > 0 ? s.correctPercent.toFixed(1) : '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="annual-report-subject-tabs">
               {data.subjects.map((subject) => {
@@ -270,7 +344,8 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                     {isOpen && (
                       <div className="annual-report-topic-items">
                         {subject.topics.map((topic) => {
-                          const total = topic.correct + topic.incorrect || 1;
+                          const blankCount = (topic as any).blank ?? 0;
+                          const total = topic.correct + topic.incorrect + blankCount || 1;
                           const correctRatio = (topic.correct / total) * 100;
                           const badge = getMasteryBadge(topic.masteryPercent);
 
@@ -290,7 +365,8 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                                 <div>
                                   <p className="annual-report-topic-title">{topic.name}</p>
                                   <p className="annual-report-topic-helper">
-                                    Doğru: {topic.correct} · Yanlış: {topic.incorrect}
+                                    Doğru: {topic.correct} · Yanlış: {topic.incorrect} · Boş:{' '}
+                                    {blankCount}
                                   </p>
                                 </div>
                                 <div className="annual-report-topic-badge-col">
@@ -314,10 +390,17 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
 
                               <div className="annual-report-topic-stats">
                                 <div className="annual-report-topic-stats-header">
-                                  <span>Doğru / Yanlış dağılımı</span>
+                                  <span>Doğru / Yanlış / Boş dağılımı</span>
                                   <span>
                                     {correctRatio.toFixed(0)}% doğru ·{' '}
-                                    {(100 - correctRatio).toFixed(0)}% yanlış
+                                    {(total > 0
+                                      ? ((topic.incorrect / total) * 100).toFixed(0)
+                                      : '0')}
+                                    % yanlış ·{' '}
+                                    {(total > 0
+                                      ? ((blankCount / total) * 100).toFixed(0)
+                                      : '0')}
+                                    % boş
                                   </span>
                                 </div>
                                 <div className="annual-report-topic-bar">
@@ -365,6 +448,135 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
             </div>
           </div>
         </section>
+
+        {/* DETAYLI SINAV ANALİZİ – EK SAYFA (TABLOLAR) */}
+        {data.subjects.length > 0 && (
+          <section className="annual-report-detail-section">
+            <div className="glass-card annual-report-card annual-report-card--detail">
+              <div className="annual-report-card-header">
+                <div>
+                  <p className="annual-report-eyebrow">
+                    Ek Sayfa · Detaylı Sınav Analizi
+                  </p>
+                  <h2 className="annual-report-card-title">
+                    Ders ve Konu Bazlı Soru Analizi
+                  </h2>
+                  <p className="annual-report-card-helper">
+                    Her ders için; konu bazında kaç soru çözüldüğü, doğru-yanlış-boş dağılımı ve
+                    başarı yüzdesi tablo halinde gösterilmiştir. Bu sayfa, PDF çıktısında ayrı bir
+                    rapor sayfası olarak kullanılabilir.
+                  </p>
+                </div>
+              </div>
+
+              <div className="annual-report-detail-body">
+                {data.subjects.map((subject) => (
+                  <div
+                    key={subject.id}
+                    className="annual-report-detail-subject"
+                  >
+                    <h3 className="annual-report-detail-subject-title">
+                      {subject.label}
+                    </h3>
+                    <div className="annual-report-detail-table-wrapper">
+                      <table className="annual-report-detail-table">
+                        <thead>
+                          <tr>
+                            <th>Konu</th>
+                            <th>Toplam</th>
+                            <th>Doğru</th>
+                            <th>Yanlış</th>
+                            <th>Boş</th>
+                            <th>Doğru %</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {subject.topics.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="annual-report-detail-empty-cell">
+                                Bu derste henüz analiz edilebilecek deneme verisi bulunmuyor.
+                              </td>
+                            </tr>
+                          )}
+                          {subject.topics.map((t) => {
+                            const total = t.correct + t.incorrect + t.blank;
+                            const correctPercent =
+                              total > 0 ? ((t.correct / total) * 100).toFixed(1) : '-';
+                            return (
+                              <tr key={t.id}>
+                                <td>{t.name}</td>
+                                <td>{total}</td>
+                                <td>{t.correct}</td>
+                                <td>{t.incorrect}</td>
+                                <td>{t.blank}</td>
+                                <td>{correctPercent}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Boş sorulara odaklan kartı */}
+            {topBlankTopics.length > 0 && (
+              <div className="glass-card annual-report-card annual-report-card--blanks">
+                <div className="annual-report-card-header">
+                  <div>
+                    <p className="annual-report-eyebrow">
+                      Odak Alanı · Boş Sorular
+                    </p>
+                    <h2 className="annual-report-card-title">Boş Sorulara Odaklan</h2>
+                    <p className="annual-report-card-helper">
+                      Aşağıda, en çok boş bıraktığın konu başlıkları listelenmiştir. Çalışma
+                      planını yaparken önce bu konulara kısa konu tekrarı + hedefli mini denemeler
+                      eklemen önerilir.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="annual-report-blanks-summary">
+                  <span>
+                    Toplam boş soru: <strong>{totalBlankAll}</strong>
+                  </span>
+                  <span className="annual-report-blanks-hint">
+                    Hedef: Önce ilk 3–5 konudaki boşları azalt; ardından yanlışlara odaklan.
+                  </span>
+                </div>
+
+                <div className="annual-report-detail-table-wrapper">
+                  <table className="annual-report-detail-table">
+                    <thead>
+                      <tr>
+                        <th>Ders</th>
+                        <th>Konu</th>
+                        <th>Boş</th>
+                        <th>Toplam</th>
+                        <th>Boş %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topBlankTopics.map((row) => (
+                        <tr key={`${row.subjectId}-${row.topicId}`}>
+                          <td>{row.subjectLabel}</td>
+                          <td>{row.topicName}</td>
+                          <td>{row.blank}</td>
+                          <td>{row.total}</td>
+                          <td>
+                            {row.total > 0 ? row.blankPercent.toFixed(1) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* FOOTER / PDF İNDİR */}
         <footer className="annual-report-footer print:hidden">

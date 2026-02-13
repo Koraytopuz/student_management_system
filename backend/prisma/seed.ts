@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, ExamType, PriorityLevel, StreamType } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import bcrypt from 'bcrypt';
@@ -10,7 +10,7 @@ const pool = new Pool({ connectionString: url });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-const DEMO_PASSWORD = 'password123';
+const DEMO_PASSWORD = 'sky123';
 
 // MEB müfredatına göre sınıf/ders/konu yapısı (özet)
 const CURRICULUM_SEED_DATA = [
@@ -1025,6 +1025,46 @@ const LESSON_TO_SUBJECT_ID: Record<string, string> = {
   'Mantık': 'sub_mantik',
 };
 
+// Sınıf tanımları: 4-10, 11/12 Sayısal/EA/Sözel, Mezun
+const CLASS_DEFINITIONS: { id: string; name: string; gradeLevel: string; stream?: StreamType }[] = [
+  { id: 'c_4', name: '4. Sınıf', gradeLevel: '4' },
+  { id: 'c_5', name: '5. Sınıf', gradeLevel: '5' },
+  { id: 'c_6', name: '6. Sınıf', gradeLevel: '6' },
+  { id: 'c_7', name: '7. Sınıf', gradeLevel: '7' },
+  { id: 'c_8', name: '8. Sınıf', gradeLevel: '8' },
+  { id: 'c_9', name: '9. Sınıf', gradeLevel: '9' },
+  { id: 'c_10', name: '10. Sınıf', gradeLevel: '10' },
+  { id: 'c_11_say', name: '11. Sınıf Sayısal', gradeLevel: '11', stream: StreamType.SAYISAL },
+  { id: 'c_11_ea', name: '11. Sınıf Eşit Ağırlık', gradeLevel: '11', stream: StreamType.ESIT_AGIRLIK },
+  { id: 'c_11_soz', name: '11. Sınıf Sözel', gradeLevel: '11', stream: StreamType.SOZEL },
+  { id: 'c_12_say', name: '12. Sınıf Sayısal', gradeLevel: '12', stream: StreamType.SAYISAL },
+  { id: 'c_12_ea', name: '12. Sınıf Eşit Ağırlık', gradeLevel: '12', stream: StreamType.ESIT_AGIRLIK },
+  { id: 'c_12_soz', name: '12. Sınıf Sözel', gradeLevel: '12', stream: StreamType.SOZEL },
+  { id: 'c_mezun', name: 'Mezun', gradeLevel: 'MEZUN' },
+];
+
+const STUDENT_NAMES = ['Ali', 'Zeynep', 'Mehmet', 'Aylin', 'Burak', 'Elif', 'Can', 'Selin', 'Emre', 'Deniz'];
+
+function getRandomInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function generateRandomQuestionStats(totalQuestions: number) {
+  const correct = getRandomInt(5, totalQuestions); // En az 5 doğru olsun
+  const remaining = totalQuestions - correct;
+  const wrong = getRandomInt(0, remaining);
+  const empty = remaining - wrong;
+  const net = correct - wrong * 0.25;
+
+  return {
+    correct,
+    wrong,
+    empty,
+    net,
+    total: totalQuestions,
+  };
+}
+
 async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
 
@@ -1037,50 +1077,10 @@ async function main() {
       role: 'admin',
       passwordHash,
     },
-    update: {},
+    update: { passwordHash },
   });
 
-  // Teacher
-  const teacher = await prisma.user.upsert({
-    where: { email_role: { email: 'ayse.teacher@example.com', role: 'teacher' } },
-    create: {
-      name: 'Ayşe Öğretmen',
-      email: 'ayse.teacher@example.com',
-      role: 'teacher',
-      passwordHash,
-      subjectAreas: ['Matematik', 'Geometri'],
-    },
-    update: {},
-  });
-
-  // Students
-  const student1 = await prisma.user.upsert({
-    where: { email_role: { email: 'ali.student@example.com', role: 'student' } },
-    create: {
-      name: 'Ali Öğrenci',
-      email: 'ali.student@example.com',
-      role: 'student',
-      passwordHash,
-      gradeLevel: '9',
-      classId: '', // will set after class group
-    },
-    update: {},
-  });
-
-  const student2 = await prisma.user.upsert({
-    where: { email_role: { email: 'zeynep.student@example.com', role: 'student' } },
-    create: {
-      name: 'Zeynep Öğrenci',
-      email: 'zeynep.student@example.com',
-      role: 'student',
-      passwordHash,
-      gradeLevel: '9',
-      classId: '',
-    },
-    update: {},
-  });
-
-  // Parent
+  // Parent (veli - örnek veriler için)
   const parent = await prisma.user.upsert({
     where: { email_role: { email: 'mehmet.parent@example.com', role: 'parent' } },
     create: {
@@ -1121,6 +1121,91 @@ async function main() {
       where: { id: sub.id },
       create: { id: sub.id, name: sub.name },
       update: { name: sub.name },
+    });
+  }
+
+  // Her branş (Subject) için 1 öğretmen oluştur
+  const branchTeachers: Record<string, string> = {};
+
+  for (const sub of allSubjects) {
+    const branchKey = sub.id.replace(/^sub_/, '');
+    const email = `${branchKey}.teacher@example.com`;
+
+    const branchTeacher = await prisma.user.upsert({
+      where: { email_role: { email, role: 'teacher' } },
+      create: {
+        name: `${sub.name} Öğretmeni`,
+        email,
+        role: 'teacher',
+        passwordHash,
+        subjectAreas: [sub.name],
+        teacherGrades: ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'MEZUN'],
+      },
+      update: {
+        subjectAreas: [sub.name],
+      },
+    });
+
+    branchTeachers[sub.id] = branchTeacher.id;
+  }
+
+  const matematikTeacherId = branchTeachers['sub_matematik'];
+
+  // Sınıfları oluştur ve her sınıfa 5 öğrenci ekle
+  const classGroupsMap: Record<string, { classGroup: any; students: any[] }> = {};
+
+  for (const cls of CLASS_DEFINITIONS) {
+    const students: any[] = [];
+
+    for (let i = 1; i <= 5; i++) {
+      const email = `ogr_${cls.id}_${i}.student@example.com`;
+      const nameIdx = ((cls.id.charCodeAt(0) + i) % STUDENT_NAMES.length);
+      const name = `${STUDENT_NAMES[nameIdx]} ${cls.name} ${i}`;
+
+      const student = await prisma.user.upsert({
+        where: { email_role: { email, role: 'student' } },
+        create: {
+          name,
+          email,
+          role: 'student',
+          passwordHash,
+          gradeLevel: cls.gradeLevel,
+        },
+        update: { gradeLevel: cls.gradeLevel },
+      });
+      students.push(student);
+    }
+
+    const classGroup = await prisma.classGroup.upsert({
+      where: { id: cls.id },
+      create: {
+        id: cls.id,
+        name: cls.name,
+        gradeLevel: cls.gradeLevel,
+        stream: cls.stream ?? null,
+        teacherId: matematikTeacherId,
+        students: {
+          create: students.map((s) => ({ studentId: s.id })),
+        },
+      },
+      update: { stream: cls.stream ?? undefined },
+    });
+
+    await prisma.user.updateMany({
+      where: { id: { in: students.map((s) => s.id) } },
+      data: { classId: classGroup.id },
+    });
+
+    classGroupsMap[cls.id] = { classGroup, students };
+  }
+
+  // Parent-Student links (9. sınıfın ilk 2 öğrencisi)
+  const nineClassStudents = classGroupsMap['c_9']!.students;
+  for (let i = 0; i < Math.min(2, nineClassStudents.length); i++) {
+    await prisma.parentStudent.upsert({
+      where: { parentId_studentId: { parentId: parent.id, studentId: nineClassStudents[i].id } },
+      create: { parentId: parent.id, studentId: nineClassStudents[i].id },
+      update: {},
     });
   }
 
@@ -1178,41 +1263,96 @@ async function main() {
   const subject1 = await prisma.subject.findUniqueOrThrow({ where: { id: 'sub_matematik' } });
   const subject2 = await prisma.subject.findUniqueOrThrow({ where: { id: 'sub_fizik' } });
 
-  // Class group
-  const classGroup = await prisma.classGroup.upsert({
-    where: { id: 'c1' },
-    create: {
-      id: 'c1',
-      name: '9A',
-      gradeLevel: '9',
-      teacherId: teacher.id,
-      students: {
-        create: [
-          { studentId: student1.id },
-          { studentId: student2.id },
-        ],
+  // Konu kaydı (Topic) – örnek: Üslü Sayılar
+  const usluSayilarTopic = await prisma.topic.upsert({
+    where: { id: 'topic_uslu_sayilar' },
+    create: { id: 'topic_uslu_sayilar', name: 'Üslü Sayılar' },
+    update: { name: 'Üslü Sayılar' },
+  });
+
+  // Her sınıf için 1 sınav oluştur ve öğrencilere random sonuç ata
+  let examIdCounter = 1;
+
+  for (const cls of CLASS_DEFINITIONS) {
+    const { classGroup, students } = classGroupsMap[cls.id]!;
+    const questionCount = 20;
+
+    const exam = await prisma.exam.upsert({
+      where: { id: examIdCounter },
+      create: {
+        id: examIdCounter,
+        name: `${cls.name} Deneme 1`,
+        type: cls.gradeLevel === 'MEZUN' ? ExamType.TYT : ExamType.ARA_SINIF,
+        date: new Date(Date.now() - getRandomInt(1, 30) * 24 * 60 * 60 * 1000),
+        questionCount,
+        description: `${cls.name} için örnek deneme`,
       },
-    },
-    update: {},
-  });
+      update: {},
+    });
+    examIdCounter++;
 
-  // Update students with classId
-  await prisma.user.updateMany({
-    where: { id: { in: [student1.id, student2.id] } },
-    data: { classId: classGroup.id },
-  });
+    await prisma.examAssignment.upsert({
+      where: { examId_classGroupId: { examId: exam.id, classGroupId: classGroup.id } },
+      create: { examId: exam.id, classGroupId: classGroup.id },
+      update: {},
+    });
 
-  // Parent-Student links
-  await prisma.parentStudent.upsert({
-    where: { parentId_studentId: { parentId: parent.id, studentId: student1.id } },
-    create: { parentId: parent.id, studentId: student1.id },
-    update: {},
-  });
-  await prisma.parentStudent.upsert({
-    where: { parentId_studentId: { parentId: parent.id, studentId: student2.id } },
-    create: { parentId: parent.id, studentId: student2.id },
-    update: {},
-  });
+    for (let idx = 0; idx < students.length; idx++) {
+      const student = students[idx];
+      const stats = generateRandomQuestionStats(questionCount);
+      const score = 100 + stats.net * 3;
+      const percentile = Math.max(1, Math.min(99, 85 - idx * 5 + getRandomInt(-5, 5)));
+
+      await prisma.examResult.upsert({
+        where: { studentId_examId: { studentId: student.id, examId: exam.id } },
+        create: {
+          studentId: student.id,
+          examId: exam.id,
+          totalNet: stats.net,
+          score,
+          percentile,
+          details: {
+            create: [
+              {
+                lessonId: subject1.id,
+                lessonName: subject1.name,
+                correct: stats.correct,
+                wrong: stats.wrong,
+                empty: stats.empty,
+                net: stats.net,
+                topicAnalyses: {
+                  create: [
+                    {
+                      topicId: usluSayilarTopic.id,
+                      topicName: usluSayilarTopic.name,
+                      totalQuestion: stats.total,
+                      correct: stats.correct,
+                      wrong: stats.wrong,
+                      empty: stats.empty,
+                      net: stats.net,
+                      priorityLevel:
+                        stats.correct / (stats.total || 1) < 0.3
+                          ? PriorityLevel.ONE
+                          : stats.correct / (stats.total || 1) < 0.6
+                            ? PriorityLevel.TWO
+                            : PriorityLevel.THREE,
+                      lostPoints: (stats.wrong + stats.empty) * 1,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+        update: { totalNet: stats.net, score, percentile },
+      });
+    }
+  }
+
+  const classGroup = classGroupsMap['c_9']!.classGroup;
+  const student1 = classGroupsMap['c_9']!.students[0];
+  const student2 = classGroupsMap['c_9']!.students[1];
+  const teacher = { id: matematikTeacherId };
 
   // Content
   const content1 = await prisma.contentItem.upsert({
@@ -1296,50 +1436,209 @@ async function main() {
     update: {},
   });
 
-  // Assignment
+  // Assignment (9. sınıf - tüm 5 öğrenci)
   const dueDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
   const assignment = await prisma.assignment.upsert({
     where: { id: 'a1' },
     create: {
       id: 'a1',
-      title: 'Denklemler Konusundan 2 Test Görevi',
+      title: 'Denklemler Konusundan Test Görevi',
       description: 'Denklemler konusunu pekiştirmek için test görevi',
       testId: test.id,
       contentId: content1.id,
       classId: classGroup.id,
       dueDate,
       points: 100,
+      createdByTeacherId: teacher.id,
       students: {
-        create: [{ studentId: student1.id }, { studentId: student2.id }],
+        create: nineClassStudents.map((s) => ({ studentId: s.id })),
       },
     },
     update: {},
   });
 
-  // Test result (demo)
-  await prisma.testResult.upsert({
-    where: { id: 'tr1' },
+  // AssignmentStudent - eksik öğrencileri ekle (assignment zaten varsa)
+  for (const s of nineClassStudents) {
+    await prisma.assignmentStudent.upsert({
+      where: { assignmentId_studentId: { assignmentId: assignment.id, studentId: s.id } },
+      create: { assignmentId: assignment.id, studentId: s.id },
+      update: {},
+    });
+  }
+
+  // Her öğrenci için Test sonucu (random doğru/yanlış/boş)
+  const questions = [{ id: 'q1', correct: 'x = 2' }, { id: 'q2', correct: '15' }, { id: 'q3', correct: 'true' }];
+  const wrongAnswers: Record<string, string[]> = {
+    q1: ['x = 1', 'x = 3', 'x = 4'],
+    q2: ['10', '5', '20'],
+    q3: ['false'],
+  };
+
+  for (let i = 0; i < nineClassStudents.length; i++) {
+    const student = nineClassStudents[i];
+    const correctCount = getRandomInt(1, 3);
+    const incorrectCount = getRandomInt(0, 2);
+    const blankCount = 3 - correctCount - incorrectCount;
+    const scorePercent = Math.round((correctCount / 3) * 100);
+    const trId = i === 0 ? 'tr1' : `tr_9_${i + 1}`;
+
+    const answers: { questionId: string; answer: string; isCorrect: boolean }[] = [];
+    let c = 0,
+      w = 0,
+      b = 0;
+    for (const q of questions) {
+      if (c < correctCount && (w >= incorrectCount || getRandomInt(0, 1) === 0)) {
+        answers.push({ questionId: q.id, answer: q.correct, isCorrect: true });
+        c++;
+      } else if (w < incorrectCount) {
+        const wrong = wrongAnswers[q.id][getRandomInt(0, wrongAnswers[q.id].length - 1)];
+        answers.push({ questionId: q.id, answer: wrong, isCorrect: false });
+        w++;
+      } else {
+        answers.push({ questionId: q.id, answer: '', isCorrect: false });
+        b++;
+      }
+    }
+
+    await prisma.testResult.upsert({
+      where: { id: trId },
+      create: {
+        id: trId,
+        assignmentId: assignment.id,
+        studentId: student.id,
+        testId: test.id,
+        correctCount: c,
+        incorrectCount: w,
+        blankCount: b,
+        scorePercent: Math.round((c / 3) * 100),
+        durationSeconds: getRandomInt(180, 600),
+        completedAt: new Date(Date.now() - getRandomInt(1, 14) * 24 * 60 * 60 * 1000),
+        answers: { create: answers },
+      },
+      update: { correctCount: c, incorrectCount: w, blankCount: b, scorePercent: Math.round((c / 3) * 100) },
+    });
+  }
+
+  // İkinci test (Fizik - 10. sınıf için)
+  const test2 = await prisma.test.upsert({
+    where: { id: 'test2' },
     create: {
-      id: 'tr1',
-      assignmentId: assignment.id,
-      studentId: student1.id,
-      testId: test.id,
-      correctCount: 3,
-      incorrectCount: 0,
-      blankCount: 0,
-      scorePercent: 100,
-      durationSeconds: 480,
-      completedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-      answers: {
+      id: 'test2',
+      title: 'Hareket ve Kuvvet – Test 1',
+      subjectId: subject2.id,
+      topic: 'Hareket',
+      createdByTeacherId: branchTeachers['sub_fizik'],
+      questions: {
         create: [
-          { questionId: 'q1', answer: 'x = 2', isCorrect: true },
-          { questionId: 'q2', answer: '15', isCorrect: true },
-          { questionId: 'q3', answer: 'true', isCorrect: true },
+          {
+            id: 't2q1',
+            text: 'Sabit süratle hareket eden bir cisim için ne söylenebilir?',
+            type: 'multiple_choice',
+            choices: ['İvmesi sıfırdır', 'Hızı artmaktadır', 'Konumu değişmez', 'Kütlesi azalır'],
+            correctAnswer: 'İvmesi sıfırdır',
+            topic: 'Hareket',
+            difficulty: 'medium',
+          },
+          {
+            id: 't2q2',
+            text: 'Newton’un 1. yasası eylemsizlik ile ilgilidir.',
+            type: 'true_false',
+            correctAnswer: 'true',
+            topic: 'Hareket',
+            difficulty: 'easy',
+          },
+          {
+            id: 't2q3',
+            text: 'F = m.a formülünde F neyi ifade eder?',
+            type: 'multiple_choice',
+            choices: ['Kütle', 'İvme', 'Kuvvet', 'Hız'],
+            correctAnswer: 'Kuvvet',
+            topic: 'Hareket',
+            difficulty: 'easy',
+          },
         ],
       },
     },
     update: {},
   });
+
+  const class10 = classGroupsMap['c_10']!;
+  const assignment2 = await prisma.assignment.upsert({
+    where: { id: 'a2' },
+    create: {
+      id: 'a2',
+      title: 'Hareket ve Kuvvet Test Görevi',
+      description: '10. sınıf fizik testi',
+      testId: test2.id,
+      classId: class10.classGroup.id,
+      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      points: 100,
+      createdByTeacherId: branchTeachers['sub_fizik'],
+      students: {
+        create: class10.students.map((s) => ({ studentId: s.id })),
+      },
+    },
+    update: {},
+  });
+
+  for (const s of class10.students) {
+    await prisma.assignmentStudent.upsert({
+      where: { assignmentId_studentId: { assignmentId: assignment2.id, studentId: s.id } },
+      create: { assignmentId: assignment2.id, studentId: s.id },
+      update: {},
+    });
+  }
+
+  const t2Questions = [
+    { id: 't2q1', correct: 'İvmesi sıfırdır', wrong: ['Hızı artmaktadır', 'Konumu değişmez', 'Kütlesi azalır'] },
+    { id: 't2q2', correct: 'true', wrong: ['false'] },
+    { id: 't2q3', correct: 'Kuvvet', wrong: ['Kütle', 'İvme', 'Hız'] },
+  ];
+
+  for (let i = 0; i < class10.students.length; i++) {
+    const student = class10.students[i];
+    const c = getRandomInt(1, 3);
+    const w = getRandomInt(0, 2);
+    const b = 3 - c - w;
+    const trId = `tr_10_${i + 1}`;
+
+    const answers: { questionId: string; answer: string; isCorrect: boolean }[] = [];
+    let ci = 0,
+      wi = 0;
+    for (const q of t2Questions) {
+      if (ci < c && (wi >= w || Math.random() > 0.5)) {
+        answers.push({ questionId: q.id, answer: q.correct, isCorrect: true });
+        ci++;
+      } else if (wi < w) {
+        answers.push({
+          questionId: q.id,
+          answer: q.wrong[getRandomInt(0, q.wrong.length - 1)],
+          isCorrect: false,
+        });
+        wi++;
+      } else {
+        answers.push({ questionId: q.id, answer: '', isCorrect: false });
+      }
+    }
+
+    await prisma.testResult.upsert({
+      where: { id: trId },
+      create: {
+        id: trId,
+        assignmentId: assignment2.id,
+        studentId: student.id,
+        testId: test2.id,
+        correctCount: ci,
+        incorrectCount: wi,
+        blankCount: 3 - ci - wi,
+        scorePercent: Math.round((ci / 3) * 100),
+        durationSeconds: getRandomInt(200, 500),
+        completedAt: new Date(Date.now() - getRandomInt(1, 10) * 24 * 60 * 60 * 1000),
+        answers: { create: answers },
+      },
+      update: {},
+    });
+  }
 
   // Meeting
   await prisma.meeting.upsert({
@@ -1610,10 +1909,74 @@ async function main() {
     });
   }
 
-  console.log('Seed tamamlandı. Demo kullanıcılar (şifre: ' + DEMO_PASSWORD + '):');
+  // Ranking Scales (Sıralama Ölçekleri) - 2024 ve 2025 verileri
+  console.log('Ranking scales oluşturuluyor...');
+  const rankingScalesData = [
+    // 2024 TYT
+    { year: 2024, examType: 'TYT', scoreRangeMin: 450, scoreRangeMax: 500, estimatedRank: 1000 },
+    { year: 2024, examType: 'TYT', scoreRangeMin: 400, scoreRangeMax: 450, estimatedRank: 10000 },
+    { year: 2024, examType: 'TYT', scoreRangeMin: 350, scoreRangeMax: 400, estimatedRank: 50000 },
+    { year: 2024, examType: 'TYT', scoreRangeMin: 300, scoreRangeMax: 350, estimatedRank: 150000 },
+    { year: 2024, examType: 'TYT', scoreRangeMin: 250, scoreRangeMax: 300, estimatedRank: 350000 },
+    { year: 2024, examType: 'TYT', scoreRangeMin: 200, scoreRangeMax: 250, estimatedRank: 600000 },
+    { year: 2024, examType: 'TYT', scoreRangeMin: 150, scoreRangeMax: 200, estimatedRank: 900000 },
+    { year: 2024, examType: 'TYT', scoreRangeMin: 100, scoreRangeMax: 150, estimatedRank: 1200000 },
+
+    // 2025 TYT (biraz daha zor)
+    { year: 2025, examType: 'TYT', scoreRangeMin: 450, scoreRangeMax: 500, estimatedRank: 800 },
+    { year: 2025, examType: 'TYT', scoreRangeMin: 400, scoreRangeMax: 450, estimatedRank: 8000 },
+    { year: 2025, examType: 'TYT', scoreRangeMin: 350, scoreRangeMax: 400, estimatedRank: 45000 },
+    { year: 2025, examType: 'TYT', scoreRangeMin: 300, scoreRangeMax: 350, estimatedRank: 140000 },
+    { year: 2025, examType: 'TYT', scoreRangeMin: 250, scoreRangeMax: 300, estimatedRank: 340000 },
+    { year: 2025, examType: 'TYT', scoreRangeMin: 200, scoreRangeMax: 250, estimatedRank: 590000 },
+    { year: 2025, examType: 'TYT', scoreRangeMin: 150, scoreRangeMax: 200, estimatedRank: 890000 },
+    { year: 2025, examType: 'TYT', scoreRangeMin: 100, scoreRangeMax: 150, estimatedRank: 1190000 },
+
+    // 2024 AYT_SAY
+    { year: 2024, examType: 'AYT_SAY', scoreRangeMin: 450, scoreRangeMax: 500, estimatedRank: 500 },
+    { year: 2024, examType: 'AYT_SAY', scoreRangeMin: 400, scoreRangeMax: 450, estimatedRank: 5000 },
+    { year: 2024, examType: 'AYT_SAY', scoreRangeMin: 350, scoreRangeMax: 400, estimatedRank: 25000 },
+    { year: 2024, examType: 'AYT_SAY', scoreRangeMin: 300, scoreRangeMax: 350, estimatedRank: 80000 },
+    { year: 2024, examType: 'AYT_SAY', scoreRangeMin: 250, scoreRangeMax: 300, estimatedRank: 180000 },
+    { year: 2024, examType: 'AYT_SAY', scoreRangeMin: 200, scoreRangeMax: 250, estimatedRank: 320000 },
+
+    // 2025 AYT_SAY
+    { year: 2025, examType: 'AYT_SAY', scoreRangeMin: 450, scoreRangeMax: 500, estimatedRank: 400 },
+    { year: 2025, examType: 'AYT_SAY', scoreRangeMin: 400, scoreRangeMax: 450, estimatedRank: 4500 },
+    { year: 2025, examType: 'AYT_SAY', scoreRangeMin: 350, scoreRangeMax: 400, estimatedRank: 23000 },
+    { year: 2025, examType: 'AYT_SAY', scoreRangeMin: 300, scoreRangeMax: 350, estimatedRank: 78000 },
+    { year: 2025, examType: 'AYT_SAY', scoreRangeMin: 250, scoreRangeMax: 300, estimatedRank: 175000 },
+    { year: 2025, examType: 'AYT_SAY', scoreRangeMin: 200, scoreRangeMax: 250, estimatedRank: 315000 },
+  ];
+
+  for (const scale of rankingScalesData) {
+    await prisma.rankingScale.upsert({
+      where: {
+        year_examType_scoreRangeMin_scoreRangeMax: {
+          year: scale.year,
+          // @ts-ignore
+          examType: scale.examType,
+          scoreRangeMin: scale.scoreRangeMin,
+          scoreRangeMax: scale.scoreRangeMax,
+        },
+      },
+      update: {},
+      create: {
+        year: scale.year,
+        // @ts-ignore
+        examType: scale.examType,
+        scoreRangeMin: scale.scoreRangeMin,
+        scoreRangeMax: scale.scoreRangeMax,
+        estimatedRank: scale.estimatedRank,
+      },
+    });
+  }
+
+  console.log('Seed tamamlandı. Tüm kullanıcılar için şifre: ' + DEMO_PASSWORD);
   console.log('  Admin: admin@example.com');
-  console.log('  Öğretmen: ayse.teacher@example.com');
-  console.log('  Öğrenci: ali.student@example.com, zeynep.student@example.com');
+  console.log('  Branş öğretmenleri: matematik.teacher@example.com, fizik.teacher@example.com, kimya.teacher@example.com, ...');
+  console.log('  Sınıflar: 4-10, 11 Sayısal/EA/Sözel, 12 Sayısal/EA/Sözel, Mezun (her sınıfta 5 öğrenci)');
+  console.log('  Örnek öğrenci: ogr_c_9_1.student@example.com');
   console.log('  Veli: mehmet.parent@example.com');
 }
 

@@ -80,7 +80,9 @@ enum NotificationType {
   help_response_played
   complaint_created
   exam_result_to_parent
+  exam_created
   live_class_attendance
+  analysis_report_ready
 }
 
 enum RelatedEntityType {
@@ -95,6 +97,8 @@ enum RelatedEntityType {
   complaint
   teacher_feedback
   attendance
+  analysis_report
+  exam
 }
 
 enum HelpRequestStatus {
@@ -242,6 +246,7 @@ model User {
   homeworksAsStudent       Homework[]         @relation("HomeworkStudent")
   /// Bireysel öğrenci ödevleri – öğretmen rolü için
   homeworksAsTeacher       Homework[]         @relation("HomeworkTeacher")
+  examResults              ExamResult[]
 
   @@unique([email, role])
   @@map("users")
@@ -261,26 +266,29 @@ model Subject {
   id   String @id @default(cuid())
   name String
 
-  contents         ContentItem[]
-  tests            Test[]
-  testAssets       TestAsset[]
-  questionBank     QuestionBank[]
-  curriculumTopics CurriculumTopic[]
-  homeworks        Homework[]
+  contents          ContentItem[]
+  tests             Test[]
+  testAssets        TestAsset[]
+  questionBank      QuestionBank[]
+  curriculumTopics  CurriculumTopic[]
+  homeworks         Homework[]
+  examResultDetails ExamResultDetail[]
 
   @@map("subjects")
 }
 
 model ClassGroup {
-  id         String @id @default(cuid())
+  id         String      @id @default(cuid())
   name       String
-  gradeLevel String @map("grade_level")
-  teacherId  String @map("teacher_id")
+  gradeLevel String      @map("grade_level")  // "4", "5", ..., "12", "MEZUN"
+  stream     StreamType? // Sadece 11, 12, MEZUN için
+  teacherId  String      @map("teacher_id")
 
-  teacher       User                @relation("ClassGroupTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
-  students      ClassGroupStudent[]
-  assignments   Assignment[]
-  contentGroups ContentClassGroup[]
+  teacher         User                @relation("ClassGroupTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  students        ClassGroupStudent[]
+  assignments     Assignment[]
+  contentGroups   ContentClassGroup[]
+  examAssignments ExamAssignment[]
 
   @@map("class_groups")
 }
@@ -967,4 +975,148 @@ model Homework {
   @@index([teacherId, dueDate])
   @@index([subjectId])
   @@map("homeworks")
+}
+
+// ---- Kişiye Özel Sınav Analiz Modelleri ----
+
+enum StreamType {
+  SAYISAL
+  SOZEL
+  ESIT_AGIRLIK
+}
+
+enum ExamType {
+  LGS
+  TYT
+  AYT          // Geriye dönük uyumluluk için
+  AYT_SAY
+  AYT_SOZ
+  AYT_EA
+  ARA_SINIF
+}
+
+model Exam {
+  id            Int      @id @default(autoincrement())
+  name          String
+  type          ExamType
+  date          DateTime
+  questionCount Int      @default(0) @map("question_count")
+  description   String?
+  fileUrl       String?  @map("file_url")
+  fileName      String?  @map("file_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  results         ExamResult[]
+  examAssignments ExamAssignment[]
+
+  @@index([type])
+  @@index([date])
+  @@map("exams")
+}
+
+model ExamResult {
+  id          Int     @id @default(autoincrement())
+  studentId   String  @map("student_id")
+  examId      Int     @map("exam_id")
+  totalNet    Float   @map("total_net")
+  score       Float
+  percentile  Float
+  answers     Json?   @map("answers")
+  gradingStatus String @default("graded") @map("grading_status")
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  exam    Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+  details ExamResultDetail[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([studentId, examId])
+  @@index([studentId])
+  @@index([examId])
+  @@map("exam_results")
+}
+
+model ExamResultDetail {
+  id            Int     @id @default(autoincrement())
+  examResultId  Int     @map("exam_result_id")
+  lessonId      String  @map("lesson_id")
+  lessonName    String  @map("lesson_name")  // "Matematik", "Fizik" vb.
+  correct       Int
+  wrong         Int
+  empty         Int
+  net           Float
+
+  examResult    ExamResult       @relation(fields: [examResultId], references: [id], onDelete: Cascade)
+  lesson        Subject          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  topicAnalyses TopicAnalysis[]
+
+  @@index([examResultId])
+  @@index([lessonId])
+  @@map("exam_result_details")
+}
+
+model Topic {
+  id   String @id @default(cuid())
+  name String
+
+  topicAnalyses TopicAnalysis[]
+
+  @@map("topics")
+}
+
+enum PriorityLevel {
+  ONE
+  TWO
+  THREE
+}
+
+model TopicAnalysis {
+  id                 Int           @id @default(autoincrement())
+  examResultDetailId Int           @map("exam_result_detail_id")
+  topicId            String        @map("topic_id")
+  topicName          String        @map("topic_name")  // "Üslü Sayılar" vb.
+  totalQuestion      Int           @map("total_question")
+  correct            Int
+  wrong              Int
+  empty              Int
+  net                Float         @default(0)
+  priorityLevel      PriorityLevel @map("priority_level")
+  lostPoints         Float         @default(0) @map("lost_points")
+
+  examResultDetail ExamResultDetail @relation(fields: [examResultDetailId], references: [id], onDelete: Cascade)
+  topic            Topic            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([examResultDetailId])
+  @@index([topicId])
+  @@index([priorityLevel])
+  @@map("topic_analyses")
+}
+
+model ExamAssignment {
+  id           String     @id @default(cuid())
+  examId       Int        @map("exam_id")
+  classGroupId String     @map("class_group_id")
+  assignedAt   DateTime   @default(now()) @map("assigned_at")
+
+  exam       Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
+  classGroup ClassGroup @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, classGroupId])
+  @@index([examId])
+  @@index([classGroupId])
+  @@map("exam_assignments")
+}
+
+model RankingScale {
+  id              Int      @id @default(autoincrement())
+  year            Int      // 2024, 2025
+  examType        String   @map("exam_type") // Using String instead of enum for compatibility
+  scoreRangeMin   Float    @map("score_range_min")
+  scoreRangeMax   Float    @map("score_range_max")
+  estimatedRank   Int      @map("estimated_rank")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([year, examType, scoreRangeMin, scoreRangeMax], name: "year_examType_scoreRangeMin_scoreRangeMax")
+  @@index([year, examType])
+  @@map("ranking_scales")
 }
