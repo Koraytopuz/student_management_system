@@ -376,7 +376,12 @@ const PriorityBlock: React.FC<PriorityBlockProps> = ({ level, title, topics, col
     <div className={`${classes.bg} border-2 ${classes.border} rounded-lg p-5`}>
       <h3 className={`text-lg font-bold ${classes.text} mb-4 flex items-center gap-2`}>
         {classes.icon}
-        {title}
+        <span className="inline-flex items-center gap-1">
+          <span className="px-2 py-0.5 rounded-full bg-white/70 text-xs font-semibold text-gray-700">
+            Öncelik {level}
+          </span>
+          <span>{title}</span>
+        </span>
       </h3>
       
       {topics.length === 0 ? (

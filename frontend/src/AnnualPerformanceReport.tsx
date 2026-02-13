@@ -160,6 +160,12 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                     <span className="annual-report-effort-unit">%</span>
                   </p>
                   <p className="annual-report-effort-caption">Katıldığı canlı ders oranı</p>
+                  <div className="annual-report-effort-bar">
+                    <div
+                      className="annual-report-effort-bar-fill annual-report-effort-bar-fill--emerald"
+                      style={{ width: `${attendancePercent}%` }}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -178,6 +184,12 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                     <span className="annual-report-effort-unit">saat</span>
                   </p>
                   <p className="annual-report-effort-caption">Toplam pomodoro odak süresi</p>
+                  <div className="annual-report-effort-bar">
+                    <div
+                      className="annual-report-effort-bar-fill annual-report-effort-bar-fill--sky"
+                      style={{ width: `${focusPercent}%` }}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -195,6 +207,12 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                     {formatMinutesToHhMm(data.digitalEffort.videoMinutes)}
                   </p>
                   <p className="annual-report-effort-caption">İzlenen toplam ders videosu</p>
+                  <div className="annual-report-effort-bar">
+                    <div
+                      className="annual-report-effort-bar-fill annual-report-effort-bar-fill--fuchsia"
+                      style={{ width: `${videoPercent}%` }}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -212,6 +230,12 @@ export const AnnualPerformanceReport: React.FC<AnnualPerformanceReportProps> = (
                     {data.digitalEffort.solvedQuestions.toLocaleString('tr-TR')}
                   </p>
                   <p className="annual-report-effort-caption">Çözülen toplam soru sayısı</p>
+                  <div className="annual-report-effort-bar">
+                    <div
+                      className="annual-report-effort-bar-fill annual-report-effort-bar-fill--amber"
+                      style={{ width: `${solvedQuestionsPercent}%` }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>

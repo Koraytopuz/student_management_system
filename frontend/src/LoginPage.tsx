@@ -33,16 +33,19 @@ export const LoginPage: React.FC = () => {
   const { loginSuccess } = useAuth();
   const navigate = useNavigate();
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const cardRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
+    const card = cardRef.current;
     if (!canvas) return;
     
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     let animationId: number | null = null;
-    let handleCanvasMouseMove: ((e: MouseEvent) => void) | null = null;
+    let handleMouseMove: ((e: MouseEvent) => void) | null = null;
+    let handleMouseLeave: ((e: MouseEvent) => void) | null = null;
 
     // Set canvas size
     const updateSize = () => {
@@ -94,13 +97,19 @@ export const LoginPage: React.FC = () => {
 
       let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
 
-      // Mouse parallax effect
-      handleCanvasMouseMove = (e: MouseEvent) => {
+      // Mouse parallax effect - sadece login kartı üzerindeyken takip et
+      handleMouseMove = (e: MouseEvent) => {
         const rect = canvas.getBoundingClientRect();
         mouse.x = e.clientX - rect.left;
         mouse.y = e.clientY - rect.top;
       };
-      window.addEventListener('mousemove', handleCanvasMouseMove);
+      handleMouseLeave = () => {
+        // Kartın dışına çıkınca yeni mouse hareketi alınmasın, son konumda sabit kalsın
+      };
+      if (card) {
+        card.addEventListener('mousemove', handleMouseMove);
+        card.addEventListener('mouseleave', handleMouseLeave);
+      }
 
       // Animation loop
       const animate = (timestamp: number) => {
@@ -283,8 +292,11 @@ export const LoginPage: React.FC = () => {
     return () => {
       clearTimeout(timeoutId);
       window.removeEventListener('resize', updateSize);
-      if (handleCanvasMouseMove) {
-        window.removeEventListener('mousemove', handleCanvasMouseMove);
+      if (card && handleMouseMove) {
+        card.removeEventListener('mousemove', handleMouseMove);
+      }
+      if (card && handleMouseLeave) {
+        card.removeEventListener('mouseleave', handleMouseLeave);
       }
       if (animationId !== null) {
         cancelAnimationFrame(animationId);
@@ -324,7 +336,7 @@ export const LoginPage: React.FC = () => {
         aria-hidden="true"
       />
 
-      <div className="login-card">
+      <div className="login-card" ref={cardRef}>
         <h1>Öğrenci Yönetim Sistemi</h1>
         <p className="subtitle">
           Öğretmen, öğrenci ve veliler için tek panelden yönetim.

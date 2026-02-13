@@ -3543,7 +3543,7 @@ router.get(
         });
 
         if (grouped.length > 0) {
-          const scores = grouped.map((g: any) => ({
+          const scores: { studentId: string; score: number }[] = grouped.map((g: any) => ({
             studentId: g.studentId as string,
             score: (g._avg.score as number | null) ?? 0,
           }));
@@ -3565,7 +3565,7 @@ router.get(
             annualRankPercentile = Math.max(1, Math.min(100, percentile));
           } else {
             // Öğrencinin henüz skoru yoksa, skor dağılımına göre yaklaşık yüzdelik
-            const lowerOrEqual = sorted.filter((s) => s.score <= selfScore).length;
+            const lowerOrEqual = sorted.filter((s: { studentId: string; score: number }) => s.score <= selfScore).length;
             const percentile = Math.round((lowerOrEqual / sorted.length) * 100);
             annualRankPercentile = Math.max(1, Math.min(100, percentile));
           }

@@ -183,14 +183,6 @@ export const QuestionParserPage: React.FC = () => {
     }
   };
 
-  const difficultyBadgeClass = (difficulty: string | null | undefined): string => {
-    const value = (difficulty ?? '').toString().trim().toLowerCase();
-    if (value === 'kolay') return 'badge badge-success';
-    if (value === 'orta') return 'badge badge-warning';
-    if (value === 'zor') return 'badge badge-error';
-    return 'badge';
-  };
-
   const handleSaveAll = async () => {
     if (!token) {
       setError('Bu işlemi kullanmak için giriş yapmalısınız.');

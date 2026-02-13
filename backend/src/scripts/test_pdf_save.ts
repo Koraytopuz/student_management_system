@@ -28,7 +28,6 @@ async function main() {
             subtopic: null,
             kazanimKodu: null,
             estimatedMinutes: null,
-            distractorReasons: null,
             solutionExplanation: null,
             source: 'import' as const,
             createdByTeacherId: null,

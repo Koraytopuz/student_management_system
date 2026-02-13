@@ -648,9 +648,10 @@ router.post('/students', authenticate('admin'), async (req: AuthenticatedRequest
   });
   // Sınıf atandıysa ClassGroupStudent'a da ekle (sınav bildirimleri için)
   if (classId && created.id) {
-    await prisma.classGroupStudent.upsert({
-      where: { classGroupId_studentId: { classGroupId: classId, studentId: created.id } },
-      create: { classGroupId: classId, studentId: created.id },
+    const classGroupId = String(classId);
+    await (prisma as any).classGroupStudent.upsert({
+      where: { classGroupId_studentId: { classGroupId, studentId: created.id } },
+      create: { classGroupId, studentId: created.id },
       update: {},
     });
   }
@@ -750,11 +751,12 @@ router.put('/students/:id', authenticate('admin'), async (req: AuthenticatedRequ
 
   // classId değiştiyse ClassGroupStudent'ı senkronize et (sınav bildirimleri için)
   if (classId !== undefined) {
-    await prisma.classGroupStudent.deleteMany({ where: { studentId: id } });
+    await (prisma as any).classGroupStudent.deleteMany({ where: { studentId: id } });
     if (updated.classId) {
-      await prisma.classGroupStudent.upsert({
-        where: { classGroupId_studentId: { classGroupId: updated.classId, studentId: id } },
-        create: { classGroupId: updated.classId, studentId: id },
+      const classGroupId = String(updated.classId);
+      await (prisma as any).classGroupStudent.upsert({
+        where: { classGroupId_studentId: { classGroupId, studentId: id } },
+        create: { classGroupId, studentId: id },
         update: {},
       });
     }
