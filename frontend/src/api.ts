@@ -408,6 +408,8 @@ export interface TeacherStudent {
   name: string;
   gradeLevel?: string;
   classId?: string;
+  /** Öğrenci kaydına işlenmiş veli telefon numarası (varsa) */
+  parentPhone?: string;
   lastSeenAt?: string;
   profilePictureUrl?: string;
 }
@@ -430,6 +432,17 @@ export interface TeacherStudentProfile {
     blankCount: number;
     durationSeconds: number;
     completedAt: string;
+  }>;
+  /** Deneme sınavı sonuçları (TYT, AYT vb.) */
+  examResults?: Array<{
+    id: number;
+    examId: number;
+    examName: string;
+    examType: string;
+    examDate: string;
+    totalNet: number;
+    score: number;
+    percentile: number;
   }>;
   watchRecords: Array<{
     contentId: string;
@@ -1394,6 +1407,21 @@ export function createTeacherAssignment(
     '/teacher/assignments',
     {
       method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function updateTeacherAssignment(
+  token: string,
+  assignmentId: string,
+  payload: { title?: string; description?: string; dueDate?: string },
+) {
+  return apiRequest<StudentAssignment>(
+    `/teacher/assignments/${assignmentId}`,
+    {
+      method: 'PUT',
       body: JSON.stringify(payload),
     },
     token,

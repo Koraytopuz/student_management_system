@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import { useReadingMode } from './ReadingModeContext';
 import {
   apiRequest,
   downloadAnalysisPdf,
@@ -129,22 +130,7 @@ export const StudentDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<StudentTab>('overview');
 
-  const [readingMode, setReadingMode] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem('reading_mode') === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      document.documentElement.classList.toggle('reading-mode', readingMode);
-      window.localStorage.setItem('reading_mode', readingMode ? '1' : '0');
-    } catch {
-      // ignore
-    }
-  }, [readingMode]);
+  const { readingMode } = useReadingMode();
   const [assignments, setAssignments] = useState<StudentAssignment[]>([]);
   const [meetings, setMeetings] = useState<StudentMeeting[]>([]);
   const [contents, setContents] = useState<StudentContent[]>([]);
@@ -878,20 +864,6 @@ export const StudentDashboard: React.FC = () => {
         },
       },
       {
-        id: 'notifications',
-        label: 'Bildirimler',
-        icon: <Bell size={18} />,
-        description: 'Mesajlar',
-        badge: unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined,
-        active: activeTab === 'notifications',
-        onClick: () => {
-          setShowNotesLibrary(false);
-          setActiveTest(null);
-          setActiveTab('notifications');
-          loadNotifications().catch(() => {});
-        },
-      },
-      {
         id: 'complaints',
         label: 'Şikayet/Öneri',
         icon: <ClipboardList size={18} />,
@@ -922,7 +894,8 @@ export const StudentDashboard: React.FC = () => {
   return (
     <DashboardLayout
       accent="indigo"
-      brand="SKYTECH"
+      brand="SKY"
+      brandSuffix="ANALİZ"
       tagline={user?.name ?? 'Öğrenci'}
       title={
         activeTab === 'overview'
@@ -959,18 +932,6 @@ export const StudentDashboard: React.FC = () => {
       }}
       headerActions={
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button
-            type="button"
-            className="ghost-btn"
-            aria-label={readingMode ? 'Okuma modunu kapat' : 'Okuma modunu aç'}
-            onClick={() => setReadingMode((p) => !p)}
-            style={{
-              border: readingMode ? '1px solid rgba(99,102,241,0.9)' : undefined,
-              background: readingMode ? 'rgba(99,102,241,0.15)' : undefined,
-            }}
-          >
-            <BookOpen size={16} />
-          </button>
           <button
             type="button"
             className="ghost-btn"

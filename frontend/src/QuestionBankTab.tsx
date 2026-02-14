@@ -5,7 +5,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Plus,
-  Search,
   Filter,
   Sparkles,
   Check,
@@ -21,6 +20,7 @@ import {
   CheckCircle,
   Wand2,
   Folder,
+  FolderOpen,
   List,
   ChevronDown,
 } from 'lucide-react';
@@ -115,7 +115,6 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     limit: 10,
   });
   const [showFilters, setShowFilters] = useState(false);
-  const [searchText, setSearchText] = useState('');
 
   // Modal states
   // Modal/Card states
@@ -147,12 +146,15 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   // Folder View States
   const [viewMode, setViewMode] = useState<'list' | 'folder'>('list');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [questionsForFolder, setQuestionsForFolder] = useState<QuestionBankItem[]>([]);
+  const [folderStructureLoading, setFolderStructureLoading] = useState(false);
 
-  // Group questions for folder view
+  // Klasör yapısı: dosya görünümünde tüm başlıkları göstermek için tüm sorular kullanılır
   const folderStructure = useMemo(() => {
     const structure: Record<string, Record<string, Record<string, number>>> = {};
+    const source = questionsForFolder.length > 0 ? questionsForFolder : questions;
 
-    questions.forEach((q) => {
+    source.forEach((q) => {
       const grade = q.gradeLevel;
       const subject = q.subject?.name || 'Diğer';
       const topic = q.topic || 'Diğer';
@@ -165,7 +167,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     });
 
     return structure;
-  }, [questions]);
+  }, [questions, questionsForFolder]);
 
   const toggleFolder = (id: string) => {
     const next = new Set(expandedFolders);
@@ -177,23 +179,19 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     setExpandedFolders(next);
   };
 
+  const [selectedTopicPath, setSelectedTopicPath] = useState<{ grade: string; subject: string; topic: string } | null>(null);
+
   const handleTopicSelect = (grade: string, subject: string, topic: string) => {
-    // Subject name to ID finding is tricky because we only have name here.
-    // Ideally we should filter by exact match on the client side since we are in "Folder View" of *loaded* questions.
-    // OR we change filters.
-    // Let's filter the current view by these parameters.
+    setSelectedTopicPath({ grade, subject, topic });
     setFilters({
       ...filters,
       gradeLevel: grade,
       topic: topic,
-      // subjectId: subjects.find(s => s.name === subject)?.id // This might be ambiguous if names duplicate
-    }); 
-    // Since filtering by subject ID is better, let's try to find it.
+    });
     const subjItem = subjects.find(s => s.name === subject);
     if (subjItem) {
-        setFilters(prev => ({ ...prev, subjectId: subjItem.id }));
+      setFilters(prev => ({ ...prev, subjectId: subjItem.id }));
     }
-    
     setViewMode('list');
   };
 
@@ -278,6 +276,26 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     loadData();
   }, [filters]);
 
+  // Dosya (klasör) görünümünde tüm sınıf/ders/konu başlıklarını göstermek için tüm soruları yükle
+  useEffect(() => {
+    if (!token || viewMode !== 'folder') return;
+    let cancelled = false;
+    setFolderStructureLoading(true);
+    getQuestionBankList(token, { page: 1, limit: 2000 })
+      .then((data) => {
+        if (!cancelled) {
+          setQuestionsForFolder(data.questions);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setQuestionsForFolder([]);
+      })
+      .finally(() => {
+        if (!cancelled) setFolderStructureLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [token, viewMode]);
+
   useEffect(() => {
     loadSubjects();
     loadStats();
@@ -308,7 +326,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     setLoading(true);
     setError(null);
     try {
-      const data = await getQuestionBankList(token, { ...filters, search: searchText || undefined });
+      const data = await getQuestionBankList(token, filters);
       setQuestions(data.questions);
       setPage(data.pagination.page);
       setTotalPages(data.pagination.totalPages);
@@ -318,10 +336,6 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSearch = () => {
-    setFilters({ ...filters, page: 1, search: searchText });
   };
 
   const handleFilterChange = (key: keyof QuestionBankSearchParams, value: string | boolean | undefined) => {
@@ -502,32 +516,36 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
           <BookOpen className="w-6 h-6" />
           Soru Bankası
         </h2>
-        <div className="flex gap-4">
-          <button
-            onClick={toggleAICard}
-            className={`qb-header-btn qb-header-btn--purple ${showAICard ? 'qb-header-btn--active' : ''}`}
-            type="button"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            AI ile Üret
-          </button>
+        <div className="flex gap-4 items-center">
           <button
              onClick={() => setViewMode(viewMode === 'list' ? 'folder' : 'list')}
              className="qb-header-btn qb-header-btn--ghost"
              type="button"
              title={viewMode === 'list' ? 'Klasör Görünümü' : 'Liste Görünümü'}
           >
-            {viewMode === 'list' ? <Folder className="w-4 h-4" /> : <List className="w-4 h-4" />}
+            {viewMode === 'list' ? <Folder className="qb-icon-premium w-4 h-4" /> : <List className="qb-icon-premium w-4 h-4" />}
           </button>
-          <div className="w-px h-6 bg-white/10 mx-1"></div>
           <button
-            onClick={() => toggleAddCard()}
-            className={`qb-header-btn qb-header-btn--blue ${showAddCard ? 'qb-header-btn--active' : ''}`}
+            onClick={toggleAICard}
+            className={`qb-header-btn qb-header-btn--purple ${showAICard ? 'qb-header-btn--active' : ''}`}
             type="button"
           >
-            <Plus className="w-3.5 h-3.5" />
-            Soru Ekle
+            <Sparkles className="qb-icon-premium w-3.5 h-3.5" />
+            AI ile Üret
           </button>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            type="button"
+            className={`qb-header-btn qb-header-btn--ghost ${showFilters ? 'qb-header-btn--active' : ''}`}
+            title="Sınıf, ders ve konu ile filtrele"
+          >
+            <Filter className="qb-icon-premium w-4 h-4" />
+            Filtreler
+          </button>
+          <div className="flex items-center gap-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 shrink-0">
+            <span className="text-xl font-bold text-white tabular-nums">{stats?.total ?? 0}</span>
+            <span className="text-sm text-white/60">&nbsp;Toplam Soru</span>
+          </div>
         </div>
       </div>
 
@@ -928,40 +946,11 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
           </GlassCard>
         </div>
       )}
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <GlassCard className="p-4 text-center">
-            <div className="text-3xl font-bold text-white">{stats.total}</div>
-            <div className="text-sm text-white/60">Toplam Soru</div>
-          </GlassCard>
-          <GlassCard className="p-4 text-center">
-            <div className="text-3xl font-bold text-green-400">{stats.approved}</div>
-            <div className="text-sm text-white/60">Onaylı</div>
-          </GlassCard>
-          <GlassCard className="p-4 text-center">
-            <div className="text-3xl font-bold text-orange-400">{stats.pending}</div>
-            <div className="text-sm text-white/60">Onay Bekliyor</div>
-          </GlassCard>
-          <GlassCard className="p-4 text-center">
-            <div className="text-3xl font-bold text-purple-400">{stats.bySource.ai}</div>
-            <div className="text-sm text-white/60">AI Üretimi</div>
-          </GlassCard>
-        </div>
-      )}
-
       {/* Messages */}
       {error && (
         <div className="flex items-center gap-2 p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-400">
-          <AlertCircle className="w-5 h-5" />
-          {error}
-          <button
-            onClick={() => setError(null)}
-            type="button"
-            aria-label="Hata mesajını kapat"
-            className="qb-icon-btn qb-icon-btn--danger"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <span>{error}</span>
         </div>
       )}
       {successMessage && (
@@ -971,148 +960,147 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
         </div>
       )}
 
-      {/* Search & Filters */}
-      <GlassCard className="p-4">
-        <div className="flex flex-wrap gap-4 items-center">
-          <div className="flex-1 min-w-[200px] flex gap-2">
-            <input
-              type="text"
-              placeholder="Soru ara..."
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500"
-            />
-            <button onClick={handleSearch} type="button" aria-label="Ara" className="qb-icon-btn qb-icon-btn--blue">
-              <Search className="w-4 h-4" />
-            </button>
-          </div>
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            type="button"
-            className={`qb-btn qb-btn--outline ${showFilters ? 'qb-btn--active' : ''}`}
+      {/* Filtreler: Sınıf, Ders, Konu (header'da Filtreler ile açılır) */}
+      {showFilters && (
+        <div className="flex flex-wrap gap-4 items-center p-4 rounded-xl bg-white/5 border border-white/10">
+          <select
+            value={filters.gradeLevel || ''}
+            onChange={(e) => handleFilterChange('gradeLevel', e.target.value || undefined)}
+            className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500/50 text-sm"
           >
-            <Filter className="w-4 h-4" />
-            Filtreler
-          </button>
+            <option value="">Tüm Sınıflar</option>
+            {GRADE_LEVELS.map((g) => (
+              <option key={g} value={g}>{g}. Sınıf</option>
+            ))}
+          </select>
+          <select
+            value={filters.subjectId || ''}
+            onChange={(e) => handleFilterChange('subjectId', e.target.value || undefined)}
+            className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500/50 text-sm"
+          >
+            <option value="">Tüm Dersler</option>
+            {availableSubjectsForFilters.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            placeholder="Konu başlığı..."
+            value={filters.topic || ''}
+            onChange={(e) => handleFilterChange('topic', e.target.value || undefined)}
+            className="px-3 py-2 min-w-[160px] bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500/50 text-sm"
+          />
         </div>
+      )}
 
-        {showFilters && (
-          <div className="mt-4 pt-4 border-t border-white/10 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <select
-              value={filters.subjectId || ''}
-              onChange={(e) => handleFilterChange('subjectId', e.target.value || undefined)}
-              className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none"
-            >
-              <option value="">Tüm Dersler</option>
-              {availableSubjectsForFilters.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-            <select
-              value={filters.gradeLevel || ''}
-              onChange={(e) => handleFilterChange('gradeLevel', e.target.value || undefined)}
-              className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none"
-            >
-              <option value="">Tüm Sınıflar</option>
-              {GRADE_LEVELS.map((g) => (
-                <option key={g} value={g}>{g}. Sınıf</option>
-              ))}
-            </select>
-            <select
-              value={filters.difficulty || ''}
-              onChange={(e) => handleFilterChange('difficulty', e.target.value || undefined)}
-              className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none"
-            >
-              <option value="">Tüm Zorluklar</option>
-              {DIFFICULTY_LEVELS.map((d) => (
-                <option key={d.value} value={d.value}>{d.label}</option>
-              ))}
-            </select>
-            <select
-              value={filters.source || ''}
-              onChange={(e) => handleFilterChange('source', e.target.value || undefined)}
-              className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none"
-            >
-              <option value="">Tüm Kaynaklar</option>
-              <option value="teacher">Öğretmen</option>
-              <option value="ai">AI</option>
-            </select>
-          </div>
-        )}
-      </GlassCard>
-
-
-      {/* Questions List or Folder View */}
+      {/* Questions List or Folder View — FolderTree: VS Code style, space-y-1, no mb on li */}
       {viewMode === 'folder' ? (
-        <GlassCard className="p-4">
-            <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
-                <Folder className="w-5 h-5 text-yellow-500" />
-                Soru Klasörleri
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm max-h-[75vh] overflow-y-auto">
+          <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50 sticky top-0 z-10 backdrop-blur-sm">
+            <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+              <Folder className="w-5 h-5 text-indigo-500" />
+              Soru Klasörleri
             </h3>
-          {Object.entries(folderStructure).sort((a, b) => {
-              // Numerik sıralama (4, 5, ... 9, 10, 11, 12, TYT, AYT)
-              const order = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'TYT', 'AYT'];
-              return order.indexOf(a[0]) - order.indexOf(b[0]);
-          }).map(([grade, subjects]) => (
-            <div key={grade} className="mb-2">
-              <button
-                onClick={() => toggleFolder(grade)}
-                className="flex items-center gap-2 w-full p-2 hover:bg-white/5 rounded-lg text-left transition select-none"
-              >
-                {expandedFolders.has(grade) ? <ChevronDown className="w-4 h-4 text-white/50" /> : <ChevronRight className="w-4 h-4 text-white/50" />}
-                <Folder className="w-5 h-5 text-yellow-500/80" />
-                <span className="font-medium text-white">{grade}. Sınıf</span>
-                <span className="text-xs text-white/50 ml-auto bg-white/10 px-2 py-0.5 rounded-full">
-                    {Object.values(subjects).reduce((acc, topics) => acc + Object.values(topics).reduce((a, b) => a + b, 0), 0)} Soru
-                </span>
-              </button>
-
-              {expandedFolders.has(grade) && (
-                <div className="pl-6 mt-1 space-y-1 animate-in slide-in-from-top-1 fade-in duration-200">
-                  {Object.entries(subjects).sort().map(([subject, topics]) => (
-                    <div key={subject}>
-                        <button
-                            onClick={() => toggleFolder(`${grade}-${subject}`)}
-                            className="flex items-center gap-2 w-full p-2 hover:bg-white/5 rounded-lg text-left transition select-none"
-                        >
-                            {expandedFolders.has(`${grade}-${subject}`) ? <ChevronDown className="w-4 h-4 text-white/50" /> : <ChevronRight className="w-4 h-4 text-white/50" />}
-                            <Folder className="w-4 h-4 text-blue-400/80" />
-                            <span className="text-white/90">{subject}</span>
-                            <span className="text-xs text-white/50 ml-auto">{Object.values(topics).reduce((a, b) => a + b, 0)}</span>
-                        </button>
-
-                        {expandedFolders.has(`${grade}-${subject}`) && (
-                            <div className="pl-6 mt-1 space-y-0.5 animate-in slide-in-from-top-1 fade-in duration-200">
-                                {Object.entries(topics).sort().map(([topic, count]) => (
-                                     <button
-                                        key={topic}
-                                        onClick={() => handleTopicSelect(grade, subject, topic)}
-                                        className="flex items-center gap-2 w-full p-2 hover:bg-white/5 rounded-lg text-left transition group"
-                                    >
-                                        <List className="w-3.5 h-3.5 text-white/30 group-hover:text-purple-400 transition" />
-                                        <span className="text-sm text-white/70 group-hover:text-white transition">{topic}</span>
-                                        <span className="text-xs text-white/30 ml-auto">{count}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-          {Object.keys(folderStructure).length === 0 && (
-              <div className="text-center py-12 text-white/50">
-                  <Folder className="w-12 h-12 mx-auto mb-2 opacity-20" />
-                  <p>Klasörlenecek içerik bulunamadı</p>
-                  <p className="text-xs mt-1 opacity-70">Filtreleriniz sonucu boş olabilir veya henüz soru eklenmemiş.</p>
+          </div>
+          <div className="p-5">
+            {folderStructureLoading ? (
+              <div className="text-center py-12 text-gray-500 flex flex-col items-center gap-2">
+                <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+                <p className="text-sm">Klasör yapısı yükleniyor…</p>
               </div>
-          )}
-        </GlassCard>
+            ) : Object.keys(folderStructure).length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Folder className="w-12 h-12 mx-auto mb-3 text-gray-200" />
+                <p className="text-sm">Klasörlenecek içerik bulunamadı</p>
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-3">
+                {Object.entries(folderStructure).sort((a, b) => {
+                  const order = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'TYT', 'AYT'];
+                  return order.indexOf(a[0]) - order.indexOf(b[0]);
+                }).map(([grade, subjects]) => {
+                  const gradeTotal = Object.values(subjects).reduce((acc, topics) => acc + Object.values(topics).reduce((a, b) => a + b, 0), 0);
+                  const isGradeOpen = expandedFolders.has(grade);
+                  return (
+                    <li key={grade}>
+                      <button
+                        type="button"
+                        onClick={() => toggleFolder(grade)}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-200 group ${
+                          isGradeOpen 
+                            ? 'bg-indigo-50/80 border-indigo-100 text-indigo-900 shadow-sm' 
+                            : 'bg-white border-gray-100 text-gray-600 hover:border-gray-200 hover:shadow-sm'
+                        }`}
+                      >
+                        <span className={`p-1.5 rounded-lg transition-colors ${isGradeOpen ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200 group-hover:text-gray-600'}`}>
+                          {isGradeOpen ? <FolderOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
+                        </span>
+                        <span className="flex-1 font-medium text-left">{grade}. Sınıf</span>
+                        <span className="px-2 py-0.5 text-xs font-medium rounded-md bg-white/50 text-gray-500 border border-gray-100">
+                          {gradeTotal}
+                        </span>
+                        {isGradeOpen ? <ChevronDown className="w-4 h-4 text-indigo-400" /> : <ChevronRight className="w-4 h-4 text-gray-300" />}
+                      </button>
+                      
+                      {isGradeOpen && (
+                        <div className="mt-3 ml-4 pl-4 border-l-2 border-dashed border-gray-100 flex flex-col gap-2">
+                          {Object.entries(subjects).sort().map(([subject, topics]) => {
+                            const subjectTotal = Object.values(topics).reduce((a, b) => a + b, 0);
+                            const subjectId = `${grade}-${subject}`;
+                            const isSubjectOpen = expandedFolders.has(subjectId);
+                            return (
+                              <div key={subjectId}>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleFolder(subjectId)}
+                                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                    isSubjectOpen
+                                      ? 'bg-indigo-50/50 text-indigo-800 font-medium'
+                                      : 'text-gray-600 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {isSubjectOpen ? <ChevronDown className="w-3.5 h-3.5 text-indigo-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-300" />}
+                                  <span className="truncate flex-1 text-left">{subject}</span>
+                                  <span className="text-xs text-gray-400">{subjectTotal}</span>
+                                </button>
+                                
+                                {isSubjectOpen && (
+                                  <div className="mt-1 ml-5 flex flex-col gap-1">
+                                    {Object.entries(topics).sort().map(([topic, count]) => {
+                                      const isSelected = selectedTopicPath?.grade === grade && selectedTopicPath?.subject === subject && selectedTopicPath?.topic === topic;
+                                      return (
+                                        <button
+                                          key={topic}
+                                          type="button"
+                                          onClick={() => handleTopicSelect(grade, subject, topic)}
+                                          className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all border mb-1 mx-1 ${
+                                            isSelected 
+                                              ? 'bg-blue-50 text-blue-700 border-blue-100 font-medium shadow-sm' 
+                                              : 'text-gray-500 border-transparent hover:bg-gray-50 hover:text-gray-700'
+                                          }`}
+                                        >
+                                          <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-blue-500' : 'bg-gray-300'}`} />
+                                          <span className="truncate flex-1 text-left">{topic}</span>
+                                          <span className="text-xs text-gray-400">{count}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
       ) : (
-      <GlassCard className="p-4">
+        <GlassCard className="p-4">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />

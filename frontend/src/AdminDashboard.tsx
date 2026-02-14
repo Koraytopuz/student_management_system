@@ -257,15 +257,6 @@ export const AdminDashboard: React.FC = () => {
         onClick: () => setActiveTab('parents'),
       },
       {
-        id: 'notifications',
-        label: 'Bildirimler',
-        icon: <span>🔔</span>,
-        description: 'Sistem bildirimleri',
-        badge: adminNotifications.filter((n) => !n.read).length || undefined,
-        active: activeTab === 'notifications',
-        onClick: () => setActiveTab('notifications'),
-      },
-      {
         id: 'complaints',
         label: 'Şikayet / Öneri',
         icon: <span>💬</span>,
@@ -619,7 +610,8 @@ export const AdminDashboard: React.FC = () => {
   return (
     <DashboardLayout
       accent="slate"
-      brand="SKYTECH"
+      brand="SKY"
+      brandSuffix="ANALİZ"
       tagline="Admin Paneli"
       title="Yönetim Konsolu"
       subtitle="Kullanıcılar, atamalar ve geri bildirimleri yönetin."

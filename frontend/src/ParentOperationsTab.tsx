@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { CalendarCheck, MessageCircle, Send, Users } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { MessageCircle, Search, Send, Users } from 'lucide-react';
 import {
   createTeacherFeedback,
   getTeacherParents,
@@ -11,9 +11,20 @@ import { GlassCard } from './components/DashboardPrimitives';
 type ParentOperationsTabProps = {
   token: string | null;
   students: TeacherStudent[];
+  /** Öğretmenin yetkili olduğu sınıf seviyeleri (\"4\"–\"12\", \"Mezun\" vb.) */
+  allowedGrades: string[];
 };
 
-export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({ token, students }) => {
+export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
+  token,
+  students,
+  allowedGrades,
+}) => {
+  // Kademeli filtreleme durumu
+  const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Detay ve mesaj alanı için seçimler
   const [selectedStudentId, setSelectedStudentId] = useState<string>(students[0]?.id ?? '');
 
   // Veli notu taslağı
@@ -34,28 +45,55 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({ token,
   const [parentMessageText, setParentMessageText] = useState('');
   const [sendingParentMessage, setSendingParentMessage] = useState(false);
 
-  // Öğrenci listesi değiştiğinde varsayılan seçim
+  // Velileri, sınıf seçildiğinde yükle (öğrenci seçildiğinde veli listesi için)
   useEffect(() => {
-    if (!selectedStudentId && students[0]) {
-      setSelectedStudentId(students[0].id);
-    }
-  }, [students, selectedStudentId]);
-
-  // Velileri yükle
-  useEffect(() => {
-    if (!token) return;
+    if (!token || !selectedGradeLevel) return;
     setParentLoading(true);
     getTeacherParents(token)
       .then((data) => setParents(data))
       .catch(() => {})
       .finally(() => setParentLoading(false));
-  }, [token]);
+  }, [token, selectedGradeLevel]);
 
+  // Seçili sınıftaki öğrenci listesi
+  const studentsInSelectedClass = useMemo(
+    () =>
+      selectedGradeLevel
+        ? students.filter((s) => s.gradeLevel === selectedGradeLevel)
+        : [],
+    [students, selectedGradeLevel],
+  );
+  const visibleStudents = useMemo(() => {
+    const q = searchQuery.trim().toLocaleLowerCase('tr-TR');
+    if (!q) return studentsInSelectedClass;
+    return studentsInSelectedClass.filter((s) =>
+      s.name.toLocaleLowerCase('tr-TR').includes(q),
+    );
+  }, [studentsInSelectedClass, searchQuery]);
+
+  // Seçili öğrenci, seçili sınıftaki listede yoksa temizle (sınıf değişince vb.)
   useEffect(() => {
-    // Öğrenci değişince seçili veli ve mesajı sıfırla
+    if (
+      selectedStudentId &&
+      !studentsInSelectedClass.some((s) => s.id === selectedStudentId)
+    ) {
+      setSelectedStudentId('');
+      setSelectedParentId('');
+    }
+  }, [selectedStudentId, studentsInSelectedClass]);
+
+  // Sadece sınıf seçildiyse ve henüz öğrenci seçilmemişse listedeki ilk öğrenciyi varsayılan yap (döngüyü önlemek için sadece sınıf listesinden seç)
+  useEffect(() => {
+    if (!selectedGradeLevel || selectedStudentId) return;
+    const firstInClass = studentsInSelectedClass[0];
+    if (firstInClass) setSelectedStudentId(firstInClass.id);
+  }, [selectedGradeLevel, selectedStudentId, studentsInSelectedClass]);
+
+  // Öğrenci veya sınıf değişince seçili veli ve mesajı sıfırla
+  useEffect(() => {
     setSelectedParentId('');
     setParentMessageText('');
-  }, [selectedStudentId]);
+  }, [selectedStudentId, selectedGradeLevel]);
 
   const handleCreateFeedback = async () => {
     if (!token || !selectedStudentId) return;
@@ -109,65 +147,266 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({ token,
 
   const parentsOfStudent = parents.filter((p) => p.studentIds.includes(selectedStudentId));
 
+  // Öğrencileri hızlı erişim için map’e çevir
+  const isClassSelected = selectedGradeLevel !== '';
+  const selectedStudent = students.find((s) => s.id === selectedStudentId);
+
+  const uniqueAllowedGrades = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (allowedGrades.length > 0 ? allowedGrades : students.map((s) => s.gradeLevel).filter(Boolean)) as string[],
+        ),
+      ),
+    [allowedGrades, students],
+  );
+
   return (
     <div className="page-grid">
       <div className="page-main">
         <GlassCard
           title="Veli İşlemleri"
-          subtitle="Veliye özel değerlendirmeler ve birebir mesajlar"
+          subtitle="Sınıf ve öğrenci seçerek veliye not veya mesaj gönderin"
         >
+          {/* Filtre ve arama çubuğu */}
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1.6fr)',
-              gap: '1.25rem',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '0.75rem',
+              alignItems: 'flex-end',
+              marginBottom: '1rem',
             }}
           >
-            {/* Sol: Öğrenci seçimi ve veli notu */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div style={{ marginBottom: '0.25rem' }}>
-                <div
+            <div style={{ minWidth: 200, flex: '0 0 auto' }}>
+              <div style={{ fontSize: '0.8rem', marginBottom: 4, color: 'var(--color-text-muted)' }}>
+                Sınıf Seçiniz
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Users size={16} />
+                <select
+                  value={selectedGradeLevel}
+                  onChange={(e) => {
+                    setSelectedGradeLevel(e.target.value);
+                    setSelectedStudentId('');
+                    setSelectedParentId('');
+                  }}
                   style={{
-                    fontSize: '0.9rem',
-                    fontWeight: 600,
+                    flex: 1,
+                    padding: '0.55rem 0.85rem',
+                    borderRadius: 999,
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface)',
                     color: 'var(--color-text-main)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    marginBottom: '0.25rem',
+                    fontSize: '0.9rem',
                   }}
                 >
-                  <Users size={16} />
-                  <span>Öğrenci seçin</span>
-                </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                  Veli işlemleri bu öğrenci ile ilişkilendirilecektir.
-                </div>
+                  <option value="">
+                    {uniqueAllowedGrades.length === 0 ? 'Yetkili sınıf yok' : 'Sınıf seçiniz'}
+                  </option>
+                  {uniqueAllowedGrades.map((g) => (
+                    <option key={g} value={g}>
+                      {g === 'Mezun' ? 'Mezun Sınıfı' : `${g}. Sınıf`}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <select
-                value={selectedStudentId}
-                onChange={(e) => setSelectedStudentId(e.target.value)}
+            </div>
+
+            <div style={{ minWidth: 220, flex: '1 1 220px' }}>
+              <div style={{ fontSize: '0.8rem', marginBottom: 4, color: 'var(--color-text-muted)' }}>
+                Öğrenci Ara
+              </div>
+              <div
                 style={{
-                  width: '100%',
-                  padding: '0.6rem 0.9rem',
-                  fontSize: '0.9rem',
-                  borderRadius: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: 999,
                   border: '1px solid var(--color-border-subtle)',
                   background: 'var(--color-surface)',
-                  color: 'var(--color-text-main)',
-                  cursor: 'pointer',
                 }}
               >
-                <option value="">
-                  {students.length === 0 ? 'Öğrenci bulunamadı' : 'Öğrenci seçin'}
-                </option>
-                {students.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} {s.gradeLevel ? `— ${s.gradeLevel}. Sınıf` : ''}
-                  </option>
-                ))}
-              </select>
+                <Search size={16} style={{ color: 'var(--color-text-muted)' }} />
+                <input
+                  type="text"
+                  placeholder="Öğrenci adı ile ara..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    flex: 1,
+                    border: 'none',
+                    outline: 'none',
+                    background: 'transparent',
+                    color: 'var(--color-text-main)',
+                    fontSize: '0.9rem',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
 
+          {/* Başlangıç boş durumu */}
+          {!isClassSelected && (
+            <div
+              className="empty-state"
+              style={{ marginBottom: '0.75rem', borderRadius: 16, padding: '1rem' }}
+            >
+              Öğrenci listesini görmek için lütfen bir <strong>sınıf</strong> seçiniz.
+            </div>
+          )}
+
+          {/* Öğrenci listesi (Öğrenciler menüsüyle aynı mantık) */}
+          {isClassSelected && (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <div
+                style={{
+                  fontSize: '0.85rem',
+                  color: 'var(--color-text-muted)',
+                  marginBottom: '0.45rem',
+                }}
+              >
+                Öğrenci listesi
+              </div>
+              <div className="students-table-wrapper" style={{ maxHeight: 320, overflow: 'auto' }}>
+                {visibleStudents.length === 0 ? (
+                  <div className="empty-state">Bu sınıfta öğrenci bulunamadı.</div>
+                ) : (
+                  <table className="students-table">
+                    <thead>
+                      <tr>
+                        <th>Ad Soyad</th>
+                        <th>Sınıf</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleStudents.map((student) => {
+                        const isSelected = student.id === selectedStudentId;
+                        return (
+                          <tr
+                            key={student.id}
+                            className={isSelected ? 'students-table-row--active' : undefined}
+                            onClick={() => {
+                              setSelectedStudentId(student.id);
+                              setSelectedParentId('');
+                            }}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <td>{student.name}</td>
+                            <td>
+                              {student.gradeLevel ? `${student.gradeLevel}. Sınıf` : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Detay alanı: seçili öğrenci + veli seçimi + veli notu ve mesaj */}
+          {!selectedStudentId && isClassSelected && visibleStudents.length > 0 && (
+            <div
+              className="empty-state"
+              style={{ marginTop: '1rem', borderRadius: 16, padding: '1rem' }}
+            >
+              Listeden bir <strong>öğrenci</strong> seçerek veli işlemlerini yapabilirsiniz.
+            </div>
+          )}
+          {selectedStudentId && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1.25rem',
+              marginTop: '1.25rem',
+            }}
+          >
+            {/* Seçili öğrenci (sadece okunur) + Bu öğrencinin velileri */}
+            <div
+              style={{
+                padding: '1rem',
+                borderRadius: 12,
+                background: 'var(--color-surface-soft, #f9fafb)',
+                border: '1px solid var(--color-border-subtle)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: 'var(--color-text-main)',
+                  marginBottom: '0.5rem',
+                }}
+              >
+                Seçili öğrenci
+              </div>
+              <div
+                style={{
+                  fontSize: '1rem',
+                  marginBottom: '1rem',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                {selectedStudent
+                  ? `${selectedStudent.name}${selectedStudent.gradeLevel ? ` · ${selectedStudent.gradeLevel}. Sınıf` : ''}`
+                  : '—'}
+              </div>
+              <div style={{ marginBottom: '0.4rem' }}>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    fontWeight: 500,
+                    color: 'var(--color-text-muted)',
+                    marginBottom: '0.35rem',
+                  }}
+                >
+                  Bu öğrencinin velileri
+                </label>
+                <select
+                  value={selectedParentId}
+                  onChange={(e) => setSelectedParentId(e.target.value)}
+                  disabled={parentLoading || parentsOfStudent.length === 0}
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem 0.9rem',
+                    fontSize: '0.9rem',
+                    borderRadius: 8,
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-main)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <option value="">
+                    {parentLoading
+                      ? 'Veliler yükleniyor...'
+                      : parentsOfStudent.length === 0
+                      ? 'Bu öğrenciye bağlı veli bulunamadı'
+                      : 'Veli seçin'}
+                  </option>
+                  {parentsOfStudent.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.email ? `(${p.email})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+                gap: '1.25rem',
+              }}
+            >
+            {/* Sol: Veliye Özel Notlar */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div
                 style={{
                   marginTop: '1rem',
@@ -282,51 +521,7 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({ token,
                 </span>
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                Mesaj otomatik olarak seçili öğrenci ile ilişkilendirilir.
-              </div>
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '0.8rem',
-                    fontWeight: 500,
-                    color: 'var(--color-text-muted)',
-                    marginBottom: '0.4rem',
-                  }}
-                >
-                  Veli seçin
-                </label>
-                <select
-                  value={selectedParentId}
-                  onChange={(e) => setSelectedParentId(e.target.value)}
-                  disabled={parentLoading || parentsOfStudent.length === 0 || !selectedStudentId}
-                  style={{
-                    width: '100%',
-                    padding: '0.6rem 0.9rem',
-                    fontSize: '0.9rem',
-                    borderRadius: 8,
-                    border: '1px solid var(--color-border-subtle)',
-                    background: 'var(--color-surface)',
-                    color: 'var(--color-text-main)',
-                    cursor: 'pointer',
-                    marginBottom: '0.5rem',
-                  }}
-                >
-                  <option value="">
-                    {!selectedStudentId
-                      ? 'Önce öğrenci seçin'
-                      : parentLoading
-                      ? 'Veliler yükleniyor...'
-                      : parentsOfStudent.length === 0
-                      ? 'Bu öğrenciye bağlı veli bulunamadı'
-                      : 'Veli seçin'}
-                  </option>
-                  {parentsOfStudent.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.email})
-                    </option>
-                  ))}
-                </select>
+                Mesaj, üstte seçtiğiniz veliye ve seçili öğrenci ile ilişkili olarak iletilir.
               </div>
               <textarea
                 placeholder="Veliyi bilgilendireceğiniz mesaj..."
@@ -371,47 +566,10 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({ token,
               </div>
             </div>
           </div>
+          </div>
+          )}
         </GlassCard>
       </div>
-
-      <aside className="page-aside">
-        <GlassCard
-          title="Hızlı özet"
-          subtitle="Veli işlemlerine bağlı öğrenciler"
-          icon={<CalendarCheck size={18} />}
-        >
-          <div className="list-stack">
-            {students.length === 0 && (
-              <div className="empty-state">Sistemde kayıtlı öğrenci bulunamadı.</div>
-            )}
-            {students.map((student) => (
-              <button
-                key={student.id}
-                type="button"
-                className="list-row"
-                onClick={() => setSelectedStudentId(student.id)}
-                style={{
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  background:
-                    student.id === selectedStudentId
-                      ? 'var(--color-surface-strong)'
-                      : undefined,
-                }}
-              >
-                <div>
-                  <strong>{student.name}</strong>
-                  {student.gradeLevel && (
-                    <small style={{ display: 'block', color: 'var(--color-text-muted)' }}>
-                      {student.gradeLevel}. Sınıf
-                    </small>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </GlassCard>
-      </aside>
     </div>
   );
 };

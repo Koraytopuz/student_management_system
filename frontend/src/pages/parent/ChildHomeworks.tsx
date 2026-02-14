@@ -98,7 +98,8 @@ export const ParentChildHomeworksPage: React.FC = () => {
   return (
     <DashboardLayout
       accent="emerald"
-      brand="SKYTECH"
+      brand="SKY"
+      brandSuffix="ANALİZ"
       tagline="Çocuğunuzun bireysel ödev durumunu görüntüleyin"
       title="Ödev Takibi"
       subtitle="Bekleyen, tamamlanan ve gecikmiş ödevleri renkli rozetlerle görün."

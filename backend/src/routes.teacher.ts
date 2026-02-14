@@ -692,7 +692,17 @@ router.get(
         : { role: 'student' as const };
     const teacherStudents = await prisma.user.findMany({
       where: whereClause,
-      select: { id: true, name: true, email: true, gradeLevel: true, classId: true, lastSeenAt: true, profilePictureUrl: true } as any,
+      // Veli işlemleri ekranında da kullanılmak üzere parentPhone bilgisini de seçiyoruz
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        gradeLevel: true,
+        classId: true,
+        lastSeenAt: true,
+        profilePictureUrl: true,
+        parentPhone: true,
+      } as any,
     });
     return res.json(
       teacherStudents.map((s) => ({
@@ -704,6 +714,7 @@ router.get(
         classId: s.classId ?? '',
         lastSeenAt: s.lastSeenAt ? new Date(s.lastSeenAt as any).toISOString() : undefined,
         profilePictureUrl: (s as any).profilePictureUrl ?? undefined,
+        parentPhone: (s as any).parentPhone ?? undefined,
       })),
     );
   },
@@ -757,13 +768,17 @@ router.get(
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    const [assignmentsData, studentResults, studentWatch] = await Promise.all([
+    const [assignmentsData, studentResults, studentWatch, studentExamResults] = await Promise.all([
       prisma.assignment.findMany({
         where: { students: { some: { studentId: id } } },
         include: { students: { select: { studentId: true } } },
       }),
       prisma.testResult.findMany({ where: { studentId: id } }),
       prisma.watchRecord.findMany({ where: { studentId: id } }),
+      prisma.examResult.findMany({
+        where: { studentId: id },
+        include: { exam: { select: { id: true, name: true, type: true, date: true } } },
+      }),
     ]);
 
     const assignmentsForApi = assignmentsData.map((a) => ({
@@ -795,6 +810,20 @@ router.get(
       answers: [] as { questionId: string; answer: string; isCorrect: boolean }[],
     }));
 
+    const examResultsSorted = [...studentExamResults].sort(
+      (a, b) => new Date(b.exam.date).getTime() - new Date(a.exam.date).getTime(),
+    );
+    const examResultsForApi = examResultsSorted.map((er) => ({
+      id: er.id,
+      examId: er.examId,
+      examName: er.exam.name,
+      examType: er.exam.type,
+      examDate: er.exam.date.toISOString(),
+      totalNet: er.totalNet,
+      score: er.score,
+      percentile: er.percentile,
+    }));
+
     return res.json({
       student: {
         id: student.id,
@@ -806,6 +835,7 @@ router.get(
       },
       assignments: assignmentsForApi,
       results: resultsForApi,
+      examResults: examResultsForApi,
       watchRecords: studentWatch.map((w) => ({
         id: w.id,
         contentId: w.contentId,
@@ -1671,6 +1701,51 @@ router.get(
         timeLimitMinutes: (a as any).timeLimitMinutes ?? undefined,
       })),
     );
+  },
+);
+
+// Görev güncelleme (başlık, açıklama, son teslim tarihi/saati)
+router.put(
+  '/assignments/:id',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const assignmentId = String(req.params.id);
+    const { title, description, dueDate } = req.body as {
+      title?: string;
+      description?: string;
+      dueDate?: string;
+    };
+
+    const existing = await prisma.assignment.findUnique({
+      where: { id: assignmentId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Görev bulunamadı' });
+    }
+
+    const updateData: { title?: string; description?: string; dueDate?: Date } = {};
+    if (typeof title === 'string' && title.trim()) updateData.title = title.trim();
+    if (description !== undefined) updateData.description = description === '' ? null : String(description);
+    if (typeof dueDate === 'string' && dueDate) updateData.dueDate = new Date(dueDate);
+
+    const assignment = await prisma.assignment.update({
+      where: { id: assignmentId },
+      data: updateData,
+      include: { students: { select: { studentId: true } } },
+    });
+    return res.json({
+      id: assignment.id,
+      title: assignment.title,
+      description: assignment.description ?? undefined,
+      testId: assignment.testId ?? undefined,
+      contentId: assignment.contentId ?? undefined,
+      testAssetId: (assignment as any).testAssetId ?? undefined,
+      classId: assignment.classId ?? undefined,
+      assignedStudentIds: assignment.students.map((s) => s.studentId),
+      dueDate: assignment.dueDate.toISOString(),
+      points: assignment.points,
+      timeLimitMinutes: (assignment as any).timeLimitMinutes ?? undefined,
+    });
   },
 );
 

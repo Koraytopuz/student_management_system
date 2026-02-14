@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
-import { CalendarCheck, PlusCircle, Trash2, Edit2 } from 'lucide-react';
+import { PlusCircle, Trash2, Edit2, List } from 'lucide-react';
 import { GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import {
   type TeacherStudent,
@@ -78,7 +78,9 @@ export const CoachingTab: React.FC<{
     meetingUrl: '',
   });
 
-  const [activeDetailTab, setActiveDetailTab] = useState<'goals' | 'notes'>('goals');
+  const [activeDetailTab, setActiveDetailTab] = useState<
+    'goals' | 'notes' | 'sessions' | 'tests' | 'assignments' | 'studies'
+  >('goals');
   const [goals, setGoals] = useState<TeacherCoachingGoal[]>([]);
   const [goalsLoading, setGoalsLoading] = useState(false);
   const [goalsError, setGoalsError] = useState<string | null>(null);
@@ -96,6 +98,12 @@ export const CoachingTab: React.FC<{
     sharedWithParent: true,
   });
 
+  /** Seçilen sınıf (gradeLevel); boşsa öğrenci listesi gösterilmez. */
+  const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('');
+
+  /** Öğrenci listesi paneli açık mı; ilk açılışta kapalı, butonla açılır, öğrenci seçilince kapanır. */
+  const [studentListExpanded, setStudentListExpanded] = useState(false);
+
   const studentsWithPresence = useMemo(() => {
     const now = Date.now();
     return students.map((s) => {
@@ -109,6 +117,27 @@ export const CoachingTab: React.FC<{
     () => students.find((s) => s.id === selectedStudentId) ?? null,
     [students, selectedStudentId],
   );
+
+  /** Koçluk verilen öğrencilerin sınıf seviyeleri (benzersiz, sıralı). */
+  const availableGradeLevels = useMemo(() => {
+    const set = new Set<string>();
+    students.forEach((s) => {
+      if (s.gradeLevel) set.add(s.gradeLevel);
+    });
+    return Array.from(set).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  }, [students]);
+
+  /** Seçilen sınıftaki öğrenciler (sınıf seçilmediyse boş). */
+  const studentsInSelectedGrade = useMemo(() => {
+    if (!selectedGradeLevel) return [];
+    return studentsWithPresence.filter((s) => s.gradeLevel === selectedGradeLevel);
+  }, [studentsWithPresence, selectedGradeLevel]);
+
+  useEffect(() => {
+    if (selectedGradeLevel === '' && availableGradeLevels.length > 0) {
+      setSelectedGradeLevel(availableGradeLevels[0]);
+    }
+  }, [availableGradeLevels, selectedGradeLevel]);
 
   const resetForm = () => {
     setEditingSession(null);
@@ -362,9 +391,6 @@ export const CoachingTab: React.FC<{
     }
   };
 
-  const totalSessions = sessions.length;
-  const lastSessionDate = sessions[0]?.date;
-
   const studentResults = useMemo(
     () => studentProfile?.results ?? [],
     [studentProfile],
@@ -420,8 +446,7 @@ export const CoachingTab: React.FC<{
 
   return (
     <GlassCard
-      title="Koçluk Takip"
-      subtitle="Öğrencilerinizle yaptığınız birebir koçluk seanslarını kaydedin ve izleyin."
+      title="Kişisel Takip"
       actions={
         <button
           type="button"
@@ -435,136 +460,166 @@ export const CoachingTab: React.FC<{
       }
     >
       <div
+        className="coaching-personal-grid"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 260px) minmax(0, 1fr)',
+          gridTemplateColumns: studentListExpanded ? 'minmax(0, 260px) minmax(0, 1fr)' : 'minmax(0, 200px) minmax(0, 1fr)',
           gap: '1.25rem',
           alignItems: 'flex-start',
         }}
       >
         <div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.45rem' }}>
-            Öğrenciler
-          </div>
-          <div className="list-stack" style={{ maxHeight: 260, overflow: 'auto' }}>
-            {studentsWithPresence.length === 0 && (
-              <div className="empty-state">Öğrenci bulunamadı.</div>
-            )}
-            {studentsWithPresence.map((student) => (
-              <button
-                key={student.id}
-                type="button"
-                className="list-row"
+          {studentListExpanded ? (
+            <>
+              <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.45rem' }}>
+                Sınıf
+              </div>
+              <div
                 style={{
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  background:
-                    student.id === selectedStudentId
-                      ? 'var(--color-surface-strong)'
-                      : undefined,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.35rem',
+                  marginBottom: '0.75rem',
                 }}
-                onClick={() => onSelectStudent(student.id)}
               >
-                <div style={{ flex: 1 }}>
-                  <strong
-                    style={{
-                      display: 'block',
-                      color: 'var(--color-text-main)',
+                {availableGradeLevels.length === 0 && (
+                  <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                    Koçluk öğrencisi yok.
+                  </span>
+                )}
+                {availableGradeLevels.map((grade) => {
+                  const isActive = selectedGradeLevel === grade;
+                  return (
+                    <button
+                      key={grade}
+                      type="button"
+                      onClick={() => setSelectedGradeLevel(grade)}
+                      style={{
+                        border: `1px solid ${isActive ? 'var(--color-primary-strong)' : 'var(--color-border-subtle)'}`,
+                        borderRadius: 999,
+                        padding: '0.35rem 0.75rem',
+                        fontSize: '0.8rem',
+                        cursor: 'pointer',
+                        background: isActive ? 'var(--color-primary-soft)' : 'var(--color-surface-strong)',
+                        color: isActive ? 'var(--color-primary-strong)' : 'var(--color-text-main)',
+                      }}
+                    >
+                      {grade}. Sınıf
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.45rem' }}>
+                Öğrenciler
+              </div>
+              <div className="list-stack coaching-student-list" style={{ maxHeight: 720, overflow: 'auto' }}>
+                {!selectedGradeLevel && (
+                  <div className="empty-state">Önce bir sınıf seçin.</div>
+                )}
+                {selectedGradeLevel && studentsInSelectedGrade.length === 0 && (
+                  <div className="empty-state">Bu sınıfta koçluk öğrencisi yok.</div>
+                )}
+                {studentsInSelectedGrade.map((student) => (
+                  <button
+                    key={student.id}
+                    type="button"
+                    className={`list-row${student.id === selectedStudentId ? ' list-row--selected' : ''}`}
+                    style={{ textAlign: 'left', cursor: 'pointer' }}
+                    onClick={() => {
+                      onSelectStudent(student.id);
+                      setStudentListExpanded(false);
                     }}
                   >
-                    {student.name}{' '}
-                    {student.gradeLevel ? `(${student.gradeLevel}. Sınıf)` : ''}
-                  </strong>
-                  <small
-                    style={{
-                      display: 'block',
-                      color: 'var(--color-text-muted)',
-                    }}
-                  >
-                    {student.isOnline
-                      ? 'Çevrimiçi'
-                      : student.lastSeenAt
-                        ? `Son görülme: ${new Date(
-                            student.lastSeenAt,
-                          ).toLocaleString('tr-TR')}`
-                        : 'Son görülme: -'}
-                  </small>
-                </div>
-                <TagChip
-                  label={student.isOnline ? 'Online' : 'Offline'}
-                  tone={student.isOnline ? 'success' : 'warning'}
-                />
+                    <div style={{ flex: 1 }}>
+                      <strong
+                        style={{
+                          display: 'block',
+                          color: 'var(--color-text-main)',
+                        }}
+                      >
+                        {student.name}{' '}
+                        {student.gradeLevel ? `(${student.gradeLevel}. Sınıf)` : ''}
+                      </strong>
+                      <small
+                        style={{
+                          display: 'block',
+                          color: 'var(--color-text-muted)',
+                        }}
+                      >
+                        {student.isOnline
+                          ? 'Çevrimiçi'
+                          : student.lastSeenAt
+                            ? `Son görülme: ${new Date(
+                                student.lastSeenAt,
+                              ).toLocaleString('tr-TR')}`
+                            : 'Son görülme: -'}
+                      </small>
+                    </div>
+                    <TagChip
+                      label={student.isOnline ? 'Online' : 'Offline'}
+                      tone={student.isOnline ? 'success' : 'warning'}
+                    />
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div
+              style={{
+                padding: '0.75rem',
+                borderRadius: 12,
+                background: 'var(--color-surface-strong)',
+                border: '1px solid var(--color-border-subtle)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--color-text-muted)',
+                  marginBottom: '0.5rem',
+                }}
+              >
+                Seçili öğrenci
+              </div>
+              <div
+                style={{
+                  fontWeight: 600,
+                  color: 'var(--color-text-main)',
+                  marginBottom: '0.75rem',
+                  lineHeight: 1.3,
+                }}
+              >
+                {selectedStudent
+                  ? `${selectedStudent.name}${selectedStudent.gradeLevel ? ` (${selectedStudent.gradeLevel}. Sınıf)` : ''}`
+                  : 'Öğrenci seçin'}
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setStudentListExpanded(true)}
+                style={{
+                  width: '100%',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.8rem',
+                }}
+              >
+                <List size={16} />
+                Öğrenci listesi
               </button>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
 
-        <div>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <div className="metric-grid">
-              <MetricCard
-                label="Toplam Seans"
-                value={`${totalSessions}`}
-                helper={selectedStudent ? selectedStudent.name : 'Tüm öğrenciler'}
-                trendLabel="Koçluk"
-                trendTone="positive"
-              />
-              <MetricCard
-                label="Son Seans"
-                value={lastSessionDate ? formatShortDate(lastSessionDate) : '-'}
-                helper={lastSessionDate ? formatTime(lastSessionDate) : 'Kayıt yok'}
-                trendLabel={lastSessionDate ? 'Güncel' : 'Beklemede'}
-                trendTone={lastSessionDate ? 'neutral' : 'negative'}
-              >
-                <div className="metric-inline">
-                  <CalendarCheck size={14} />
-                </div>
-              </MetricCard>
+        <div style={{ minWidth: 0 }}>
+          {!selectedGradeLevel || !selectedStudentId ? (
+            <div className="empty-state" style={{ padding: '2rem 1rem' }}>
+              Önce soldan bir sınıf ve öğrenci seçin. Koçluk detayları seçimden sonra görüntülenecektir.
             </div>
-          </div>
-
-          <div style={{ marginBottom: '0.75rem' }}>
-            {profileLoading ? (
-              <div className="empty-state">Öğrenci performans verileri yükleniyor...</div>
-            ) : !studentProfile || !studentResults.length ? (
-              <div className="empty-state">
-                Bu öğrenci için henüz sınav sonucu bulunmuyor. İlk test tamamlandığında burada özet
-                performansını görebilirsiniz.
-              </div>
-            ) : (
-              <div className="metric-grid">
-                <MetricCard
-                  label="Çözülen Test"
-                  value={`${totalTests}`}
-                  helper="Toplam bireysel test"
-                  trendLabel="Koçluk için hazır veri"
-                  trendTone="positive"
-                />
-                <MetricCard
-                  label="Ortalama Başarı"
-                  value={`${aggregateStats.avgScore}%`}
-                  helper="Tüm testler"
-                  trendLabel="Genel seviye"
-                  trendTone="neutral"
-                />
-                <MetricCard
-                  label="Doğru / Yanlış / Boş"
-                  value={`${aggregateStats.totalCorrect} / ${aggregateStats.totalIncorrect} / ${aggregateStats.totalBlank}`}
-                  helper="Toplam soru"
-                  trendLabel="Detay için tabloyu incele"
-                  trendTone="neutral"
-                />
-                <MetricCard
-                  label="Toplam Süre"
-                  value={`${aggregateStats.totalMinutes} dk`}
-                  helper="Test çözme süresi"
-                  trendLabel="Çalışma yoğunluğu"
-                  trendTone="positive"
-                />
-              </div>
-            )}
-          </div>
-
+          ) : (
+          <>
           {formOpen && (
             <div
               style={{
@@ -793,20 +848,27 @@ export const CoachingTab: React.FC<{
           )}
 
           {/* Hedefler / Notlar sekmeleri */}
-          <div style={{ marginBottom: '1rem' }}>
+          <div style={{ marginBottom: '1rem', width: '100%', minWidth: 0 }}>
             <div
               style={{
-                display: 'inline-flex',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '0.25rem',
                 borderRadius: 999,
                 padding: 4,
                 background: 'var(--color-surface-strong)',
                 border: '1px solid var(--color-border-subtle)',
                 marginBottom: '0.75rem',
+                maxWidth: '100%',
               }}
             >
               {[
                 { id: 'goals' as const, label: 'Hedefler' },
                 { id: 'notes' as const, label: 'Gelişim Notları' },
+                { id: 'sessions' as const, label: 'Görüşme Kaydı' },
+                { id: 'tests' as const, label: 'Ders Detayları' },
+                { id: 'assignments' as const, label: 'Aktif Ödevler' },
+                { id: 'studies' as const, label: 'Son Çalışmalar' },
               ].map((tab) => {
                 const isActive = activeDetailTab === tab.id;
                 return (
@@ -830,11 +892,20 @@ export const CoachingTab: React.FC<{
               })}
             </div>
 
-            {activeDetailTab === 'goals' && (
-              <GlassCard
-                title="Koçluk Hedefleri"
-                subtitle="Öğrenciniz için haftalık/okuma hedefleri belirleyin."
-              >
+            {(() => {
+              const tabTitles: Record<typeof activeDetailTab, { title: string; subtitle: string }> = {
+                goals: { title: 'Hedefler', subtitle: '' },
+                notes: { title: 'Gelişim Notları', subtitle: 'Görüşmelerinizden kısa notlar alın.' },
+                sessions: { title: 'Görüşme Kaydı', subtitle: 'Seanslar ve kayıtlar.' },
+                tests: { title: 'Ders Detayları', subtitle: 'Öğrenciye ait test özeti ve sonuçlar' },
+                assignments: { title: 'Aktif Ödevler', subtitle: 'Yaklaşan veya devam eden görevler' },
+                studies: { title: 'Son Çalışmalar', subtitle: 'Video ve içerik izleme' },
+              };
+              const { title, subtitle } = tabTitles[activeDetailTab];
+              return (
+                <GlassCard title={title} subtitle={subtitle}>
+                  {activeDetailTab === 'goals' && (
+                  <>
                 <div
                   style={{
                     display: 'grid',
@@ -843,6 +914,7 @@ export const CoachingTab: React.FC<{
                   }}
                 >
                   <div
+                    className="coaching-detail-goals-row"
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1.1fr)',
@@ -878,6 +950,14 @@ export const CoachingTab: React.FC<{
                         id="goal-deadline"
                         type="date"
                         value={goalForm.deadline}
+                        onFocus={() => {
+                          if (!goalForm.deadline) {
+                            setGoalForm((prev) => ({
+                              ...prev,
+                              deadline: new Date().toISOString().slice(0, 10),
+                            }));
+                          }
+                        }}
                         onChange={(e) =>
                           setGoalForm((prev) => ({ ...prev, deadline: e.target.value }))
                         }
@@ -1011,14 +1091,11 @@ export const CoachingTab: React.FC<{
                     );
                   })}
                 </div>
-              </GlassCard>
-            )}
+                  </>
+                  )}
 
-            {activeDetailTab === 'notes' && (
-              <GlassCard
-                title="Gelişim Notları"
-                subtitle="Koçluk görüşmelerinizden kısa notlar alın."
-              >
+                  {activeDetailTab === 'notes' && (
+                  <>
                 <div
                   style={{
                     display: 'grid',
@@ -1137,21 +1214,22 @@ export const CoachingTab: React.FC<{
                     </div>
                   ))}
                 </div>
-              </GlassCard>
-            )}
-          </div>
+                  </>
+                  )}
 
-          {loading ? (
-            <div className="empty-state">Koçluk kayıtları yükleniyor...</div>
-          ) : sessions.length === 0 ? (
-            <div className="empty-state">
-              {selectedStudent
-                ? `${selectedStudent.name} için henüz koçluk kaydı yok.`
-                : 'Koçluk kaydı bulunamadı.'}
-            </div>
-          ) : (
-            <div className="list-stack">
-              {sessions.map((session) => (
+                  {activeDetailTab === 'sessions' && (
+                    <>
+                      {loading ? (
+                        <div className="empty-state">Koçluk kayıtları yükleniyor...</div>
+                      ) : sessions.length === 0 ? (
+                        <div className="empty-state">
+                          {selectedStudent
+                            ? `${selectedStudent.name} için henüz koçluk kaydı yok.`
+                            : 'Koçluk kaydı bulunamadı.'}
+                        </div>
+                      ) : (
+                        <div className="list-stack">
+                          {sessions.map((session) => (
                 <div key={session.id} className="list-row">
                   <div style={{ flex: 1 }}>
                     <strong
@@ -1238,129 +1316,151 @@ export const CoachingTab: React.FC<{
                 </div>
               ))}
             </div>
-          )}
+                      )}
+                    </>
+                  )}
 
-          <div style={{ marginTop: '1.25rem' }}>
-            <GlassCard
-              title="Sınav Performansı"
-              subtitle="Koçluk yaptığınız öğrenciye ait test sonuçları"
-            >
-              {profileLoading && <div className="empty-state">Öğrenci verileri yükleniyor...</div>}
-              {!profileLoading && !studentProfile && (
-                <div className="empty-state">
-                  Öğrenci seçerek koçluk için performans detaylarını görüntüleyin.
-                </div>
-              )}
-              {!profileLoading && studentProfile && studentResults.length === 0 && (
-                <div className="empty-state">Bu öğrenci için henüz test sonucu bulunmuyor.</div>
-              )}
-              {studentProfile && studentResults.length > 0 && (
-                <div className="list-stack" style={{ maxHeight: 320, overflow: 'auto' }}>
-                  {studentResults.map((result) => {
-                    const testTitle = testTitleById.get(result.testId) ?? 'Test';
-                    const minutes = Math.round(result.durationSeconds / 60);
-                    return (
-                      <div key={result.id} className="list-row">
-                        <div style={{ flex: 1 }}>
-                          <strong style={{ display: 'block' }}>{testTitle}</strong>
-                          <small
-                            style={{
-                              display: 'block',
-                              marginTop: '0.15rem',
-                              color: 'var(--color-text-muted)',
-                            }}
-                          >
-                            {formatShortDate(result.completedAt)} · {minutes} dk
-                          </small>
-                        </div>
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'flex-end',
-                            gap: '0.25rem',
-                            fontSize: '0.8rem',
-                          }}
-                        >
-                          <span>
-                            {result.correctCount} D / {result.incorrectCount} Y / {result.blankCount} B
-                          </span>
-                          <TagChip label={`${result.scorePercent}%`} tone="success" />
-                        </div>
+                  {activeDetailTab === 'tests' && (
+                    <>
+                      <div className="metric-grid" style={{ marginBottom: '1rem' }}>
+                        <MetricCard
+                          label="Çözülen Test"
+                          value={profileLoading ? '…' : `${totalTests}`}
+                          helper="Toplam bireysel test"
+                          trendLabel="Koçluk için hazır veri"
+                          trendTone="positive"
+                        />
+                        <MetricCard
+                          label="Ortalama Başarı"
+                          value={profileLoading ? '…' : `${aggregateStats.avgScore}%`}
+                          helper="Tüm testler"
+                          trendLabel="Genel seviye"
+                          trendTone="neutral"
+                        />
+                        <MetricCard
+                          label="Doğru / Yanlış / Boş"
+                          value={profileLoading ? '…' : `${aggregateStats.totalCorrect} / ${aggregateStats.totalIncorrect} / ${aggregateStats.totalBlank}`}
+                          helper="Toplam soru"
+                          trendLabel="Detay için tabloyu incele"
+                          trendTone="neutral"
+                        />
+                        <MetricCard
+                          label="Toplam Süre"
+                          value={profileLoading ? '…' : `${aggregateStats.totalMinutes} dk`}
+                          helper="Test çözme süresi"
+                          trendLabel="Çalışma yoğunluğu"
+                          trendTone="positive"
+                        />
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </GlassCard>
-          </div>
+                      {profileLoading && <div className="empty-state">Öğrenci verileri yükleniyor...</div>}
+                      {!profileLoading && !studentProfile && (
+                        <div className="empty-state">
+                          Öğrenci seçerek koçluk için performans detaylarını görüntüleyin.
+                        </div>
+                      )}
+                      {!profileLoading && studentProfile && studentResults.length === 0 && (
+                        <div className="empty-state">Bu öğrenci için henüz test sonucu bulunmuyor.</div>
+                      )}
+                      {studentProfile && studentResults.length > 0 && (
+                        <div className="list-stack" style={{ maxHeight: 320, overflow: 'auto' }}>
+                          {studentResults.map((result) => {
+                            const testTitle = testTitleById.get(result.testId) ?? 'Test';
+                            const minutes = Math.round(result.durationSeconds / 60);
+                            return (
+                              <div key={result.id} className="list-row">
+                                <div style={{ flex: 1 }}>
+                                  <strong style={{ display: 'block' }}>{testTitle}</strong>
+                                  <small
+                                    style={{
+                                      display: 'block',
+                                      marginTop: '0.15rem',
+                                      color: 'var(--color-text-muted)',
+                                    }}
+                                  >
+                                    {formatShortDate(result.completedAt)} · {minutes} dk
+                                  </small>
+                                </div>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'flex-end',
+                                    gap: '0.25rem',
+                                    fontSize: '0.8rem',
+                                  }}
+                                >
+                                  <span>
+                                    {result.correctCount} D / {result.incorrectCount} Y / {result.blankCount} B
+                                  </span>
+                                  <TagChip label={`${result.scorePercent}%`} tone="success" />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
 
-          {studentProfile && (
-            <div
-              style={{
-                marginTop: '1.25rem',
-                display: 'grid',
-                gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-                gap: '1rem',
-              }}
-            >
-              <GlassCard
-                title="Aktif Ödevler"
-                subtitle="Yaklaşan veya devam eden görevler"
-              >
-                {activeAssignments.length === 0 ? (
-                  <div className="empty-state">Bu öğrenci için aktif ödev bulunmuyor.</div>
-                ) : (
-                  <div className="list-stack">
-                    {activeAssignments.slice(0, 5).map((a) => (
-                      <div key={a.id} className="list-row">
-                        <div style={{ flex: 1 }}>
-                          <strong style={{ display: 'block' }}>{a.title}</strong>
-                          <small
-                            style={{
-                              display: 'block',
-                              marginTop: '0.15rem',
-                              color: 'var(--color-text-muted)',
-                            }}
-                          >
-                            Son teslim: {formatShortDate(a.dueDate)}
-                          </small>
+                  {activeDetailTab === 'assignments' && (
+                    <>
+                      {activeAssignments.length === 0 ? (
+                        <div className="empty-state">Bu öğrenci için aktif ödev bulunmuyor.</div>
+                      ) : (
+                        <div className="list-stack">
+                          {activeAssignments.slice(0, 5).map((a) => (
+                            <div key={a.id} className="list-row">
+                              <div style={{ flex: 1 }}>
+                                <strong style={{ display: 'block' }}>{a.title}</strong>
+                                <small
+                                  style={{
+                                    display: 'block',
+                                    marginTop: '0.15rem',
+                                    color: 'var(--color-text-muted)',
+                                  }}
+                                >
+                                  Son teslim: {formatShortDate(a.dueDate)}
+                                </small>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </GlassCard>
+                      )}
+                    </>
+                  )}
 
-              <GlassCard
-                title="Son Çalışmalar"
-                subtitle="Video ve içerik izleme"
-              >
-                {recentWatchRecords.length === 0 ? (
-                  <div className="empty-state">Son çalışma kaydı bulunmuyor.</div>
-                ) : (
-                  <div className="list-stack">
-                    {recentWatchRecords.map((w) => (
-                      <div key={w.contentId} className="list-row">
-                        <div style={{ flex: 1 }}>
-                          <strong style={{ display: 'block' }}>{w.contentId}</strong>
-                          <small
-                            style={{
-                              display: 'block',
-                              marginTop: '0.15rem',
-                              color: 'var(--color-text-muted)',
-                            }}
-                          >
-                            % {Math.round(w.watchedPercent)} tamamlandı ·{' '}
-                            {w.completed ? 'Bitti' : 'Devam ediyor'}
-                          </small>
+                  {activeDetailTab === 'studies' && (
+                    <>
+                      {recentWatchRecords.length === 0 ? (
+                        <div className="empty-state">Son çalışma kaydı bulunmuyor.</div>
+                      ) : (
+                        <div className="list-stack">
+                          {recentWatchRecords.map((w) => (
+                            <div key={w.contentId} className="list-row">
+                              <div style={{ flex: 1 }}>
+                                <strong style={{ display: 'block' }}>{w.contentId}</strong>
+                                <small
+                                  style={{
+                                    display: 'block',
+                                    marginTop: '0.15rem',
+                                    color: 'var(--color-text-muted)',
+                                  }}
+                                >
+                                  % {Math.round(w.watchedPercent)} tamamlandı ·{' '}
+                                  {w.completed ? 'Bitti' : 'Devam ediyor'}
+                                </small>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </GlassCard>
+                      )}
+                    </>
+                  )}
+                </GlassCard>
+              );
+            })()}
             </div>
+          </>
           )}
         </div>
       </div>

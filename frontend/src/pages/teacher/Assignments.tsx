@@ -125,7 +125,8 @@ export const TeacherAssignmentsPage: React.FC = () => {
   return (
     <DashboardLayout
       accent="indigo"
-      brand="SKYTECH"
+      brand="SKY"
+      brandSuffix="ANALİZ"
       tagline="Bireysel Öğrenci Ödevleri"
       title="Bireysel Ödev Sistemi"
       subtitle="Belirli öğrencilere ders bazlı ödev atayın ve ilerlemelerini takip edin."

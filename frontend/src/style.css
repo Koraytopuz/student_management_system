@@ -2,6 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ================================
+   Teacher Students – filter & table
+   ================================ */
+
+.students-filter-bar {
+  gap: 0.75rem;
+}
+
+.students-filter-select {
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.students-filter-select:focus {
+  border-color: rgba(59, 130, 246, 0.8);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4);
+}
+
+.students-table-wrapper {
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.4));
+  background: var(--color-surface-soft, rgba(15, 23, 42, 0.35));
+  overflow: hidden;
+}
+
+.students-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.students-table thead {
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.students-table th,
+.students-table td {
+  padding: 0.55rem 0.85rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.students-table th {
+  font-weight: 600;
+  color: var(--color-text-muted, #94a3b8);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.students-table tbody tr:nth-child(even) {
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.students-table tbody tr:hover {
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.students-table-row--active {
+  background: rgba(56, 189, 248, 0.16) !important;
+}
+
+/* Veli listesi için basit skeleton efektleri */
+.parent-skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.parent-skeleton-row {
+  height: 40px;
+  border-radius: 999px;
+  background: linear-gradient(90deg,
+      rgba(148, 163, 184, 0.12) 0%,
+      rgba(148, 163, 184, 0.24) 40%,
+      rgba(148, 163, 184, 0.12) 80%);
+  background-size: 200% 100%;
+  animation: parent-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes parent-skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -210,6 +298,33 @@ a {
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.4);
 }
 
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.topbar-menu-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(15, 23, 42, 0.6);
+  color: #e5e7eb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.15s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.topbar-menu-btn:hover {
+  background: rgba(30, 64, 175, 0.5);
+  transform: scale(1.03);
+}
+
 .topbar-left .logo-text {
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -220,6 +335,29 @@ a {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+/* Çıkış butonu – h-8 px-3 text-xs */
+.topbar-logout-btn {
+  height: 2rem;
+  padding: 0 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.5);
+  background: var(--color-primary, #2563eb);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.topbar-logout-btn:hover {
+  background: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.8);
 }
 
 .topbar-theme {
@@ -431,7 +569,8 @@ a {
   flex-direction: column;
   gap: 0.25rem;
   font-size: 0.9rem;
-  min-width: 0; /* Grid içinde taşmayı önler */
+  min-width: 0;
+  /* Grid içinde taşmayı önler */
 }
 
 .field input,
@@ -608,6 +747,25 @@ button:disabled {
 .questionbank-page .qb-header-btn--blue.qb-header-btn--active {
   border-color: rgba(59, 130, 246, 0.55);
   background: rgba(59, 130, 246, 0.12);
+}
+
+/* Premium header icons */
+.questionbank-page .qb-header-btn .qb-icon-premium {
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.35));
+  opacity: 0.95;
+}
+
+.questionbank-page .qb-header-btn--purple .qb-icon-premium {
+  filter: drop-shadow(0 0 8px rgba(167, 139, 250, 0.5));
+}
+
+.questionbank-page .qb-header-btn:hover .qb-icon-premium {
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.5));
+  opacity: 1;
+}
+
+.questionbank-page .qb-header-btn--purple:hover .qb-icon-premium {
+  filter: drop-shadow(0 0 12px rgba(167, 139, 250, 0.6));
 }
 
 /* Primary actions */
@@ -1005,16 +1163,21 @@ button:disabled {
   margin-bottom: 0.25rem;
 }
 
-/* Dashboard primitives */
+/* Dashboard primitives – Collapsible sticky sidebar */
 .dashboard-shell {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  --sidebar-width: 280px;
+  --sidebar-width-collapsed: 76px;
   min-height: 100vh;
   background: transparent;
   width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
-  padding-inline: 1.5rem;
+  margin: 0;
+  padding-inline-start: var(--sidebar-width);
+  padding-inline-end: 1.5rem;
+  transition: padding-inline-start 0.3s ease-in-out;
+}
+
+.dashboard-shell.dashboard-shell--sidebar-collapsed {
+  padding-inline-start: var(--sidebar-width-collapsed);
 }
 
 .dashboard-shell.accent-emerald {
@@ -1039,15 +1202,24 @@ button:disabled {
 }
 
 .dashboard-sidebar {
+  --sidebar-width: 280px;
+  --sidebar-width-collapsed: 76px;
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: var(--sidebar-width);
+  min-height: 100vh;
+  height: 100vh;
   background: var(--accent-gradient);
   color: #f3f4f6;
-  padding: 2rem 1.75rem;
+  padding: 1.25rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.5rem;
   box-shadow: 0 25px 50px rgba(2, 6, 23, 0.6);
-  position: relative;
   overflow: hidden;
+  transition: width 0.3s ease-in-out;
+  z-index: 50;
 }
 
 .dashboard-sidebar::after {
@@ -1058,19 +1230,120 @@ button:disabled {
   pointer-events: none;
 }
 
+.dashboard-sidebar.dashboard-sidebar--collapsed {
+  width: var(--sidebar-width-collapsed);
+  padding-inline: 0.5rem;
+}
+
+.dashboard-sidebar--collapsed .sidebar-header-row {
+  justify-content: center;
+}
+
+.dashboard-sidebar--collapsed .sidebar-brand {
+  display: none;
+}
+
+.dashboard-sidebar--collapsed .menu-item-text {
+  display: none;
+}
+
+.sidebar-header-row {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 3.5rem;
+}
+
 .sidebar-brand {
   position: relative;
   z-index: 1;
+  flex: 1;
+  min-width: 0;
 }
 
-.sidebar-brand h1 {
+.sidebar-brand .sidebar-eyebrow {
+  margin: 0 0 0.2rem;
+  font-size: 0.6rem;
+  color: rgba(226, 232, 240, 0.85);
+}
+
+.sidebar-brand .sidebar-brand-title {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 1.25rem;
   letter-spacing: 0.08em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sidebar-brand span {
   font-weight: 300;
+}
+
+.sidebar-brand .sidebar-brand-highlight {
+  color: #2563eb;
+  font-weight: 600;
+  text-shadow: 0 0 12px rgba(37, 99, 235, 0.45);
+  letter-spacing: 0.06em;
+}
+
+.sidebar-toggle-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.15s ease;
+  box-shadow: none;
+}
+
+.sidebar-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  transform: scale(1.05);
+}
+
+.sidebar-toggle-btn svg {
+  color: inherit;
+  flex-shrink: 0;
+}
+
+/* Sidebar menü alanı: taşınca dikey scroll, scrollbar mümkün olduğunca gizli */
+.sidebar-menu-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 0 -0.25rem;
+  padding: 0 0.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+.sidebar-menu-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-menu-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-menu-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+}
+
+.sidebar-menu-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
 }
 
 .sidebar-menu {
@@ -1079,6 +1352,10 @@ button:disabled {
   gap: 0.35rem;
   position: relative;
   z-index: 1;
+}
+
+.menu-item-wrapper {
+  position: relative;
 }
 
 .menu-item {
@@ -1091,13 +1368,25 @@ button:disabled {
   background: transparent;
   color: inherit;
   cursor: pointer;
+  width: 100%;
+  text-align: left;
+  font: inherit;
   transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+.dashboard-sidebar--collapsed .menu-item {
+  padding: 0.75rem;
+  justify-content: center;
 }
 
 .menu-item:hover {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.12);
   transform: translateX(4px);
+}
+
+.dashboard-sidebar--collapsed .menu-item:hover {
+  transform: translateX(2px);
 }
 
 .menu-item.active {
@@ -1107,14 +1396,21 @@ button:disabled {
 }
 
 .menu-item-icon {
+  flex-shrink: 0;
   width: 36px;
   height: 36px;
+  min-width: 36px;
   border-radius: 0.85rem;
   background: rgba(255, 255, 255, 0.14);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fefefe;
+}
+
+.menu-item-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .menu-item-label {
@@ -1137,7 +1433,115 @@ button:disabled {
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* Tooltip when sidebar collapsed */
+.menu-item-tooltip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0.5rem 0.85rem;
+  border-radius: 0.6rem;
+  background: rgba(15, 23, 42, 0.95);
+  color: #f1f5f9;
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  z-index: 100;
+}
+
+.menu-item-wrapper:hover .menu-item-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Accordion menü – Dersler vb. ana kategoriler */
+.menu-accordion-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.menu-item-category {
+  position: relative;
+}
+
+.menu-accordion-chevron {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(226, 232, 240, 0.8);
+  transition: transform 0.25s ease;
+}
+
+.menu-accordion-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  transition: grid-template-rows 0.3s ease-in-out;
+}
+
+.menu-accordion-content--open {
+  grid-template-rows: 1fr;
+}
+
+.dashboard-sidebar--collapsed .menu-accordion-content {
+  grid-template-rows: 0fr !important;
+  overflow: hidden;
+}
+
+.dashboard-sidebar--collapsed .menu-accordion-inner {
+  visibility: hidden;
+  overflow: hidden;
+}
+
+.menu-accordion-inner {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.menu-accordion-content .menu-item {
+  margin-left: 1rem;
+  padding: 0.6rem 0.85rem;
+  padding-left: calc(1rem + 28px);
+}
+
+.menu-item-sub .menu-item-icon-sub {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  font-size: 0.9rem;
+}
+
+.menu-item-sub .menu-item-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.menu-item-sub .menu-item-desc {
+  font-size: 0.72rem;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.menu-item-sub:hover .menu-item-label {
+  color: #f1f5f9;
+}
+
+.menu-item-sub.active .menu-item-label {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
 .sidebar-logout {
+  flex-shrink: 0;
   margin-top: auto;
   position: relative;
   z-index: 1;
@@ -1152,6 +1556,17 @@ button:disabled {
   color: #f1f5f9;
   font-weight: 600;
   box-shadow: none;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.dashboard-sidebar--collapsed .sidebar-logout {
+  padding: 0.75rem;
+}
+
+.dashboard-sidebar--collapsed .sidebar-logout span {
+  display: none;
 }
 
 .sidebar-logout:hover {
@@ -1168,9 +1583,10 @@ button:disabled {
   border: none;
   border-radius: 0;
   box-shadow: none;
-  max-width: 1120px;
+  max-width: none;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
+  min-height: 100vh;
 }
 
 .dashboard-header {
@@ -1239,6 +1655,35 @@ button:disabled {
   outline: 2px solid var(--color-primary, #2563eb);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Tema uyumlu: aydınlık ve karanlık temada okunabilir */
+.breadcrumb-sep {
+  color: var(--color-text-muted) !important;
+  flex-shrink: 0;
+}
+
+.breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--color-text-main);
+}
+
+.breadcrumb-link:hover {
+  color: var(--color-primary, #2563eb);
+  text-decoration: underline;
+}
+
+.breadcrumb-text {
+  color: var(--color-text-muted);
+}
+
+.breadcrumb-current {
+  color: var(--color-text-main);
+  font-weight: 600;
 }
 
 .dashboard-user {
@@ -1394,11 +1839,17 @@ button:disabled {
 
 .ghost-btn {
   border-radius: var(--radius-pill);
-  padding: 0.55rem 1.2rem;
+  height: 2rem;
+  padding: 0 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   border: 1px solid rgba(148, 163, 184, 0.55);
   background: rgba(248, 250, 252, 0.9);
   color: var(--color-text-main);
   font-weight: 600;
+  font-size: 0.75rem;
 }
 
 :root[data-theme='dark'] .ghost-btn {
@@ -1409,12 +1860,39 @@ button:disabled {
 
 .primary-btn {
   border-radius: var(--radius-pill);
-  padding: 0.6rem 1.4rem;
+  height: 2rem;
+  padding: 0 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   border: none;
   background: linear-gradient(135deg, var(--accent-color), var(--accent-strong));
   color: #f8fafc;
   font-weight: 600;
+  font-size: 0.75rem;
   box-shadow: 0 18px 35px rgba(0, 0, 0, 0.16);
+}
+
+/* Dashboard panelindeki primary butonlar: Çıkış butonu ile aynı mavi */
+.main--dashboard .primary-btn,
+.dashboard-main .primary-btn {
+  background: var(--color-primary, #2563eb);
+  border: 1px solid rgba(37, 99, 235, 0.5);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+}
+
+.main--dashboard .primary-btn:hover,
+.dashboard-main .primary-btn:hover {
+  background: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.8);
+}
+
+.main--dashboard .primary-btn:disabled,
+.dashboard-main .primary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .list-stack {
@@ -1443,6 +1921,82 @@ button:disabled {
 
 .list-row small {
   color: var(--color-text-muted);
+}
+
+/* Kişisel Takip – öğrenci listesi premium, açık mavi tonlar, modern kartlar */
+.coaching-student-list {
+  background: linear-gradient(180deg, rgba(219, 234, 254, 0.35) 0%, rgba(191, 219, 254, 0.2) 100%);
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  border-radius: 14px;
+  padding: 0.6rem;
+  gap: 0.6rem;
+  box-shadow: 0 2px 12px rgba(37, 99, 235, 0.06);
+}
+
+.coaching-student-list .list-row {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(147, 197, 253, 0.4);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.05);
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.coaching-student-list .list-row:hover {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(147, 197, 253, 0.6);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+}
+
+.coaching-student-list .list-row:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.5);
+  outline-offset: 2px;
+}
+
+.coaching-student-list .list-row--selected {
+  background: rgba(219, 234, 254, 0.95);
+  border-color: rgba(37, 99, 235, 0.5);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+
+.coaching-student-list .empty-state {
+  padding: 1.25rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px dashed rgba(147, 197, 253, 0.5);
+  color: var(--color-text-muted);
+}
+
+/* Koyu tema: öğrenci listesi premium */
+:root[data-theme='dark'] .coaching-student-list {
+  background: linear-gradient(180deg, rgba(30, 58, 138, 0.25) 0%, rgba(30, 64, 175, 0.12) 100%);
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme='dark'] .coaching-student-list .list-row {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #e5e7eb;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+:root[data-theme='dark'] .coaching-student-list .list-row:hover {
+  background: rgba(51, 65, 85, 0.7);
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+}
+
+:root[data-theme='dark'] .coaching-student-list .list-row--selected {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
+}
+
+:root[data-theme='dark'] .coaching-student-list .empty-state {
+  background: rgba(30, 41, 59, 0.5);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #94a3b8;
 }
 
 .tag-chip {
@@ -1531,6 +2085,93 @@ button:disabled {
   gap: 1.25rem;
 }
 
+/* Premium takvim kartları – yatay/dikey oran dengeli, içerik ferah */
+.calendar-premium {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.calendar-premium .calendar-day {
+  min-width: 0;
+  border-radius: 16px;
+  padding: 1.25rem 1.5rem;
+  background: linear-gradient(145deg, var(--color-surface) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.calendar-premium .calendar-day:hover {
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(59, 130, 246, 0.06);
+  transform: translateY(-1px);
+}
+
+.calendar-premium .calendar-day-header {
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text-main);
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--color-border-subtle);
+}
+
+.calendar-premium .calendar-day-events {
+  gap: 0.75rem;
+}
+
+.calendar-premium .calendar-event {
+  padding: 0.85rem 1.1rem;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.calendar-premium .calendar-event:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+.calendar-premium .calendar-event-detail {
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.calendar-event--selected {
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.12) !important;
+  background: rgba(59, 130, 246, 0.06) !important;
+}
+
+.calendar-event-detail {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.calendar-event-description {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.calendar-event-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.calendar-event-type {
+  text-transform: capitalize;
+}
+
 .calendar-day {
   border: 1px solid var(--list-row-border);
   border-radius: var(--radius-lg);
@@ -1582,6 +2223,44 @@ button:disabled {
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
+.calendar-event-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+/* Etkinlik aksiyonları: üstte Düzenle, altta Sil – boyut sabit */
+.calendar-event-actions {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column !important;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  align-items: flex-end;
+}
+
+.calendar-event-actions .ghost-btn {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.7rem;
+  min-width: 0;
+  width: auto;
+  flex-shrink: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.calendar-event-delete {
+  border-color: rgba(248, 113, 113, 0.6) !important;
+  color: #b91c1c !important;
+}
+
+.calendar-event-delete:hover {
+  background: rgba(248, 113, 113, 0.08) !important;
+}
+
 .calendar-event-icon {
   flex-shrink: 0;
   display: inline-flex;
@@ -1600,12 +2279,28 @@ button:disabled {
   font-weight: 500;
   color: var(--color-text-main);
   line-height: 1.4;
+  word-break: break-word;
 }
 
 .calendar-event-time {
   flex-shrink: 0;
   font-size: 0.75rem;
   color: var(--color-text-muted);
+}
+
+.calendar-recent-announcements {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.calendar-recent-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .calendar-events-list {
@@ -2211,25 +2906,23 @@ button:disabled {
   visibility: visible;
 }
 
-/* Tablet: grid tek kolon, sidebar üstte */
+/* Tablet: layout devam, sadece padding ayarı */
 @media (max-width: 1100px) {
-  .dashboard-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .dashboard-sidebar {
-    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-    padding: 1.5rem;
-    box-shadow: none;
-  }
-
   .dashboard-main {
     padding: 1.75rem;
   }
 }
 
-/* Mobil: hamburger + slide-in drawer */
+/* Mobil: sidebar gizli, overlay ile açılır */
 @media (max-width: 768px) {
+  .dashboard-shell {
+    padding-inline-start: 0 !important;
+  }
+
+  .dashboard-shell.dashboard-shell--sidebar-collapsed {
+    padding-inline-start: 0 !important;
+  }
+
   .sidebar-hamburger {
     display: flex;
   }
@@ -2238,38 +2931,58 @@ button:disabled {
     display: block;
   }
 
-  .dashboard-sidebar {
+  .dashboard-sidebar.dashboard-sidebar--mobile {
     position: fixed;
     top: 0;
     left: 0;
     bottom: 0;
     width: min(300px, 85vw);
     max-width: 300px;
+    min-height: 100vh;
+    height: 100vh;
     z-index: 99;
     transform: translateX(-100%);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    transition: transform 0.3s ease-in-out, box-shadow 0.3s ease;
     border-radius: 0;
-    box-shadow: none;
+    padding: 1.5rem 1.25rem;
   }
 
-  .dashboard-sidebar--open {
+  .dashboard-sidebar.dashboard-sidebar--mobile.dashboard-sidebar--open {
     transform: translateX(0);
     box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5);
   }
 
-  .sidebar-menu {
-    flex-direction: column;
+  .dashboard-sidebar.dashboard-sidebar--mobile.dashboard-sidebar--collapsed {
+    width: min(300px, 85vw);
+    padding-inline: 1.25rem;
+  }
+
+  .dashboard-sidebar.dashboard-sidebar--mobile .menu-item-text {
+    display: block;
+  }
+
+  .dashboard-sidebar.dashboard-sidebar--mobile .menu-item-tooltip {
+    display: none;
   }
 
   .menu-item {
     flex: none;
     min-height: 48px;
     padding: 0.85rem 1rem;
+    justify-content: flex-start;
   }
 
   .dashboard-main {
     padding: 1rem;
     padding-top: 4.5rem;
+  }
+
+  .coaching-personal-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .coaching-detail-goals-row {
+    grid-template-columns: 1fr !important;
   }
 }
 
@@ -4174,7 +4887,6 @@ button:disabled {
 
 .annual-report-score-gauge-fg {
   fill: none;
-  stroke: url(#annual-score-gradient, linear-gradient(90deg, #22c55e, #a7f3d0));
   stroke: #22c55e;
   stroke-linecap: round;
   stroke-width: 6;
@@ -4946,4 +5658,11 @@ button:disabled {
   color: #0f172a;
   background: #ffffff;
   border-color: #cbd5e1;
+}
+
+/* TeacherMeetingModal: mobilde tek sütun, butonlar taşmasın */
+@media (max-width: 640px) {
+  .teacher-meeting-modal-grid {
+    grid-template-columns: 1fr !important;
+  }
 }

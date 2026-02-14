@@ -212,18 +212,6 @@ export const ParentDashboard: React.FC = () => {
         onClick: () => setActiveTab('messages'),
       },
       {
-        id: 'notifications',
-        label: 'Bildirimler',
-        icon: <Bell size={18} />,
-        description: 'Kurum bildirimleri',
-        badge:
-          (notificationsState.data ?? []).filter((n) => !n.read).length > 0
-            ? (notificationsState.data ?? []).filter((n) => !n.read).length
-            : undefined,
-        active: activeTab === 'notifications',
-        onClick: () => setActiveTab('notifications'),
-      },
-      {
         id: 'feedback',
         label: 'Değerlendirme',
         icon: <BookOpen size={18} />,
@@ -240,7 +228,7 @@ export const ParentDashboard: React.FC = () => {
         onClick: () => setActiveTab('complaints'),
       },
     ],
-    [activeTab, conversationsState.data, notificationsState.data],
+    [activeTab, conversationsState.data],
   );
 
   const parentBreadcrumbs = useMemo<BreadcrumbItem[]>(() => {
@@ -263,7 +251,8 @@ export const ParentDashboard: React.FC = () => {
   return (
     <DashboardLayout
       accent="emerald"
-      brand="SKYTECH"
+      brand="SKY"
+      brandSuffix="ANALİZ"
       tagline={selectedChild?.studentName ?? 'Veli Yönetim Paneli'}
       title="Veli Yönetim Paneli"
       subtitle="Akademik performans, takvim ve mesajları gerçek zamanlı takip edin."

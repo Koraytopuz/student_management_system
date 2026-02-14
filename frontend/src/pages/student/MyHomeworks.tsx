@@ -125,7 +125,8 @@ export const StudentMyHomeworksPage: React.FC = () => {
   return (
     <DashboardLayout
       accent="indigo"
-      brand="SKYTECH"
+      brand="SKY"
+      brandSuffix="ANALİZ"
       tagline="Bireysel ödevlerinizi buradan takip edin"
       title="Ödevlerim"
       subtitle="Öğretmeninizin size özel verdiği ödevleri görüntüleyin ve tamamlayın."

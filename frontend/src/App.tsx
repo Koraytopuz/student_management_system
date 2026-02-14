@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Moon, Sun } from 'lucide-react';
+import { Bell, BookOpen, ChevronRight, Moon, Sun } from 'lucide-react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { LoginPage } from './LoginPage';
@@ -13,6 +13,8 @@ import { TeacherAssignmentsPage } from './pages/teacher/Assignments';
 import { StudentMyHomeworksPage } from './pages/student/MyHomeworks';
 import { AnalysisReportPage } from './pages/student/AnalysisReport';
 import { ParentChildHomeworksPage } from './pages/parent/ChildHomeworks';
+import { DashboardSidebarProvider, useDashboardSidebar } from './DashboardSidebarContext';
+import { ReadingModeProvider, useReadingMode } from './ReadingModeContext';
 
 const ProtectedRoute: React.FC<{
   children: React.ReactElement;
@@ -30,8 +32,9 @@ const ProtectedRoute: React.FC<{
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
+  const readingMode = useReadingMode();
+  const showReadingModeButton = user && (user.role === 'teacher' || user.role === 'student') && /^\/(teacher|student)/.test(location.pathname);
 
   const handleGoToNotifications = (notificationId?: string) => {
     const path = location.pathname;
@@ -82,43 +85,83 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             ? '/parent'
             : '/';
 
+  const sidebarCtx = useDashboardSidebar();
+
   return (
     <div>
-      <header className="topbar">
-        <div className="topbar-left">
-          <Link to={homeLink} className="logo-text">
-            {effectivePanelTitle ?? 'Öğrenci Yönetim Sistemi'}
-          </Link>
-        </div>
-        <div className="topbar-right">
-          <div className="topbar-theme">
-            <button
-              type="button"
-              className="theme-toggle"
-              onClick={() => setIsDark((prev) => !prev)}
-              aria-label={isDark ? 'Açık tema' : 'Koyu tema'}
-            >
-              {isDark ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
+        <header className="topbar">
+          <div className="topbar-left">
+            {effectivePanelTitle && sidebarCtx && (
+              <button
+                type="button"
+                className="topbar-menu-btn"
+                onClick={() =>
+                  sidebarCtx.isMobile
+                    ? (sidebarCtx.isOverlayOpen ? sidebarCtx.closeOverlay() : sidebarCtx.openOverlay())
+                    : sidebarCtx.toggleExpanded()
+                }
+                aria-label={
+                  (sidebarCtx.isMobile ? sidebarCtx.isOverlayOpen : sidebarCtx.isExpanded)
+                    ? 'Menüyü kapat'
+                    : 'Menüyü aç'
+                }
+                aria-expanded={sidebarCtx.isMobile ? sidebarCtx.isOverlayOpen : sidebarCtx.isExpanded}
+              >
+                {(sidebarCtx.isMobile ? sidebarCtx.isOverlayOpen : sidebarCtx.isExpanded) ? (
+                  <ChevronRight size={22} />
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="4" x2="20" y1="12" y2="12" />
+                    <line x1="4" x2="20" y1="6" y2="6" />
+                    <line x1="4" x2="20" y1="18" y2="18" />
+                  </svg>
+                )}
+              </button>
+            )}
+            <Link to={homeLink} className="logo-text">
+              {effectivePanelTitle ?? 'Öğrenci Yönetim Sistemi'}
+            </Link>
           </div>
-          {user ? (
-            <>
-              {panelTitle && user.role !== 'admin' && /^\/(teacher|student|parent)/.test(location.pathname) && (
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  aria-label="Bildirimler"
-                  onClick={() => handleGoToNotifications()}
-                  style={{ padding: '0.5rem' }}
-                >
-                  <Bell size={18} />
-                </button>
-              )}
-              {panelTitle && <span className="panel-pill">{panelTitle}</span>}
-              <span className="user-pill">
-                {user.name} ({user.role})
-              </span>
-              <button type="button" onClick={logout}>
+          <div className="topbar-right">
+            <div className="topbar-theme">
+              <button
+                type="button"
+                className="theme-toggle"
+                onClick={() => setIsDark((prev) => !prev)}
+                aria-label={isDark ? 'Açık tema' : 'Koyu tema'}
+              >
+                {isDark ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+            </div>
+            {user ? (
+              <>
+                {showReadingModeButton && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    aria-label={readingMode.readingMode ? 'Okuma modunu kapat' : 'Okuma modunu aç'}
+                    onClick={() => readingMode.setReadingMode((p) => !p)}
+                    style={{
+                      padding: '0.5rem',
+                      border: readingMode.readingMode ? '1px solid rgba(99,102,241,0.9)' : undefined,
+                      background: readingMode.readingMode ? 'rgba(99,102,241,0.15)' : undefined,
+                    }}
+                  >
+                    <BookOpen size={18} />
+                  </button>
+                )}
+                {panelTitle && user.role !== 'admin' && /^\/(teacher|student|parent)/.test(location.pathname) && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    aria-label="Bildirimler"
+                    onClick={() => handleGoToNotifications()}
+                    style={{ padding: '0.5rem' }}
+                  >
+                    <Bell size={18} />
+                  </button>
+                )}
+                <button type="button" className="topbar-logout-btn" onClick={logout}>
                 Çıkış
               </button>
             </>
@@ -280,7 +323,11 @@ export const App: React.FC = () => {
   return (
     <AuthProvider>
       <BrowserRouter basename={(import.meta.env.BASE_URL || '/').replace(/\/$/, '') || ''}>
-        <AppRoutes />
+        <DashboardSidebarProvider>
+          <ReadingModeProvider>
+            <AppRoutes />
+          </ReadingModeProvider>
+        </DashboardSidebarProvider>
       </BrowserRouter>
     </AuthProvider>
   );

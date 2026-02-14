@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChevronRight, LogOut, Menu } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LogOut, Menu } from 'lucide-react';
+import { useDashboardSidebar } from '../DashboardSidebarContext';
 
 export type BreadcrumbItem = {
   label: string;
@@ -12,12 +13,8 @@ export interface BreadcrumbProps {
   variant?: 'default' | 'light';
 }
 
-export const Breadcrumb: React.FC<BreadcrumbProps> = ({ items, variant = 'default' }) => {
+export const Breadcrumb: React.FC<BreadcrumbProps> = ({ items }) => {
   if (items.length === 0) return null;
-  const isDark = variant === 'default';
-  const sepColor = isDark ? 'rgba(148,163,184,0.6)' : 'rgba(100,116,139,0.7)';
-  const textColor = isDark ? '#94a3b8' : '#64748b';
-  const hoverColor = isDark ? '#e2e8f0' : '#475569';
 
   return (
     <nav
@@ -39,33 +36,16 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({ items, variant = 'defaul
             {i > 0 && (
               <ChevronRight
                 size={14}
-                style={{ color: sepColor, flexShrink: 0 }}
+                className="breadcrumb-sep"
                 aria-hidden
               />
             )}
             {isClickable ? (
-              <button
-                type="button"
-                onClick={item.onClick}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: 0,
-                  cursor: 'pointer',
-                  color: textColor,
-                  font: 'inherit',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = hoverColor;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = textColor;
-                }}
-              >
+              <button type="button" onClick={item.onClick} className="breadcrumb-link">
                 {item.label}
               </button>
             ) : (
-              <span style={{ color: isLast ? (isDark ? '#e2e8f0' : '#1e293b') : textColor, fontWeight: isLast ? 600 : 400 }}>
+              <span className={isLast ? 'breadcrumb-current' : 'breadcrumb-text'}>
                 {item.label}
               </span>
             )}
@@ -76,6 +56,15 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({ items, variant = 'defaul
   );
 };
 
+export type SidebarSubItem = {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  description?: string;
+  active?: boolean;
+  onClick: () => void;
+};
+
 export type SidebarItem = {
   id: string;
   label: string;
@@ -83,7 +72,9 @@ export type SidebarItem = {
   description?: string;
   badge?: string | number;
   active?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
+  /** Alt menü öğeleri – varsa accordion olarak render edilir */
+  children?: SidebarSubItem[];
 };
 
 export type UserPersona = {
@@ -109,6 +100,8 @@ const accentClass: Record<Accent, string> = {
 export interface DashboardLayoutProps {
   accent?: Accent;
   brand?: string;
+  /** Varsa sidebar başlığında vurgulu gösterilir (örn. "Analiz"); yoksa brand sondan 4 karakter vurgulanır */
+  brandSuffix?: string;
   tagline?: string;
   title: string;
   subtitle?: string;
@@ -125,6 +118,7 @@ export interface DashboardLayoutProps {
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   accent = 'emerald',
   brand = 'AKADEMİPLUS',
+  brandSuffix,
   tagline,
   title,
   subtitle,
@@ -137,20 +131,25 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   children,
 }) => {
   const highlightIndex = Math.max(brand.length - 4, 0);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarCtx = useDashboardSidebar();
+  const [localOverlayOpen, setLocalOverlayOpen] = useState(false);
 
-  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const sidebarOpen = sidebarCtx?.isOverlayOpen ?? localOverlayOpen;
+  const isSidebarExpanded = sidebarCtx?.isExpanded ?? true;
+  const isMobile = sidebarCtx?.isMobile ?? false;
+  const closeSidebar = sidebarCtx?.closeOverlay ?? (() => setLocalOverlayOpen(false));
+  const toggleSidebarExpanded = sidebarCtx?.toggleExpanded ?? (() => {});
 
-  // Menü öğesine tıklanınca mobilde sidebar'ı kapat
+  // Menü öğesine tıklanınca mobilde overlay sidebar'ı kapat
   const handleMenuClick = useCallback(
-    (item: SidebarItem) => {
+    (item: { onClick: () => void }) => {
       item.onClick();
       closeSidebar();
     },
     [closeSidebar],
   );
 
-  // Escape ile sidebar kapat
+  // Escape ile mobil overlay kapat
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeSidebar();
@@ -159,30 +158,77 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     return () => window.removeEventListener('keydown', handler);
   }, [closeSidebar]);
 
-  // Geniş ekranda sidebar açıksa kapat (viewport değişirse)
+  const sidebarCollapsed = !isSidebarExpanded && !isMobile;
+  const [expandedAccordions, setExpandedAccordions] = useState<Set<string>>(() => {
+    const ids = new Set<string>();
+    sidebarItems.forEach((item) => {
+      if (item.children?.some((c) => c.active)) ids.add(item.id);
+    });
+    return ids;
+  });
+
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 769px)');
-    const handler = () => {
-      if (mq.matches) setSidebarOpen(false);
-    };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+    sidebarItems.forEach((item) => {
+      if (item.children?.some((c) => c.active)) {
+        setExpandedAccordions((prev) => (prev.has(item.id) ? prev : new Set(prev).add(item.id)));
+      }
+    });
+  }, [sidebarItems]);
+
+  const toggleAccordion = useCallback((id: string) => {
+    setExpandedAccordions((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }, []);
 
+  const handleCategoryClick = useCallback(
+    (itemId: string) => {
+      if (sidebarCollapsed && sidebarCtx?.toggleExpanded) {
+        sidebarCtx.toggleExpanded();
+      }
+      if (isMobile && !sidebarCtx?.isExpanded && sidebarCtx?.toggleExpanded) {
+        sidebarCtx.toggleExpanded();
+      }
+      toggleAccordion(itemId);
+    },
+    [sidebarCollapsed, isMobile, sidebarCtx, toggleAccordion],
+  );
+  const sidebarClasses = [
+    'dashboard-sidebar',
+    sidebarOpen ? 'dashboard-sidebar--open' : '',
+    sidebarCollapsed ? 'dashboard-sidebar--collapsed' : '',
+    isMobile ? 'dashboard-sidebar--mobile' : '',
+  ].filter(Boolean).join(' ');
+
+  const shellClasses = [
+    'dashboard-shell',
+    accentClass[accent],
+    sidebarCollapsed ? 'dashboard-shell--sidebar-collapsed' : '',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className={`dashboard-shell ${accentClass[accent]}`}>
+    <div className={shellClasses}>
+      {/* Mobil: Floating hamburger – overlay açmak için (topbar’da da hamburger var, bu yedek) */}
       <button
         type="button"
         className="sidebar-hamburger"
-        onClick={() => setSidebarOpen(true)}
+        onClick={() => (sidebarCtx ? sidebarCtx.openOverlay() : setLocalOverlayOpen(true))}
         aria-label="Menüyü aç"
         aria-expanded={sidebarOpen}
+        style={{ display: isMobile ? 'flex' : 'none' }}
       >
-        <Menu size={24} />
+        <svg xmlns="http://www.w3.org/2000/svg" width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="4" x2="20" y1="12" y2="12" />
+          <line x1="4" x2="20" y1="6" y2="6" />
+          <line x1="4" x2="20" y1="18" y2="18" />
+        </svg>
       </button>
 
       <div
-        className={`sidebar-overlay ${sidebarOpen ? 'sidebar-overlay--open' : ''}`}
+        className={`sidebar-overlay ${sidebarOpen && isMobile ? 'sidebar-overlay--open' : ''}`}
         onClick={closeSidebar}
         onKeyDown={(e) => e.key === 'Enter' && closeSidebar()}
         role="button"
@@ -190,37 +236,112 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
         aria-hidden
       />
 
-      <aside className={`dashboard-sidebar ${sidebarOpen ? 'dashboard-sidebar--open' : ''}`}>
-        <div className="sidebar-brand">
-          <p className="eyebrow">Skytech</p>
-          <h1>
-            {brand.slice(0, highlightIndex)}
-            <span>{brand.slice(highlightIndex)}</span>
-          </h1>
-        </div>
-
-        <nav className="sidebar-menu">
-          {sidebarItems.map((item) => (
+      <aside className={sidebarClasses}>
+        <div className="sidebar-header-row">
+          <div className="sidebar-brand">
+            <h1 className="sidebar-brand-title">
+              {brandSuffix != null ? brand : brand.slice(0, highlightIndex)}
+              {brandSuffix != null ? (
+                <span className="sidebar-brand-highlight">{brandSuffix}</span>
+              ) : (
+                <span>{brand.slice(highlightIndex)}</span>
+              )}
+            </h1>
+          </div>
+          {/* Desktop: Toggle collapsed/expanded */}
+          {!isMobile && (
             <button
-              key={item.id}
               type="button"
-              onClick={() => handleMenuClick(item)}
-              className={`menu-item${item.active ? ' active' : ''}`}
+              className="sidebar-toggle-btn"
+              onClick={toggleSidebarExpanded}
+              aria-label={isSidebarExpanded ? 'Menüyü daralt' : 'Menüyü genişlet'}
+              aria-expanded={isSidebarExpanded}
             >
-              <div className="menu-item-icon">{item.icon}</div>
-              <div>
-                <span className="menu-item-label">{item.label}</span>
-                {item.description && <span className="menu-item-desc">{item.description}</span>}
-              </div>
-              {item.badge !== undefined && item.badge !== null && (
-                <span className="menu-item-badge">{item.badge}</span>
+              {isSidebarExpanded ? (
+                <ChevronLeft size={20} strokeWidth={2} />
+              ) : (
+                <Menu size={22} strokeWidth={2} aria-hidden />
               )}
             </button>
-          ))}
-        </nav>
+          )}
+        </div>
 
-        <button type="button" className="sidebar-logout" onClick={onLogout}>
-          <LogOut size={16} /> Çıkış Yap
+        <div className="sidebar-menu-scroll">
+          <nav className="sidebar-menu">
+          {sidebarItems.map((item) =>
+            item.children && item.children.length > 0 ? (
+              <div key={item.id} className="menu-accordion-wrapper">
+                <div className="menu-item-wrapper">
+                  <button
+                    type="button"
+                    onClick={() => handleCategoryClick(item.id)}
+                    className={`menu-item menu-item-category${item.active || item.children.some((c) => c.active) ? ' active' : ''}`}
+                    title={sidebarCollapsed ? item.label : undefined}
+                  >
+                    <div className="menu-item-icon">{item.icon}</div>
+                    <div className="menu-item-text">
+                      <span className="menu-item-label">{item.label}</span>
+                    </div>
+                  </button>
+                  {sidebarCollapsed && (
+                    <span className="menu-item-tooltip" role="tooltip">
+                      {item.label}
+                    </span>
+                  )}
+                </div>
+                <div className={`menu-accordion-content${expandedAccordions.has(item.id) ? ' menu-accordion-content--open' : ''}`}>
+                  <div className="menu-accordion-inner">
+                  {item.children.map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => handleMenuClick(sub)}
+                      className={`menu-item menu-item-sub${sub.active ? ' active' : ''}`}
+                    >
+                      <div className="menu-item-icon menu-item-icon-sub">{sub.icon}</div>
+                      <div className="menu-item-text">
+                        <span className="menu-item-label">{sub.label}</span>
+                      </div>
+                    </button>
+                  ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div key={item.id} className="menu-item-wrapper">
+                <button
+                  type="button"
+                  onClick={() => item.onClick && handleMenuClick({ onClick: item.onClick })}
+                  className={`menu-item${item.active ? ' active' : ''}`}
+                  title={sidebarCollapsed ? item.label : undefined}
+                >
+                  <div className="menu-item-icon">{item.icon}</div>
+                  <div className="menu-item-text">
+                    <span className="menu-item-label">{item.label}</span>
+                  </div>
+                  {item.badge !== undefined && item.badge !== null && !sidebarCollapsed && (
+                    <span className="menu-item-badge">{item.badge}</span>
+                  )}
+                </button>
+                {sidebarCollapsed && (
+                  <span className="menu-item-tooltip" role="tooltip">
+                    {item.label}
+                  </span>
+                )}
+              </div>
+            )
+          )}
+          </nav>
+        </div>
+
+        <button
+          type="button"
+          className="sidebar-logout"
+          onClick={onLogout}
+          title={sidebarCollapsed ? 'Çıkış Yap' : undefined}
+        >
+          <LogOut size={16} />
+          {!sidebarCollapsed && <span>Çıkış Yap</span>}
         </button>
       </aside>
 
@@ -232,12 +353,10 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
                 <Breadcrumb items={breadcrumbs} />
               </div>
             )}
-            {tagline && <span className="eyebrow">{tagline}</span>}
             <div className="header-title-row">
               <h1>{title}</h1>
               {status && <span className={`status-pill ${status.tone ?? 'neutral'}`}>{status.label}</span>}
             </div>
-            {subtitle && <p>{subtitle}</p>}
           </div>
 
           <div className="dashboard-user">
@@ -259,7 +378,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             )}
             <div className="user-meta">
               <strong>{user.name}</strong>
-              <span>{user.subtitle}</span>
             </div>
           </div>
         </header>

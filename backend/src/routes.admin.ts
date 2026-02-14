@@ -32,8 +32,21 @@ const router = express.Router();
 // Öğrenci ve soru bankası tarafındaki gradeLevel alanlarıyla uyumlu tutulmalıdır.
 const ALLOWED_GRADES = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'];
 
-function toTeacher(u: { id: string; name: string; email: string; subjectAreas: string[] }): Teacher {
-  return { id: u.id, name: u.name, email: u.email, role: 'teacher', subjectAreas: u.subjectAreas };
+function toTeacher(u: {
+  id: string;
+  name: string;
+  email: string;
+  subjectAreas: string[];
+  teacherGrades?: string[] | null;
+}): Teacher {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: 'teacher',
+    subjectAreas: u.subjectAreas ?? [],
+    assignedGrades: u.teacherGrades ?? [],
+  };
 }
 
 /**
@@ -116,7 +129,7 @@ router.get('/summary', authenticate('admin'), async (_req, res) => {
 router.get('/teachers', authenticate('admin'), async (_req, res) => {
   const list = await prisma.user.findMany({
     where: { role: 'teacher' },
-    select: { id: true, name: true, email: true, subjectAreas: true },
+    select: { id: true, name: true, email: true, subjectAreas: true, teacherGrades: true },
   });
   res.json(list.map(toTeacher));
 });
@@ -565,15 +578,105 @@ router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest
       role: 'teacher' as UserRole,
       passwordHash,
       subjectAreas: areasArray,
-      // Not: teacherGrades alanı Prisma Client/DB ile tam senkronize edilene kadar
-      // güvenli tarafta kalmak için doğrudan yazmıyoruz. İleride migration sonrasında
-      // tekrar aktifleştirilebilir.
-      // teacherGrades: gradesArray,
+      teacherGrades: gradesArray,
     },
-    select: { id: true, name: true, email: true, subjectAreas: true },
+    select: { id: true, name: true, email: true, subjectAreas: true, teacherGrades: true },
   });
   return res.status(201).json(toTeacher(created));
 });
+
+router.put(
+  '/teachers/:id',
+  authenticate('admin'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const id = String(req.params.id);
+
+    const existing = await prisma.user.findFirst({
+      where: { id, role: 'teacher' },
+      select: {
+        id: true,
+        email: true,
+      },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Öğretmen bulunamadı' });
+    }
+
+    const { name, email, subjectAreas, assignedGrades, password } = req.body as {
+      name?: string;
+      email?: string;
+      subjectAreas?: string[] | string;
+      assignedGrades?: string[] | string;
+      password?: string;
+    };
+
+    if (!name || !email) {
+      return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
+    }
+
+    if (password && password.length > 0 && password.length < 4) {
+      return res.status(400).json({ error: 'Şifre en az 4 karakter olmalıdır' });
+    }
+
+    // E-posta değişmişse aynı rol için çakışma kontrolü yap
+    if (email !== existing.email) {
+      const emailConflict = await prisma.user.findFirst({
+        where: {
+          email,
+          role: 'teacher',
+          NOT: { id },
+        },
+        select: { id: true },
+      });
+
+      if (emailConflict) {
+        return res.status(400).json({ error: 'Bu e-posta ile kayıtlı başka bir öğretmen var' });
+      }
+    }
+
+    const areasArray: string[] =
+      typeof subjectAreas === 'string'
+        ? subjectAreas
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+        : subjectAreas ?? [];
+
+    const gradesArray: string[] =
+      typeof assignedGrades === 'string'
+        ? assignedGrades
+          .split(',')
+          .map((s) => s.trim())
+          .filter((g) => g && ALLOWED_GRADES.includes(g))
+        : (assignedGrades ?? []).filter((g) => typeof g === 'string' && ALLOWED_GRADES.includes(g));
+
+    const updateData: any = {
+      name,
+      email,
+      subjectAreas: areasArray,
+      teacherGrades: gradesArray,
+    };
+
+    if (password && password.length >= 4) {
+      updateData.passwordHash = await bcrypt.hash(password, 10);
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        subjectAreas: true,
+        teacherGrades: true,
+      },
+    });
+
+    return res.json(toTeacher(updated));
+  },
+);
 
 router.delete('/teachers/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
   const id = String(req.params.id);
