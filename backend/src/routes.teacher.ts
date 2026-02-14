@@ -1723,7 +1723,7 @@ router.put(
       return res.status(404).json({ error: 'Görev bulunamadı' });
     }
 
-    const updateData: { title?: string; description?: string; dueDate?: Date } = {};
+    const updateData: { title?: string; description?: string | null; dueDate?: Date } = {};
     if (typeof title === 'string' && title.trim()) updateData.title = title.trim();
     if (description !== undefined) updateData.description = description === '' ? null : String(description);
     if (typeof dueDate === 'string' && dueDate) updateData.dueDate = new Date(dueDate);
