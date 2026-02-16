@@ -870,7 +870,7 @@ export const AdminDashboard: React.FC = () => {
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     {current.status === 'open' && (
                       <button
-                        className="btn btn-primary"
+                        className="primary-btn"
                         onClick={async () => {
                           if (!token) return;
                           try {
@@ -895,7 +895,7 @@ export const AdminDashboard: React.FC = () => {
                     )}
                     {current.status !== 'closed' && (
                       <button
-                        className="btn btn-secondary"
+                        className="ghost-btn"
                         onClick={async () => {
                           if (!token) return;
                           try {
@@ -919,8 +919,8 @@ export const AdminDashboard: React.FC = () => {
                       </button>
                     )}
                     <button
-                      className="btn btn-secondary"
-                      style={{ marginLeft: 'auto', backgroundColor: '#ef4444', color: 'white' }}
+                      className="danger-btn"
+                      style={{ marginLeft: 'auto' }}
                       onClick={async () => {
                         if (!token) return;
                         if (!window.confirm('Bu şikayeti silmek istediğinize emin misiniz?')) return;
@@ -1090,7 +1090,7 @@ export const AdminDashboard: React.FC = () => {
                   })}
               </div>
             </div>
-            <button type="submit">Öğretmen Ekle</button>
+            <button type="submit" className="primary-btn">Öğretmen Ekle</button>
           </form>
           <div className="list-stack">
             {teachers.length === 0 && (
@@ -1446,7 +1446,7 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
             <div style={{ marginTop: '1rem' }}>
-              <button type="submit">Öğrenci Ekle</button>
+              <button type="submit" className="primary-btn">Öğrenci Ekle</button>
             </div>
           </form>
           <div className="dual-grid">
@@ -1696,7 +1696,7 @@ export const AdminDashboard: React.FC = () => {
                 required
               />
             </div>
-            <button type="submit">Veli Ekle</button>
+            <button type="submit" className="primary-btn">Veli Ekle</button>
           </form>
 
           <form onSubmit={handleAssignStudent} className="form" style={{ marginBottom: '0.75rem' }}>
@@ -1735,7 +1735,7 @@ export const AdminDashboard: React.FC = () => {
                 ))}
               </select>
             </div>
-            <button type="submit">Velinin Öğrencilerine Ekle</button>
+            <button type="submit" className="primary-btn">Velinin Öğrencilerine Ekle</button>
           </form>
 
           <div className="list-stack">

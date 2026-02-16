@@ -9,11 +9,10 @@
 -- CreateEnum
 CREATE TYPE "StreamType" AS ENUM ('SAYISAL', 'SOZEL', 'ESIT_AGIRLIK');
 
--- AlterEnum
+-- AlterEnum (ranking_scales henüz oluşturulmadığı için sadece exams güncellenir; ranking_scales aşağıda yeni tip ile oluşturulacak)
 BEGIN;
 CREATE TYPE "ExamType_new" AS ENUM ('LGS', 'TYT', 'AYT_SAY', 'AYT_SOZ', 'AYT_EA', 'ARA_SINIF');
 ALTER TABLE "exams" ALTER COLUMN "type" TYPE "ExamType_new" USING ("type"::text::"ExamType_new");
-ALTER TABLE "ranking_scales" ALTER COLUMN "exam_type" TYPE "ExamType_new" USING ("exam_type"::text::"ExamType_new");
 ALTER TYPE "ExamType" RENAME TO "ExamType_old";
 ALTER TYPE "ExamType_new" RENAME TO "ExamType";
 DROP TYPE "public"."ExamType_old";

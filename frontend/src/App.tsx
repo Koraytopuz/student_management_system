@@ -33,6 +33,7 @@ const ProtectedRoute: React.FC<{
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const readingMode = useReadingMode();
   const showReadingModeButton = user && (user.role === 'teacher' || user.role === 'student') && /^\/(teacher|student)/.test(location.pathname);
 

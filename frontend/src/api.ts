@@ -694,11 +694,13 @@ export async function apiRequest<T>(
   });
 
   if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({}));
+    const errorBody = await res.json().catch(() => ({})) as { error?: string; details?: string; rawResponse?: string };
     if (res.status === 401 && !path.includes('/auth/login')) {
       clearAuthAndRedirectToLogin();
     }
-    throw new Error(errorBody.error ?? `API error: ${res.status}`);
+    const err = new Error(errorBody.error ?? `API error: ${res.status}`) as Error & { response?: { data?: typeof errorBody } };
+    err.response = { data: errorBody };
+    throw err;
   }
 
   return res.json();
@@ -1888,6 +1890,7 @@ export interface QuestionBankItem {
   subtopic?: string;
   kazanimKodu?: string;
   text: string;
+  imageUrl?: string | null;
   type: 'multiple_choice' | 'true_false' | 'open_ended';
   choices?: string[];
   correctAnswer: string;
@@ -2021,6 +2024,15 @@ export function deleteQuestionBankItem(token: string, id: string) {
 /** Soru Bankası - Onayla */
 export function approveQuestionBankItem(token: string, id: string) {
   return apiRequest<QuestionBankItem>(`/questionbank/${id}/approve`, { method: 'POST' }, token);
+}
+
+/** Soru Bankası - Toplu Onayla */
+export function bulkApproveQuestionBankItems(token: string, filters?: { source?: string; subjectId?: string; gradeLevel?: string }) {
+  return apiRequest<{ success: boolean; message: string; count: number }>(
+    '/questionbank/bulk-approve',
+    { method: 'POST', body: JSON.stringify(filters || {}) },
+    token,
+  );
 }
 
 /** Soru Bankası - AI ile üret */

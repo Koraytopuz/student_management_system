@@ -44,6 +44,7 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
   const [selectedParentId, setSelectedParentId] = useState<string>('');
   const [parentMessageText, setParentMessageText] = useState('');
   const [sendingParentMessage, setSendingParentMessage] = useState(false);
+  const [parentMessageSuccess, setParentMessageSuccess] = useState(false);
 
   // Velileri, sınıf seçildiğinde yükle (öğrenci seçildiğinde veli listesi için)
   useEffect(() => {
@@ -135,8 +136,8 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
       });
       setParentMessageText('');
       setSelectedParentId('');
-      // eslint-disable-next-line no-alert
-      alert('Veliye mesaj gönderildi.');
+      setParentMessageSuccess(true);
+      window.setTimeout(() => setParentMessageSuccess(false), 5000);
     } catch (e) {
       // eslint-disable-next-line no-alert
       alert(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
@@ -398,149 +399,30 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
               </div>
             </div>
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-                gap: '1.25rem',
-              }}
-            >
-            {/* Sol: Veliye Özel Notlar */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div
-                style={{
-                  marginTop: '1rem',
-                  padding: '1rem',
-                  borderRadius: 8,
-                  background: 'var(--color-surface-subtle, rgba(255,255,255,0.04))',
-                  border: '1px solid var(--color-border-subtle, rgba(255,255,255,0.08))',
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: '0.9rem',
-                    fontWeight: 600,
-                    color: 'var(--color-text-main)',
-                    marginBottom: '0.25rem',
-                  }}
-                >
-                  Veliye Özel Notlar
+            {/* Veliye mesaj gönder – premium kart */}
+            <div className="parent-message-card">
+              <div className="parent-message-card-header">
+                <MessageCircle size={20} className="parent-message-card-icon" />
+                <div>
+                  <h3 className="parent-message-card-title">Veliye mesaj gönder</h3>
+                  <p className="parent-message-card-subtitle">
+                    Mesaj, üstte seçtiğiniz veliye ve seçili öğrenci ile ilişkili olarak iletilir.
+                  </p>
                 </div>
-                <div
-                  style={{
-                    fontSize: '0.8rem',
-                    color: 'var(--color-text-muted)',
-                    marginBottom: '0.75rem',
-                  }}
-                >
-                  Sadece veli panelinde görünür; öğrenci bu notları görmez.
-                </div>
-                <div style={{ display: 'grid', gap: '0.6rem' }}>
-                  <select
-                    value={feedbackDraft.type}
-                    onChange={(e) =>
-                      setFeedbackDraft((p) => ({
-                        ...p,
-                        type: e.target.value,
-                      }))
-                    }
-                  >
-                    <option value="general_feedback">Genel değerlendirme</option>
-                    <option value="performance_note">Performans notu</option>
-                    <option value="test_feedback">Test değerlendirmesi</option>
-                  </select>
-                  <input
-                    type="text"
-                    placeholder="Başlık"
-                    value={feedbackDraft.title}
-                    onChange={(e) =>
-                      setFeedbackDraft((p) => ({
-                        ...p,
-                        title: e.target.value,
-                      }))
-                    }
-                  />
-                  <textarea
-                    placeholder="Değerlendirme içeriği (veli görecek)"
-                    value={feedbackDraft.content}
-                    onChange={(e) =>
-                      setFeedbackDraft((p) => ({
-                        ...p,
-                        content: e.target.value,
-                      }))
-                    }
-                    rows={4}
-                    style={{ resize: 'vertical', minHeight: 100 }}
-                  />
-                  {feedbackError && (
-                    <div style={{ color: '#f97316', fontSize: '0.85rem' }}>{feedbackError}</div>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      className="primary-btn"
-                      onClick={handleCreateFeedback}
-                      disabled={feedbackSaving || !selectedStudentId}
-                    >
-                      {feedbackSaving ? 'Kaydediliyor...' : 'Değerlendirmeyi Kaydet'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Sağ: Veliye mesaj gönder */}
-            <div
-              style={{
-                padding: '1rem',
-                borderRadius: 8,
-                background: 'var(--color-surface-subtle, rgba(255,255,255,0.04))',
-                border: '1px solid var(--color-border-subtle, rgba(255,255,255,0.08))',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.75rem',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  marginBottom: '0.25rem',
-                }}
-              >
-                <MessageCircle size={18} style={{ color: 'var(--color-primary)' }} />
-                <span
-                  style={{
-                    fontSize: '0.95rem',
-                    fontWeight: 600,
-                    color: 'var(--color-text-main)',
-                  }}
-                >
-                  Veliye mesaj gönder
-                </span>
-              </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                Mesaj, üstte seçtiğiniz veliye ve seçili öğrenci ile ilişkili olarak iletilir.
               </div>
               <textarea
                 placeholder="Veliyi bilgilendireceğiniz mesaj..."
                 value={parentMessageText}
                 onChange={(e) => setParentMessageText(e.target.value)}
-                rows={5}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem 1rem',
-                  fontSize: '0.9rem',
-                  borderRadius: 10,
-                  border: '1px solid var(--color-border-subtle)',
-                  background: 'var(--color-surface)',
-                  color: 'var(--color-text-main)',
-                  resize: 'vertical',
-                  minHeight: 120,
-                }}
+                rows={6}
+                className="parent-message-textarea"
               />
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              {parentMessageSuccess && (
+                <div className="parent-message-success" role="status">
+                  Mesajınız başarıyla iletilmiştir.
+                </div>
+              )}
+              <div className="parent-message-actions">
                 <button
                   type="button"
                   className="primary-btn"
@@ -553,19 +435,18 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
                   }
                   onClick={handleSendParentMessage}
                   style={{
-                    display: 'flex',
+                    display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '0.4rem',
-                    padding: '0.6rem 1.25rem',
+                    gap: '0.5rem',
+                    padding: '0.65rem 1.5rem',
                   }}
                 >
-                  <Send size={16} />
+                  <Send size={18} />
                   {sendingParentMessage ? 'Gönderiliyor...' : 'Veliyi Bilgilendir'}
                 </button>
               </div>
             </div>
-          </div>
           </div>
           )}
         </GlassCard>

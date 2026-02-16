@@ -403,7 +403,7 @@ export const LoginPage: React.FC = () => {
             />
           </label>
           {error && <div className="error">{error}</div>}
-          <button type="submit" disabled={loading}>
+          <button type="submit" className="primary-btn" style={{ width: '100%' }} disabled={loading}>
             {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
           </button>
         </form>

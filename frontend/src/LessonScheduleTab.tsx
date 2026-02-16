@@ -2,7 +2,7 @@
  * Ders Programı — Öğretmen sınıf/ders/öğrenci ve günlük/haftalık/aylık/dönemlik program oluşturur.
  */
 import React, { useMemo, useState } from 'react';
-import { CalendarDays, Plus, X } from 'lucide-react';
+import { CalendarDays, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { GlassCard } from './components/DashboardPrimitives';
 import type { TeacherStudent } from './api';
 import { getCurriculumSubjects } from './api';
@@ -43,9 +43,12 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
   const [subjectId, setSubjectId] = useState<string>('');
   const [studentId, setStudentId] = useState<string>('');
   const [period, setPeriod] = useState<Period>('weekly');
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0); // Günlük görünümde seçilen gün (0–4)
   const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [addForm, setAddForm] = useState({
     gradeLevel: '',
     subjectId: '',
@@ -60,11 +63,6 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
     const g = allowedGrades.length ? allowedGrades : ['4', '5', '6', '7', '8', '9', '10', '11', '12'];
     return g;
   }, [allowedGrades]);
-
-  const studentsInGrade = useMemo(() => {
-    if (!gradeLevel) return students;
-    return students.filter((s) => s.gradeLevel === gradeLevel);
-  }, [students, gradeLevel]);
 
   const loadSubjects = () => {
     if (!token || !gradeLevel) return;
@@ -127,6 +125,58 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
     closeAddModal();
   };
 
+  const openEditModal = (entry: ScheduleEntry) => {
+    setAddForm({
+      gradeLevel: entry.gradeLevel,
+      subjectId: entry.subjectId,
+      subjectName: entry.subjectName,
+      dayOfWeek: entry.dayOfWeek,
+      hour: entry.hour,
+      topic: entry.topic || '',
+    });
+    setEditingEntryId(entry.id);
+    setEditModalOpen(true);
+    if (token && entry.gradeLevel) getCurriculumSubjects(token, entry.gradeLevel).then(setModalSubjects).catch(() => setModalSubjects([]));
+  };
+
+  const closeEditModal = () => {
+    setEditModalOpen(false);
+    setEditingEntryId(null);
+  };
+
+  const handleUpdateEntry = () => {
+    const subj = modalSubjects.find((s) => s.id === addForm.subjectId);
+    if (!editingEntryId || !addForm.gradeLevel || !addForm.subjectId || subj == null) return;
+    setEntries((prev) =>
+      prev.map((e) =>
+        e.id === editingEntryId
+          ? {
+              ...e,
+              gradeLevel: addForm.gradeLevel,
+              subjectId: addForm.subjectId,
+              subjectName: subj.name,
+              dayOfWeek: addForm.dayOfWeek,
+              hour: addForm.hour,
+              topic: addForm.topic || undefined,
+            }
+          : e
+      )
+    );
+    closeEditModal();
+  };
+
+  const handleDeleteEntry = (id: string) => {
+    if (window.confirm('Bu ders saatini silmek istediğinize emin misiniz?')) setEntries((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  const sortedEntriesForList = useMemo(() => {
+    return [...entries].sort((a, b) => {
+      if (a.gradeLevel !== b.gradeLevel) return a.gradeLevel.localeCompare(b.gradeLevel);
+      if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+      return a.hour - b.hour;
+    });
+  }, [entries]);
+
   const entryAt = (hour: number, dayIndex: number) =>
     filteredEntries.find((e) => e.hour === hour && e.dayOfWeek === dayIndex);
 
@@ -144,12 +194,12 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
         <span className="font-medium text-gray-800">Ders Programı</span>
       </div>
 
-      <GlassCard className="p-4">
-        <div className="space-y-4">
+      <GlassCard className="p-5 schedule-filters-card">
+        <div className="schedule-filters">
           {/* Kapsam: Sınıf / Ders / Öğrenci */}
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Kapsam</label>
-            <div className="flex flex-wrap gap-2">
+          <div className="schedule-filter-block">
+            <label className="schedule-filter-label">Kapsam</label>
+            <div className="schedule-filter-buttons">
               {[
                 { value: 'class' as Scope, label: 'Sınıfa göre' },
                 { value: 'subject' as Scope, label: 'Derse göre' },
@@ -159,7 +209,7 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
                   key={value}
                   type="button"
                   onClick={() => setScope(value)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all shadow-sm ${scope === value ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  className={scope === value ? 'primary-btn' : 'ghost-btn'}
                 >
                   {label}
                 </button>
@@ -168,10 +218,9 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
           </div>
 
           {/* Sınıf / Ders / Öğrenci seçimi */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="schedule-filter-block">
             {(scope === 'class' || scope === 'subject') && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Sınıf</label>
+              <div className="schedule-filter-selects">
                 <select
                   value={gradeLevel}
                   onChange={(e) => {
@@ -179,40 +228,36 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
                     setSubjectId('');
                     setStudentId('');
                   }}
-                  className="px-3 py-2 border border-gray-200 rounded-md text-sm text-gray-700 bg-white min-w-[120px]"
+                  className="schedule-select"
                 >
-                  <option value="">Seçin</option>
+                  <option value="">Sınıf Seçin</option>
                   {grades.map((g) => (
                     <option key={g} value={g}>{g}. Sınıf</option>
                   ))}
                 </select>
-              </div>
-            )}
-            {scope === 'subject' && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Ders</label>
-                <select
-                  value={subjectId}
-                  onChange={(e) => setSubjectId(e.target.value)}
-                  disabled={!gradeLevel}
-                  className="px-3 py-2 border border-gray-200 rounded-md text-sm text-gray-700 bg-white min-w-[140px] disabled:opacity-60"
-                >
-                  <option value="">Seçin</option>
-                  {subjects.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
+                {scope === 'subject' && (
+                  <select
+                    value={subjectId}
+                    onChange={(e) => setSubjectId(e.target.value)}
+                    disabled={!gradeLevel}
+                    className="schedule-select schedule-select--wide disabled:opacity-60"
+                  >
+                    <option value="">Ders Seçin</option>
+                    {subjects.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             )}
             {scope === 'student' && (
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Öğrenci</label>
+              <div className="schedule-filter-selects">
                 <select
                   value={studentId}
                   onChange={(e) => setStudentId(e.target.value)}
-                  className="px-3 py-2 border border-gray-200 rounded-md text-sm text-gray-700 bg-white min-w-[180px]"
+                  className="schedule-select schedule-select--wide"
                 >
-                  <option value="">Seçin</option>
+                  <option value="">Öğrenci Seçin</option>
                   {students.map((s) => (
                     <option key={s.id} value={s.id}>{s.name} {s.gradeLevel ? `(${s.gradeLevel}. Sınıf)` : ''}</option>
                   ))}
@@ -222,15 +267,15 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
           </div>
 
           {/* Dönem: Günlük / Haftalık / Aylık / Dönemlik */}
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Program periyodu</label>
-            <div className="flex flex-wrap gap-2">
+          <div className="schedule-filter-block">
+            <label className="schedule-filter-label">Program periyodu</label>
+            <div className="schedule-filter-buttons">
               {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
                 <button
                   key={p}
                   type="button"
                   onClick={() => setPeriod(p)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all shadow-sm ${period === p ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  className={period === p ? 'primary-btn' : 'ghost-btn'}
                 >
                   {PERIOD_LABELS[p]}
                 </button>
@@ -241,48 +286,105 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
       </GlassCard>
 
       {/* Program içeriği alanı */}
-      <GlassCard className="p-4">
-        <div className="flex items-center justify-between gap-3 mb-3">
+      <GlassCard className="p-4 relative">
+        <div className="absolute top-4 right-4 left-auto" dir="ltr">
+          <button
+            type="button"
+            onClick={openAddModal}
+            className="primary-btn inline-flex items-center justify-center shrink-0 w-8 h-8 p-0"
+            title="Ekle"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="pr-12 mb-3">
           <span className="text-sm font-medium text-gray-700">
             {period === 'daily' && 'Günlük program'}
             {period === 'weekly' && 'Haftalık program'}
             {period === 'monthly' && 'Aylık program'}
             {period === 'term' && 'Dönemlik program'}
           </span>
-          <button
-            type="button"
-            onClick={openAddModal}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-600 text-white shadow-md hover:bg-blue-700 transition-all shrink-0"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Ekle
-          </button>
         </div>
-        <div className="border border-gray-200 rounded-md overflow-hidden">
-          {period === 'weekly' ? (
-            <table className="w-full text-sm text-left text-gray-700">
-              <thead className="bg-gray-50 text-gray-600">
+        <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden schedule-table-wrapper">
+          {/* Günlük program: gün seçici + tek günün saatlik listesi */}
+          {period === 'daily' && (
+            <div className="schedule-daily-view">
+              <div className="schedule-daily-day-selector">
+                <label className="schedule-filter-label">Gün</label>
+                <div className="schedule-filter-buttons">
+                  {WEEKDAYS.map((name, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setSelectedDayIndex(i)}
+                      className={selectedDayIndex === i ? 'primary-btn' : 'ghost-btn'}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <table className="w-full text-sm text-left border-collapse schedule-table schedule-table--daily">
+                <thead>
+                  <tr>
+                    <th className="schedule-table-hour-header">Saat</th>
+                    <th className="schedule-table-day-header">Ders</th>
+                    <th className="schedule-table-day-header">Konu / Not</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {HOURS.map((hour, rowIndex) => {
+                    const entry = entryAt(hour, selectedDayIndex);
+                    return (
+                      <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
+                        <td className="schedule-table-hour-cell">{hour}:00</td>
+                        <td className="schedule-table-cell">
+                          {entry ? (
+                            <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
+                          ) : (
+                            <span className="schedule-table-empty">—</span>
+                          )}
+                        </td>
+                        <td className="schedule-table-cell">
+                          {entry?.topic ? (
+                            <span className="schedule-table-topic-text">{entry.topic}</span>
+                          ) : (
+                            <span className="schedule-table-empty">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Haftalık program: günler × saatler tablosu */}
+          {period === 'weekly' && (
+            <table className="w-full text-sm text-left border-collapse schedule-table">
+              <thead>
                 <tr>
-                  <th className="px-3 py-2 font-medium w-24">Saat</th>
-                  <th className="px-3 py-2 font-medium">Pazartesi</th>
-                  <th className="px-3 py-2 font-medium">Salı</th>
-                  <th className="px-3 py-2 font-medium">Çarşamba</th>
-                  <th className="px-3 py-2 font-medium">Perşembe</th>
-                  <th className="px-3 py-2 font-medium">Cuma</th>
+                  <th className="schedule-table-hour-header">Saat</th>
+                  <th className="schedule-table-day-header">Pazartesi</th>
+                  <th className="schedule-table-day-header">Salı</th>
+                  <th className="schedule-table-day-header">Çarşamba</th>
+                  <th className="schedule-table-day-header">Perşembe</th>
+                  <th className="schedule-table-day-header">Cuma</th>
                 </tr>
               </thead>
               <tbody>
-                {HOURS.map((hour) => (
-                  <tr key={hour} className="border-t border-gray-100 hover:bg-gray-50/50">
-                    <td className="px-3 py-2 text-gray-500 w-24">{hour}:00</td>
+                {HOURS.map((hour, rowIndex) => (
+                  <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
+                    <td className="schedule-table-hour-cell">{hour}:00</td>
                     {WEEKDAYS.map((_, dayIndex) => {
                       const entry = entryAt(hour, dayIndex);
                       return (
-                        <td key={dayIndex} className="px-3 py-2">
+                        <td key={dayIndex} className="schedule-table-cell">
                           {entry ? (
-                            <span className="text-sm text-gray-800 font-medium" title={entry.topic}>{entry.subjectName}</span>
+                            <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
                           ) : (
-                            <span className="text-gray-400">—</span>
+                            <span className="schedule-table-empty">—</span>
                           )}
                         </td>
                       );
@@ -291,108 +393,300 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
                 ))}
               </tbody>
             </table>
-          ) : (
-            <div className="py-8 text-center text-gray-500 text-sm">
-              {period === 'daily' && 'Günlük programı burada düzenleyebilirsiniz.'}
-              {period === 'monthly' && 'Aylık programı burada düzenleyebilirsiniz.'}
-              {period === 'term' && 'Dönemlik programı burada düzenleyebilirsiniz.'}
-              <p className="mt-1">Yukarıdaki &quot;Ekle&quot; ile ders saati ekleyin.</p>
+          )}
+
+          {/* Aylık program: ayın 4 haftası, her biri haftalık şema */}
+          {period === 'monthly' && (
+            <div className="schedule-monthly-view">
+              {[1, 2, 3, 4].map((weekNum) => (
+                <div key={weekNum} className="schedule-monthly-week">
+                  <h4 className="schedule-monthly-week-title">Ayın {weekNum}. Haftası</h4>
+                  <table className="w-full text-sm text-left border-collapse schedule-table schedule-table--compact">
+                    <thead>
+                      <tr>
+                        <th className="schedule-table-hour-header">Saat</th>
+                        <th className="schedule-table-day-header">Pzt</th>
+                        <th className="schedule-table-day-header">Sal</th>
+                        <th className="schedule-table-day-header">Çar</th>
+                        <th className="schedule-table-day-header">Per</th>
+                        <th className="schedule-table-day-header">Cum</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {HOURS.map((hour, rowIndex) => (
+                        <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
+                          <td className="schedule-table-hour-cell">{hour}:00</td>
+                          {WEEKDAYS.map((_, dayIndex) => {
+                            const entry = entryAt(hour, dayIndex);
+                            return (
+                              <td key={dayIndex} className="schedule-table-cell">
+                                {entry ? (
+                                  <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
+                                ) : (
+                                  <span className="schedule-table-empty">—</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
             </div>
+          )}
+
+          {/* Dönemlik program: haftalık şema + açıklama */}
+          {period === 'term' && (
+            <div className="schedule-term-view">
+              <p className="schedule-term-note">Dönem boyunca haftalık tekrarlanan program. Aşağıdaki tablo her hafta için geçerlidir.</p>
+              <table className="w-full text-sm text-left border-collapse schedule-table">
+                <thead>
+                  <tr>
+                    <th className="schedule-table-hour-header">Saat</th>
+                    <th className="schedule-table-day-header">Pazartesi</th>
+                    <th className="schedule-table-day-header">Salı</th>
+                    <th className="schedule-table-day-header">Çarşamba</th>
+                    <th className="schedule-table-day-header">Perşembe</th>
+                    <th className="schedule-table-day-header">Cuma</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {HOURS.map((hour, rowIndex) => (
+                    <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
+                      <td className="schedule-table-hour-cell">{hour}:00</td>
+                      {WEEKDAYS.map((_, dayIndex) => {
+                        const entry = entryAt(hour, dayIndex);
+                        return (
+                          <td key={dayIndex} className="schedule-table-cell">
+                            {entry ? (
+                              <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
+                            ) : (
+                              <span className="schedule-table-empty">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </GlassCard>
+
+      {/* Eklenen programlar – önizleme ve düzenleme */}
+      <GlassCard className="p-5 schedule-list-card" title="Eklenen programlar" subtitle="Kayıtlı ders saatlerini önizleyin ve düzenleyin">
+        <div className="schedule-list">
+          {sortedEntriesForList.length === 0 ? (
+            <div className="schedule-list-empty">
+              Henüz ders saati eklenmedi. Yukarıdaki &quot;Ekle&quot; butonu ile ekleyebilirsiniz.
+            </div>
+          ) : (
+            <ul className="schedule-list-ul">
+              {sortedEntriesForList.map((entry) => (
+                <li key={entry.id} className="schedule-list-item">
+                  <div className="schedule-list-item-info">
+                    <span className="schedule-list-badge schedule-list-badge--grade">{entry.gradeLevel}. Sınıf</span>
+                    <span className="schedule-list-badge schedule-list-badge--subject">{entry.subjectName}</span>
+                    <span className="schedule-list-meta">{WEEKDAYS[entry.dayOfWeek]} · {entry.hour}:00</span>
+                    {entry.topic && <span className="schedule-list-topic" title={entry.topic}>{entry.topic}</span>}
+                  </div>
+                  <div className="schedule-list-item-actions">
+                    <button type="button" onClick={() => openEditModal(entry)} className="schedule-list-btn schedule-list-btn--edit" title="Düzenle">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" onClick={() => handleDeleteEntry(entry.id)} className="schedule-list-btn schedule-list-btn--delete" title="Sil">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </GlassCard>
 
       {/* Program ekleme modal */}
       {addModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={closeAddModal}>
-          <div
-            className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-800">Ders saati ekle</h3>
-              <button type="button" onClick={closeAddModal} className="p-1 rounded-full hover:bg-gray-100 text-gray-500">
+        <div className="schedule-modal-overlay" onClick={closeAddModal}>
+          <div className="schedule-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="schedule-modal-header">
+              <h3 className="schedule-modal-title">Ders saati ekle</h3>
+              <button type="button" onClick={closeAddModal} className="schedule-modal-close" aria-label="Kapat">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Sınıf</label>
+            <div className="schedule-modal-body">
+              <div className="schedule-modal-block">
+                <label className="schedule-filter-label">Sınıf</label>
                 <select
                   value={addForm.gradeLevel}
                   onChange={(e) => handleAddFormChange('gradeLevel', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white"
+                  className="schedule-select w-full"
                 >
-                  <option value="">Seçin</option>
+                  <option value="">Sınıf Seçin</option>
                   {grades.map((g) => (
                     <option key={g} value={g}>{g}. Sınıf</option>
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Ders</label>
+              <div className="schedule-modal-block">
+                <label className="schedule-filter-label">Ders</label>
                 <select
                   value={addForm.subjectId}
                   onChange={(e) => handleAddFormChange('subjectId', e.target.value)}
                   disabled={!addForm.gradeLevel}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white disabled:opacity-60"
+                  className="schedule-select w-full disabled:opacity-60"
                 >
-                  <option value="">Seçin</option>
+                  <option value="">Ders Seçin</option>
                   {modalSubjects.map((s) => (
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Gün</label>
-                <select
-                  value={addForm.dayOfWeek}
-                  onChange={(e) => handleAddFormChange('dayOfWeek', Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white"
-                >
-                  {WEEKDAYS.map((name, i) => (
-                    <option key={i} value={i}>{name}</option>
-                  ))}
-                </select>
+              <div className="schedule-modal-row">
+                <div className="schedule-modal-block flex-1">
+                  <label className="schedule-filter-label">Gün</label>
+                  <select
+                    value={addForm.dayOfWeek}
+                    onChange={(e) => handleAddFormChange('dayOfWeek', Number(e.target.value))}
+                    className="schedule-select w-full"
+                  >
+                    {WEEKDAYS.map((name, i) => (
+                      <option key={i} value={i}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="schedule-modal-block flex-1">
+                  <label className="schedule-filter-label">Saat</label>
+                  <select
+                    value={addForm.hour}
+                    onChange={(e) => handleAddFormChange('hour', Number(e.target.value))}
+                    className="schedule-select w-full"
+                  >
+                    {HOURS.map((h) => (
+                      <option key={h} value={h}>{h}:00</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Saat</label>
-                <select
-                  value={addForm.hour}
-                  onChange={(e) => handleAddFormChange('hour', Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white"
-                >
-                  {HOURS.map((h) => (
-                    <option key={h} value={h}>{h}:00</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Konu / Not (isteğe bağlı)</label>
+              <div className="schedule-modal-block">
+                <label className="schedule-filter-label">Konu / Not (isteğe bağlı)</label>
                 <input
                   type="text"
                   value={addForm.topic}
                   onChange={(e) => handleAddFormChange('topic', e.target.value)}
                   placeholder="Örn. Ünite 3 tekrar"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 placeholder-gray-400"
+                  className="schedule-modal-input"
                 />
               </div>
             </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={closeAddModal}
-                className="flex-1 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200 text-gray-700 hover:bg-gray-50"
-              >
+            <div className="schedule-modal-footer">
+              <button type="button" onClick={closeAddModal} className="ghost-btn flex-1">
                 İptal
               </button>
               <button
                 type="button"
                 onClick={handleSaveEntry}
                 disabled={!addForm.gradeLevel || !addForm.subjectId}
-                className="flex-1 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-600 text-white shadow-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="primary-btn flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Kaydet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Düzenleme modal */}
+      {editModalOpen && (
+        <div className="schedule-modal-overlay" onClick={closeEditModal}>
+          <div className="schedule-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="schedule-modal-header">
+              <h3 className="schedule-modal-title">Ders saatini düzenle</h3>
+              <button type="button" onClick={closeEditModal} className="schedule-modal-close" aria-label="Kapat">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="schedule-modal-body">
+              <div className="schedule-modal-block">
+                <label className="schedule-filter-label">Sınıf</label>
+                <select
+                  value={addForm.gradeLevel}
+                  onChange={(e) => handleAddFormChange('gradeLevel', e.target.value)}
+                  className="schedule-select w-full"
+                >
+                  <option value="">Sınıf Seçin</option>
+                  {grades.map((g) => (
+                    <option key={g} value={g}>{g}. Sınıf</option>
+                  ))}
+                </select>
+              </div>
+              <div className="schedule-modal-block">
+                <label className="schedule-filter-label">Ders</label>
+                <select
+                  value={addForm.subjectId}
+                  onChange={(e) => handleAddFormChange('subjectId', e.target.value)}
+                  disabled={!addForm.gradeLevel}
+                  className="schedule-select w-full disabled:opacity-60"
+                >
+                  <option value="">Ders Seçin</option>
+                  {modalSubjects.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="schedule-modal-row">
+                <div className="schedule-modal-block flex-1">
+                  <label className="schedule-filter-label">Gün</label>
+                  <select
+                    value={addForm.dayOfWeek}
+                    onChange={(e) => handleAddFormChange('dayOfWeek', Number(e.target.value))}
+                    className="schedule-select w-full"
+                  >
+                    {WEEKDAYS.map((name, i) => (
+                      <option key={i} value={i}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="schedule-modal-block flex-1">
+                  <label className="schedule-filter-label">Saat</label>
+                  <select
+                    value={addForm.hour}
+                    onChange={(e) => handleAddFormChange('hour', Number(e.target.value))}
+                    className="schedule-select w-full"
+                  >
+                    {HOURS.map((h) => (
+                      <option key={h} value={h}>{h}:00</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="schedule-modal-block">
+                <label className="schedule-filter-label">Konu / Not (isteğe bağlı)</label>
+                <input
+                  type="text"
+                  value={addForm.topic}
+                  onChange={(e) => handleAddFormChange('topic', e.target.value)}
+                  placeholder="Örn. Ünite 3 tekrar"
+                  className="schedule-modal-input"
+                />
+              </div>
+            </div>
+            <div className="schedule-modal-footer">
+              <button type="button" onClick={closeEditModal} className="ghost-btn flex-1">
+                İptal
+              </button>
+              <button
+                type="button"
+                onClick={handleUpdateEntry}
+                disabled={!addForm.gradeLevel || !addForm.subjectId}
+                className="primary-btn flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Güncelle
               </button>
             </div>
           </div>

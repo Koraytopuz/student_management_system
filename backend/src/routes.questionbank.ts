@@ -30,6 +30,7 @@ interface QuestionBankCreateInput {
     subtopic?: string;
     kazanimKodu?: string;
     text: string;
+    imageUrl?: string;
     type: 'multiple_choice' | 'true_false' | 'open_ended';
     choices?: string[];
     correctAnswer: string;
@@ -292,38 +293,30 @@ router.post(
         // Soru tipi Türkçe
         const typeLabel = data.questionType === 'multiple_choice' ? 'çoktan seçmeli' : data.questionType === 'true_false' ? 'doğru/yanlış' : 'açık uçlu';
 
-        // AI prompt
-        const prompt = `Sen bir Türk eğitim uzmanı ve soru yazarısın. Aşağıdaki parametrelere göre ${data.count} adet ${typeLabel} soru üret.
+        // AI prompt – görselli sorular dahil, bazı sorular görsel içermeli
+        const visualQuestionCount = Math.max(1, Math.floor(data.count * 0.3)); // %30'u görselli olsun, en az 1
+        const prompt = `Sen bir Türk eğitim uzmanı ve soru yazarısın. İstediğim tam ${data.count} adet ${typeLabel} soru üret.
 
-## Parametreler
-- Ders: ${subject.name}
-- Sınıf: ${data.gradeLevel}. sınıf
-- Konu: ${data.topic}
-- Zorluk: ${difficultyLabel}
-- Bilişsel Seviye (Bloom): ${bloomLabel}
+Parametreler: Ders=${subject.name}, Sınıf=${data.gradeLevel}, Konu=${data.topic}, Zorluk=${difficultyLabel}, Bloom=${bloomLabel}.
 
-## Kurallar
-1. Sorular Türk Milli Eğitim müfredatına uygun olmalı
-2. Dil sade, anlaşılır ve ${data.gradeLevel}. sınıf seviyesine uygun olmalı
-3. ${data.questionType === 'multiple_choice' ? 'Her soruda 5 şık (A, B, C, D, E) olmalı' : ''}
-4. Çeldiriciler rastgele değil, öğrencilerin yapabileceği yaygın hatalar göz önünde bulundurularak yazılmalı
-5. Her çeldiricinin neden yanlış olduğunu kısaca açıkla
-6. Yanıtı JSON formatında ver
+Kurallar:
+- Sorular MEB müfredatına uygun, sade dil, ${data.gradeLevel}. sınıf seviyesinde olsun.
+- ${data.questionType === 'multiple_choice' ? 'Her soruda tam 5 şık: A, B, C, D, E. choices dizisinde sadece şık metinleri (A) B) ön eki olmadan) ver.' : ''}
+- Çeldiriciler yaygın öğrenci hatalarına dayansın; distractorReasons ile kısa gerekçe ver.
+- solutionExplanation tek paragraf, okunaklı ve net olsun; gereksiz tekrar veya dev cümleler yazma.
 
-${referenceQuestions.length > 0 ? `## Örnek Sorular (Bu stilden ilham al)
-${referenceQuestions.join('\n\n---\n\n')}` : ''}
+ÖNEMLİ - Görselli Sorular:
+- Toplam ${data.count} sorudan en az ${visualQuestionCount} tanesi görsel gerektiren soru olsun (grafik, şekil, tablo, diyagram).
+- Görsel gerektiren sorularda "imageDescription" alanına görselin ne göstermesi gerektiğini kısa metinle yaz (örn: "x² parabolünün tepe noktası (2,4) olan grafiği", "3x4'lük veri tablosu: satırlar A,B,C; sütunlar 1,2,3,4").
+- Görsel gerektirmeyen sorularda "imageDescription": null yaz.
+- "image" veya görsel URL alanı EKLEME – yapay zeka görsel oluşturamaz, sadece imageDescription yaz.
 
-## Çıktı Formatı (JSON)
-Yanıtını sadece JSON olarak ver, başka açıklama ekleme:
+Yanıtın SADECE aşağıdaki JSON dizisi olsun, başında/sonunda açıklama veya markdown kodu olmasın:
 [
-  {
-    "text": "Soru metni",
-    "choices": ["A şıkkı", "B şıkkı", "C şıkkı", "D şıkkı", "E şıkkı"],
-    "correctAnswer": "A",
-    "distractorReasons": ["B yanlış çünkü...", "C yanlış çünkü...", "D yanlış çünkü...", "E yanlış çünkü..."],
-    "solutionExplanation": "Detaylı çözüm açıklaması"
-  }
-]`;
+  {"text":"Görselli soru metni (örn: Grafikte verilen fonksiyonun...)","imageDescription":"Parabol grafiği, tepe (2,4)","choices":["şık1","şık2","şık3","şık4","şık5"],"correctAnswer":"A","distractorReasons":["B neden yanlış","C neden yanlış","D neden yanlış","E neden yanlış"],"solutionExplanation":"Kısa çözüm paragrafı."},
+  {"text":"Normal soru metni","imageDescription":null,"choices":["şık1","şık2","şık3","şık4","şık5"],"correctAnswer":"B","distractorReasons":["A neden yanlış","C neden yanlış","D neden yanlış","E neden yanlış"],"solutionExplanation":"Kısa çözüm paragrafı."}
+]
+${referenceQuestions.length > 0 ? `\nÖrnek stil:\n${referenceQuestions.slice(0, 1).join('\n')}` : ''}`;
 
         try {
             const response = await callGemini(prompt, {
@@ -345,39 +338,69 @@ Yanıtını sadece JSON olarak ver, başka açıklama ekleme:
             }
             cleanedResponse = cleanedResponse.trim();
 
-            const generatedQuestions = parseAIGeneratedQuestions(cleanedResponse);
+            console.log('[QUESTIONBANK] AI raw response length:', cleanedResponse.length);
+            console.log('[QUESTIONBANK] AI response preview:', cleanedResponse.substring(0, 200));
 
-            if (generatedQuestions.length === 0) {
+            let generatedQuestions: Partial<QuestionBankCreateInput>[];
+            try {
+                generatedQuestions = parseAIGeneratedQuestions(cleanedResponse);
+            } catch (parseError: any) {
+                console.error('[QUESTIONBANK] Parse error:', parseError);
                 return res.status(500).json({
-                    error: 'AI soru üretemedi',
-                    rawResponse: response.substring(0, 500)
+                    error: 'AI yanıtı parse edilemedi',
+                    details: process.env.NODE_ENV === 'development' ? parseError.message : undefined,
+                    rawResponse: cleanedResponse.substring(0, 1000)
                 });
             }
 
+            if (!generatedQuestions || generatedQuestions.length === 0) {
+                console.error('[QUESTIONBANK] No questions generated, raw response:', cleanedResponse.substring(0, 500));
+                return res.status(500).json({
+                    error: 'AI soru üretemedi',
+                    rawResponse: cleanedResponse.substring(0, 1000)
+                });
+            }
+
+            // Debug: AI'dan gelen image alanlarını logla
+            console.log('[QUESTIONBANK] Generated questions count:', generatedQuestions.length);
+            console.log('[QUESTIONBANK] Generated questions with image fields:', generatedQuestions.map((q: any, idx: number) => ({ 
+                index: idx + 1, 
+                hasImage: !!(q as any).image, 
+                image: (q as any).image,
+                textPreview: (q.text || '').substring(0, 50) + '...'
+            })));
+
             // Üretilen soruları veritabanına kaydet (onaysız olarak)
             const savedQuestions = await Promise.all(
-                generatedQuestions.map((q) =>
-                    prisma.questionBank.create({
-                        data: {
-                            subjectId: data.subjectId,
-                            gradeLevel: data.gradeLevel,
-                            topic: data.topic,
-                            text: q.text || '',
-                            type: data.questionType as QuestionType,
-                            choices: q.choices || null,
-                            correctAnswer: q.correctAnswer || '',
-                            distractorReasons: q.distractorReasons || null,
-                            solutionExplanation: q.solutionExplanation || null,
-                            difficulty: data.difficulty,
-                            bloomLevel: data.bloomLevel || null,
-                            source: 'ai',
-                            createdByTeacherId: teacherId,
-                            isApproved: false, // AI soruları onay bekler
-                            tags: [],
-                        },
+                generatedQuestions.map(async (q, idx) => {
+                    const imageDesc = (q as any).imageDescription;
+                    const questionText = imageDesc && String(imageDesc).trim()
+                        ? `${(q.text || '').trim()}\n\n[Görsel tasviri: ${String(imageDesc).trim()}]`
+                        : (q.text || '');
+                    const baseData = {
+                        subjectId: data.subjectId,
+                        gradeLevel: data.gradeLevel,
+                        topic: data.topic,
+                        text: questionText,
+                        type: data.questionType as QuestionType,
+                        choices: q.choices || null,
+                        correctAnswer: q.correctAnswer || '',
+                        distractorReasons: q.distractorReasons || null,
+                        solutionExplanation: q.solutionExplanation || null,
+                        difficulty: data.difficulty,
+                        bloomLevel: data.bloomLevel || null,
+                        source: 'ai',
+                        createdByTeacherId: teacherId,
+                        isApproved: false,
+                        tags: [],
+                    };
+
+                    // imageUrl schema'dan kaldırıldı (migration uygulanmamış DB'ler için); sorular imageUrl olmadan kaydedilir
+                    return await prisma.questionBank.create({
+                        data: baseData,
                         include: { subject: true },
-                    })
-                )
+                    });
+                })
             );
 
             return res.json({
@@ -387,7 +410,19 @@ Yanıtını sadece JSON olarak ver, başka açıklama ekleme:
             });
         } catch (error) {
             console.error('[QUESTIONBANK] AI generation error:', error);
-            return res.status(500).json({ error: 'Soru üretiminde hata oluştu' });
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const errorStack = error instanceof Error ? error.stack : undefined;
+            const errorName = error instanceof Error ? error.name : 'UnknownError';
+            console.error('[QUESTIONBANK] Error details:', { 
+                name: errorName,
+                message: errorMessage, 
+                stack: errorStack,
+                body: req.body
+            });
+            return res.status(500).json({ 
+                error: 'Soru üretiminde hata oluştu',
+                details: process.env.NODE_ENV === 'development' ? `${errorName}: ${errorMessage}` : undefined
+            });
         }
     },
 );
@@ -702,6 +737,38 @@ router.post(
     },
 );
 
+/**
+ * POST /questionbank/bulk-approve - Tüm onaylanmamış soruları toplu onayla
+ */
+router.post(
+    '/bulk-approve',
+    authenticate('teacher') as unknown as RequestHandler,
+    async (req: Request, res: Response) => {
+        const authReq = req as AuthenticatedRequest;
+        const teacherId = authReq.user!.id;
+        const { source, subjectId, gradeLevel } = req.body as { source?: string; subjectId?: string; gradeLevel?: string };
 
+        const where: any = {
+            isApproved: false,
+        };
+        if (source) where.source = source;
+        if (subjectId) where.subjectId = subjectId;
+        if (gradeLevel) where.gradeLevel = gradeLevel;
+
+        const result = await prisma.questionBank.updateMany({
+            where,
+            data: {
+                isApproved: true,
+                approvedByTeacherId: teacherId,
+            },
+        });
+
+        return res.json({
+            success: true,
+            message: `${result.count} soru onaylandı`,
+            count: result.count,
+        });
+    },
+);
 
 export default router;

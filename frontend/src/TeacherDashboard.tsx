@@ -17,7 +17,8 @@ import {
   Users,
   Video,
   X,
-
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from './AuthContext';
@@ -57,7 +58,8 @@ import {
   type TeacherHelpRequestItem,
   type Message,
   sendTeacherAiMessage,
-  generateTeacherQuestions,
+  generateQuestionBankItems,
+  type AIQuestionGeneratePayload,
   type TeacherAnnouncement,
   createTeacherAnnouncement,
   updateTeacherAssignment,
@@ -297,7 +299,7 @@ export const TeacherDashboard: React.FC = () => {
   const [assignmentEditSaving, setAssignmentEditSaving] = useState(false);
   const [assignmentEditError, setAssignmentEditError] = useState<string | null>(null);
 
-  const [aiOpen, setAiOpen] = useState(false);
+  const [aiOpen, _setAiOpen] = useState(false);
   const [aiMessages, setAiMessages] = useState<AiMessage[]>(() => [
     {
       id: 'ai-welcome',
@@ -309,10 +311,10 @@ export const TeacherDashboard: React.FC = () => {
   ]);
   const [aiInput, setAiInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const [_aiError, setAiError] = useState<string | null>(null);
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
   const aiTestCardRef = useRef<HTMLDivElement | null>(null);
-  const [aiFormat, setAiFormat] = useState<'text' | 'pdf' | 'xlsx'>('text');
+  const [aiFormat, _setAiFormat] = useState<'text' | 'pdf' | 'xlsx'>('text');
   const [meetingModalOpen, setMeetingModalOpen] = useState(false);
   const [meetingSaving, setMeetingSaving] = useState(false);
   const [meetingError, setMeetingError] = useState<string | null>(null);
@@ -588,13 +590,6 @@ export const TeacherDashboard: React.FC = () => {
         helper: 'Test & görev',
         trendLabel: 'Bu hafta',
         trendTone: 'neutral' as const,
-      },
-      {
-        label: 'Ortalama Skor',
-        value: `${summary?.averageScoreLast7Days ?? 0}%`,
-        helper: 'Son 7 gün',
-        trendLabel: 'Güncel',
-        trendTone: 'positive' as const,
       },
       {
         label: 'Aktivite',
@@ -986,7 +981,7 @@ export const TeacherDashboard: React.FC = () => {
     };
   }, [handleStartLiveMeeting]);
 
-  const handleAiSend = async () => {
+  const _handleAiSend = async () => {
     if (!token || aiLoading) return;
     const trimmed = aiInput.trim();
     if (!trimmed) return;
@@ -1030,7 +1025,7 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
-  const handleDownloadAttachment = (attachment: NonNullable<AiMessage['attachment']>) => {
+  const _handleDownloadAttachment = (attachment: NonNullable<AiMessage['attachment']>) => {
     try {
       const byteCharacters = atob(attachment.data);
       const byteNumbers = new Array(byteCharacters.length);
@@ -1051,14 +1046,15 @@ export const TeacherDashboard: React.FC = () => {
       setAiError('Dosya indirilirken hata oluştu.');
     }
   };
+  void _handleAiSend;
+  void _handleDownloadAttachment;
 
   const derslerSubItems: SidebarSubItem[] = useMemo(
     () => [
       { id: 'content', label: 'Ders İçeriği', icon: <BookOpen size={18} />, description: 'Kaynaklar', active: activeTab === 'content', onClick: () => setActiveTab('content') },
       { id: 'schedule', label: 'Ders Programı', icon: <CalendarCheck size={18} />, description: 'Program oluştur', active: activeTab === 'schedule', onClick: () => setActiveTab('schedule') },
       { id: 'live', label: 'Canlı Ders', icon: <Video size={18} />, description: 'Ders yayınları', active: activeTab === 'live', onClick: () => setActiveTab('live') },
-      { id: 'tests', label: 'Test & Sorular', icon: <ClipboardList size={18} />, description: 'Soru yükle', active: activeTab === 'tests', onClick: () => setActiveTab('tests') },
-      { id: 'questionbank', label: 'Soru Havuzu', icon: <BookOpen size={18} />, description: 'Soru Bankası', active: activeTab === 'questionbank', onClick: () => setActiveTab('questionbank') },
+      { id: 'tests', label: 'Test & Sorular', icon: <ClipboardList size={18} />, description: 'Test ve soru yönetimi', active: activeTab === 'tests', onClick: () => setActiveTab('tests') },
       { id: 'support', label: 'Yardım Talepleri', icon: <MessageCircle size={18} />, description: 'Soru çöz', active: activeTab === 'support', onClick: () => setActiveTab('support') },
     ],
     [activeTab],
@@ -1126,7 +1122,6 @@ export const TeacherDashboard: React.FC = () => {
       schedule: 'Ders Programı',
       live: 'Canlı Ders',
       tests: 'Test & Sorular',
-      questionbank: 'Soru Havuzu',
       support: 'Yardım Talepleri',
       notifications: 'Bildirimler',
       calendar: 'Takvim & Etüt',
@@ -1445,9 +1440,7 @@ export const TeacherDashboard: React.FC = () => {
       {activeTab === 'overview' && (
         <TeacherOverview
           metrics={metrics}
-          activities={dashboardState.data?.recentActivity ?? []}
-          meetings={meetings}
-          onStartLive={handleStartLiveMeeting}
+          onNavigate={(tab) => setActiveTab(tab)}
         />
       )}
       {activeTab === 'content' && (
@@ -1463,6 +1456,8 @@ export const TeacherDashboard: React.FC = () => {
           loadingCurriculumTopics={curriculumTopicsLoading}
           curriculumSubjects={curriculumSubjects}
           loadingCurriculumSubjects={curriculumSubjectsLoading}
+          allowedGrades={teacherAssignedGrades}
+          allowedSubjectNames={teacherSubjects}
         />
       )}
       {activeTab === 'live' && (
@@ -1566,6 +1561,8 @@ export const TeacherDashboard: React.FC = () => {
           students={students}
           tests={tests}
           testAssets={testAssets}
+          allowedGrades={teacherAssignedGrades}
+          allowedSubjectNames={teacherSubjects}
           onTestsChanged={() => {
             if (!token) return;
             getTeacherTests(token).then(setTests).catch(() => {});
@@ -1579,9 +1576,6 @@ export const TeacherDashboard: React.FC = () => {
             assignmentsState.run(() => getTeacherAssignments(token)).catch(() => {});
           }}
         />
-      )}
-      {activeTab === 'questionbank' && (
-        <QuestionBankTab token={token} />
       )}
       {activeTab === 'schedule' && (
         <LessonScheduleTab
@@ -2381,10 +2375,12 @@ const TeacherTests: React.FC<{
   students: TeacherStudent[];
   tests: TeacherTest[];
   testAssets: TeacherTestAsset[];
+  allowedGrades?: string[];
+  allowedSubjectNames?: string[];
   onTestsChanged: () => void;
   onTestAssetsChanged: () => void;
   onAssignmentCreated: () => void;
-}> = ({ aiTestCardRef, token, students, tests, testAssets, onTestsChanged: _onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
+}> = ({ aiTestCardRef, token, students, tests, testAssets, allowedGrades = [], allowedSubjectNames = [], onTestsChanged: _onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
   // Yapılandırılmış test oluşturma UI'ı geçici olarak devre dışı (sadece dosya tabanlı testler kullanılıyor)
 
   const [assetDraft, setAssetDraft] = useState({
@@ -2425,7 +2421,7 @@ const TeacherTests: React.FC<{
   const [aiGenGrade, setAiGenGrade] = useState('9');
   const [aiGenCount, setAiGenCount] = useState(5);
   const [aiGenDifficulty, setAiGenDifficulty] = useState('orta');
-  const [aiGenFormat, setAiGenFormat] = useState<'metin' | 'pdf' | 'xlsx'>('metin');
+  const [aiGenQuestionType, setAiGenQuestionType] = useState<'multiple_choice' | 'true_false' | 'open_ended'>('multiple_choice');
   const [aiGenLoading, setAiGenLoading] = useState(false);
   const [aiGenResult, setAiGenResult] = useState<string | null>(null);
 
@@ -2519,9 +2515,6 @@ const TeacherTests: React.FC<{
       .catch(() => setAssetCurriculumTopics([]))
       .finally(() => setAssetCurriculumTopicsLoading(false));
   }, [token, assetDraft.subjectId, assetDraft.gradeLevel]);
-  const [aiGenAttachment, setAiGenAttachment] = useState<{ filename: string; mimeType: string; data: string } | null>(null);
-  const [aiGenAnswerKey, setAiGenAnswerKey] = useState<Record<string, string> | null>(null);
-  const [aiGenSavingAsTest, setAiGenSavingAsTest] = useState(false);
   const parsedAiQuestions = useMemo(
     () => parseAiGeneratedQuestions(aiGenResult),
     [aiGenResult],
@@ -2535,6 +2528,21 @@ const TeacherTests: React.FC<{
   const [pdfSaving, setPdfSaving] = useState(false);
   const [pdfSaveMessage, setPdfSaveMessage] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
+
+  // Collapsible kartlar için state'ler
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  
+  const toggleCard = (cardId: string) => {
+    setExpandedCards((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(cardId)) {
+        newSet.delete(cardId);
+      } else {
+        newSet.add(cardId);
+      }
+      return newSet;
+    });
+  };
 
   const handlePdfFileChange = (file: File | null) => {
     if (!file) {
@@ -2799,7 +2807,7 @@ const TeacherTests: React.FC<{
   };
 
   const handleAiGenerateQuestions = async () => {
-    if (!token || !aiGenTopic.trim()) return;
+    if (!token || !aiGenTopic.trim() || !aiGenSubject) return;
     if (aiTestCardRef.current) {
       try {
         aiTestCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2809,23 +2817,31 @@ const TeacherTests: React.FC<{
     }
     setAiGenLoading(true);
     setAiGenResult(null);
-    setAiGenAttachment(null);
-    setAiGenAnswerKey(null);
     try {
-      const res = await generateTeacherQuestions(token, {
+      // Soru bankasına eklemek için QuestionBankTab mantığıyla üret
+      const difficultyMap: Record<string, 'easy' | 'medium' | 'hard'> = {
+        kolay: 'easy',
+        orta: 'medium',
+        zor: 'hard',
+      };
+      const qbPayload: AIQuestionGeneratePayload = {
+        subjectId: aiGenSubject,
+        gradeLevel: aiGenGrade,
         topic: aiGenTopic.trim(),
-        gradeLevel: `${aiGenGrade}. Sınıf`,
+        difficulty: difficultyMap[aiGenDifficulty] || 'medium',
+        questionType: aiGenQuestionType,
         count: aiGenCount,
-        difficulty: aiGenDifficulty,
-        format: aiGenFormat,
-      });
-      setAiGenResult(res.questions);
-      if (res.attachment) {
-        setAiGenAttachment(res.attachment);
-      }
-      if (res.answerKey && Object.keys(res.answerKey).length > 0) {
-        setAiGenAnswerKey(res.answerKey);
-      }
+      };
+      const qbResult = await generateQuestionBankItems(token, qbPayload);
+      
+      // Soruları metin formatında göster (eski format için uyumluluk)
+      const questionsText = qbResult.questions.map((q, idx) => {
+        const choices = Array.isArray(q.choices) ? q.choices : [];
+        const choicesText = choices.map((c, i) => `${String.fromCharCode(65 + i)}) ${c}`).join('\n');
+        return `${idx + 1}. ${q.text}\n${choicesText}\nDoğru Cevap: ${q.correctAnswer}\n${q.solutionExplanation ? `Açıklama: ${q.solutionExplanation}` : ''}`;
+      }).join('\n\n');
+      
+      setAiGenResult(questionsText);
     } catch (e) {
       setAiGenResult(e instanceof Error ? e.message : 'Soru üretilemedi.');
     } finally {
@@ -2833,61 +2849,34 @@ const TeacherTests: React.FC<{
     }
   };
 
-  const handleSaveAiAsTest = async () => {
-    if (!token || !aiGenAttachment || !aiGenAnswerKey) return;
-    setAiGenSavingAsTest(true);
-    try {
-      const blob = new Blob(
-        [Uint8Array.from(atob(aiGenAttachment.data), (c) => c.charCodeAt(0))],
-        { type: aiGenAttachment.mimeType },
-      );
-      const file = new File([blob], aiGenAttachment.filename, { type: aiGenAttachment.mimeType });
-      const uploaded = await uploadTeacherTestAssetFile(token, file);
-      await createTeacherTestAsset(token, {
-        title: `${aiGenTopic.trim()} - AI`,
-        subjectId: assetDraft.subjectId,
-        topic: aiGenTopic.trim(),
-        gradeLevel: assetDraft.gradeLevel,
-        fileUrl: uploaded.url,
-        fileName: uploaded.fileName,
-        mimeType: uploaded.mimeType,
-        answerKeyJson: JSON.stringify(aiGenAnswerKey),
-      });
-      onTestAssetsChanged();
-      setAiGenAttachment(null);
-      setAiGenAnswerKey(null);
-      // eslint-disable-next-line no-alert
-      alert('Test dosyası kaydedildi. Artık ödev olarak atayabilirsiniz.');
-    } catch (e) {
-      // eslint-disable-next-line no-alert
-      alert(e instanceof Error ? e.message : 'Kaydedilemedi.');
-    } finally {
-      setAiGenSavingAsTest(false);
-    }
-  };
-
-  const downloadAiGenAttachment = () => {
-    if (!aiGenAttachment) return;
-    const blob = new Blob(
-      [Uint8Array.from(atob(aiGenAttachment.data), (c) => c.charCodeAt(0))],
-      { type: aiGenAttachment.mimeType },
-    );
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = aiGenAttachment.filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   return (
-    <div className="dual-grid">
-      <div style={{ display: 'grid', gap: '1rem' }}>
-        <GlassCard
-          title="AI ile Otomatik Soru Üretimi"
-          subtitle="Konu ve kriterlere göre test soruları oluştur"
-        >
-          <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div className="dual-grid">
+        <div style={{ display: 'grid', gap: '1rem' }}>
+        <GlassCard>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              padding: '0.5rem 0',
+            }}
+            onClick={() => toggleCard('ai-generate')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Sparkles className="w-5 h-5 text-purple-400" strokeWidth={1.75} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'white' }}>AI ile Otomatik Soru Üretimi</h3>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Konu ve kriterlere göre test soruları oluştur</p>
+              </div>
+            </div>
+            {expandedCards.has('ai-generate') ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </div>
+          {expandedCards.has('ai-generate') && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
             <select value={aiGenGrade} onChange={(e) => setAiGenGrade(e.target.value)}>
               <option value="4">4. Sınıf</option>
               <option value="5">5. Sınıf</option>
@@ -2951,10 +2940,10 @@ const TeacherTests: React.FC<{
               <option value="orta">Orta</option>
               <option value="zor">Zor</option>
             </select>
-            <select value={aiGenFormat} onChange={(e) => setAiGenFormat(e.target.value as 'metin' | 'pdf' | 'xlsx')}>
-              <option value="metin">Metin</option>
-              <option value="pdf">PDF İndir</option>
-              <option value="xlsx">Excel İndir</option>
+            <select value={aiGenQuestionType} onChange={(e) => setAiGenQuestionType(e.target.value as 'multiple_choice' | 'true_false' | 'open_ended')}>
+              <option value="multiple_choice">Çoktan Seçmeli</option>
+              <option value="true_false">Doğru/Yanlış</option>
+              <option value="open_ended">Açık Uçlu</option>
             </select>
             <button
               type="button"
@@ -2964,27 +2953,12 @@ const TeacherTests: React.FC<{
             >
               {aiGenLoading ? 'Üretiliyor...' : 'Soruları Üret'}
             </button>
-          </div>
-          {aiGenResult && (
-            <div style={{ marginTop: '1rem' }}>
-              {aiGenAttachment && (
-                <div style={{ marginBottom: '0.6rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button type="button" className="primary-btn" onClick={downloadAiGenAttachment}>
-                    {aiGenAttachment.filename.endsWith('.pdf') ? 'PDF İndir' : 'Excel İndir'}
-                  </button>
-                  {aiGenAttachment.filename.endsWith('.pdf') && aiGenAnswerKey && Object.keys(aiGenAnswerKey).length > 0 && (
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={handleSaveAiAsTest}
-                      disabled={aiGenSavingAsTest}
-                      style={{ border: '1px solid rgba(34,197,94,0.9)', color: '#4ade80' }}
-                    >
-                      {aiGenSavingAsTest ? 'Kaydediliyor...' : 'Test Olarak Kaydet'}
-                    </button>
-                  )}
-                </div>
-              )}
+              </div>
+              {aiGenResult && (
+                <div style={{ marginTop: '1rem' }}>
+              <div style={{ marginBottom: '0.6rem', padding: '0.75rem', borderRadius: 8, background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#4ade80', fontSize: '0.9rem' }}>
+                ✓ Sorular başarıyla üretildi ve soru bankasına eklendi. Aşağıdaki soru bankasından görüntüleyebilirsiniz.
+              </div>
               {parsedAiQuestions ? (
                 <div
                   style={{
@@ -3076,15 +3050,35 @@ const TeacherTests: React.FC<{
                   {aiGenResult}
                 </div>
               )}
+                </div>
+              )}
             </div>
           )}
         </GlassCard>
 
-        <GlassCard
-          title="AI PDF Ayrıştırıcı"
-          subtitle="PDF test kitaplarındaki soruları hızlıca soru bankasına aktar"
-        >
-          <div style={{ display: 'grid', gap: '0.6rem' }}>
+        <GlassCard>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              padding: '0.5rem 0',
+            }}
+            onClick={() => toggleCard('ai-pdf')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <FileText className="w-5 h-5 text-blue-400" strokeWidth={1.75} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'white' }}>AI PDF Ayrıştırıcı</h3>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>PDF test kitaplarındaki soruları hızlıca soru bankasına aktar</p>
+              </div>
+            </div>
+            {expandedCards.has('ai-pdf') ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </div>
+          {expandedCards.has('ai-pdf') && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ display: 'grid', gap: '0.6rem' }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
               Üstte seçtiğiniz <strong>sınıf</strong> ve <strong>ders</strong> bilgisi bu PDF’ten
               çıkan sorular için kullanılacaktır.
@@ -3261,11 +3255,34 @@ const TeacherTests: React.FC<{
                 ))}
               </div>
             )}
-          </div>
+              </div>
+            </div>
+          )}
         </GlassCard>
 
-        <GlassCard title="Test Dosyası Yükle" subtitle="PDF gibi bir dosyayı test olarak ekleyin">
-          <div style={{ display: 'grid', gap: '0.6rem' }}>
+        <GlassCard>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              padding: '0.5rem 0',
+            }}
+            onClick={() => toggleCard('test-upload')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <FileDown className="w-5 h-5 text-green-400" strokeWidth={1.75} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'white' }}>Test Dosyası Yükle</h3>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>PDF gibi bir dosyayı test olarak ekleyin</p>
+              </div>
+            </div>
+            {expandedCards.has('test-upload') ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </div>
+          {expandedCards.has('test-upload') && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ display: 'grid', gap: '0.6rem' }}>
             <input
               type="text"
               placeholder="Test başlığı"
@@ -3402,11 +3419,34 @@ const TeacherTests: React.FC<{
             <button type="button" className="primary-btn" onClick={handleUploadAsset} disabled={assetUploading}>
               {assetUploading ? 'Yükleniyor...' : 'Dosyayı Yükle ve Kaydet'}
             </button>
-          </div>
+              </div>
+            </div>
+          )}
         </GlassCard>
 
-        <GlassCard title="Öğrenciye Test Ata" subtitle="Öğrenciye özel test + süre belirleyin">
-          <div style={{ display: 'grid', gap: '0.6rem' }}>
+        <GlassCard>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              padding: '0.5rem 0',
+            }}
+            onClick={() => toggleCard('assign-test')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Send className="w-5 h-5 text-orange-400" strokeWidth={1.75} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'white' }}>Öğrenciye Test Ata</h3>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Öğrenciye özel test + süre belirleyin</p>
+              </div>
+            </div>
+            {expandedCards.has('assign-test') ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </div>
+          {expandedCards.has('assign-test') && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ display: 'grid', gap: '0.6rem' }}>
             <select
               value={assignDraft.studentId}
               onChange={(e) => setAssignDraft((p) => ({ ...p, studentId: e.target.value }))}
@@ -3488,11 +3528,34 @@ const TeacherTests: React.FC<{
             <button type="button" className="primary-btn" onClick={handleAssign} disabled={assignSaving}>
               {assignSaving ? 'Atanıyor...' : 'Testi Ata'}
             </button>
-          </div>
+              </div>
+            </div>
+          )}
         </GlassCard>
 
-        <GlassCard title="Yüklenen Test Dosyaları" subtitle="Kayıtlar">
-          <div className="list-stack">
+        <GlassCard>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              padding: '0.5rem 0',
+            }}
+            onClick={() => toggleCard('test-files')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Layers className="w-5 h-5 text-indigo-400" strokeWidth={1.75} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'white' }}>Yüklenen Test Dosyaları</h3>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Kayıtlar</p>
+              </div>
+            </div>
+            {expandedCards.has('test-files') ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </div>
+          {expandedCards.has('test-files') && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <div className="list-stack">
             {testAssets.length === 0 && <div className="empty-state">Henüz test dosyası yok.</div>}
             {testAssets.slice(0, 8).map((a) => (
               <div className="list-row" key={a.id}>
@@ -3516,21 +3579,112 @@ const TeacherTests: React.FC<{
                 </div>
               </div>
             ))}
-          </div>
+              </div>
+            </div>
+          )}
         </GlassCard>
+        </div>
       </div>
+      <GlassCard>
+        <div 
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            padding: '0.5rem 0',
+          }}
+          onClick={() => toggleCard('question-bank')}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <BookOpen className="w-5 h-5 text-cyan-400" strokeWidth={1.75} />
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'white' }}>Soru Bankası</h3>
+              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Tüm soruları görüntüle, düzenle ve yönet</p>
+            </div>
+          </div>
+          {expandedCards.has('question-bank') ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+        </div>
+        {expandedCards.has('question-bank') && (
+          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+            <QuestionBankTab
+              token={token}
+              allowedGrades={allowedGrades}
+              allowedSubjectNames={allowedSubjectNames}
+            />
+          </div>
+        )}
+      </GlassCard>
     </div>
   );
 };
 
 const TeacherOverview: React.FC<{
   metrics: Array<{ label: string; value: string; helper?: string; trendLabel?: string; trendTone?: 'positive' | 'neutral' }>;
-  activities: string[];
-  meetings: TeacherMeeting[];
-  onStartLive: (meetingId: string) => void;
-}> = () => {
-  return null;
+  onNavigate?: (tab: TeacherTab) => void;
+}> = ({ metrics, onNavigate }) => {
+  const shortcuts: { id: TeacherTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'live', label: 'Canlı Ders', icon: <Video size={20} /> },
+    { id: 'calendar', label: 'Takvim', icon: <CalendarCheck size={20} /> },
+    { id: 'schedule', label: 'Ders Programı', icon: <CalendarCheck size={20} /> },
+    { id: 'coaching', label: 'Kişisel Takip', icon: <TrendingUp size={20} /> },
+    { id: 'students', label: 'Öğrenciler', icon: <Users size={20} /> },
+    { id: 'parents', label: 'Veliler', icon: <Users size={20} /> },
+  ];
+
+  return (
+    <div className="dashboard-overview" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Kısayollar */}
+      {onNavigate && (
+        <GlassCard title="Kısayollar" subtitle="Sık kullanılan sayfalara hızlı erişim" className="overview-shortcuts-card">
+          <div className="overview-shortcuts-grid">
+            {shortcuts.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="overview-shortcut-btn"
+                onClick={() => onNavigate(s.id)}
+              >
+                <span className="overview-shortcut-icon">{s.icon}</span>
+                <span className="overview-shortcut-label">{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Metrik kartları */}
+      <GlassCard title="İstatistikler" subtitle="Genel bakış metrikleri" className="overview-metrics-card">
+        <div className="overview-metrics-grid">
+          {metrics.map((m, i) => (
+            <MetricCard
+              key={i}
+              label={m.label}
+              value={m.value}
+              helper={m.helper}
+              trendLabel={m.trendLabel}
+              trendTone={m.trendTone ?? 'neutral'}
+            />
+          ))}
+        </div>
+      </GlassCard>
+    </div>
+  );
 };
+
+const GRADE_OPTIONS: { value: string; label: string; isLgsOrYks?: boolean }[] = [
+  { value: '4', label: '4. Sınıf' },
+  { value: '5', label: '5. Sınıf' },
+  { value: '6', label: '6. Sınıf' },
+  { value: '7', label: '7. Sınıf' },
+  { value: '8', label: '8. Sınıf (LGS)' },
+  { value: '9', label: '9. Sınıf' },
+  { value: '10', label: '10. Sınıf' },
+  { value: '11', label: '11. Sınıf' },
+  { value: '12', label: '12. Sınıf' },
+  { value: 'TYT', label: 'TYT', isLgsOrYks: true },
+  { value: 'AYT', label: 'AYT', isLgsOrYks: true },
+];
 
 const TeacherContent: React.FC<{
   contents: TeacherContent[];
@@ -3544,6 +3698,10 @@ const TeacherContent: React.FC<{
   loadingCurriculumTopics?: boolean;
   curriculumSubjects?: Array<{ id: string; name: string }>;
   loadingCurriculumSubjects?: boolean;
+  /** Öğretmenin atandığı sınıf seviyeleri (örn. ['9','10']); boşsa tümü gösterilir. */
+  allowedGrades?: string[];
+  /** Öğretmenin branş adları (örn. ['Matematik']); sadece bu dersler listelenir. */
+  allowedSubjectNames?: string[];
 }> = ({
   contents,
   draft,
@@ -3556,7 +3714,31 @@ const TeacherContent: React.FC<{
   loadingCurriculumTopics,
   curriculumSubjects = [],
   loadingCurriculumSubjects = false,
-}) => (
+  allowedGrades = [],
+  allowedSubjectNames = [],
+}) => {
+  // Sınıf seçenekleri: atanan sınıflar + 9–12 varsa TYT/AYT, 8 varsa 8 (LGS) zaten dahil
+  const hasLise = allowedGrades.length === 0 || allowedGrades.some((g) => ['9', '10', '11', '12'].includes(g));
+  const gradeOptions = GRADE_OPTIONS.filter((opt) => {
+    if (opt.isLgsOrYks) return hasLise; // TYT/AYT sadece 9–12 öğretmenleri
+    if (allowedGrades.length === 0) return true;
+    return allowedGrades.includes(opt.value);
+  });
+
+  // Ders listesi: sadece öğretmenin branşı
+  const fallbackSubjects = [
+    { id: 'sub_matematik', name: 'Matematik' },
+    { id: 'sub_fizik', name: 'Fizik' },
+    { id: 'sub_biyoloji', name: 'Biyoloji' },
+    { id: 'sub_kimya', name: 'Kimya' },
+  ];
+  const subjectList = curriculumSubjects.length > 0 ? curriculumSubjects : fallbackSubjects;
+  const filteredSubjects =
+    allowedSubjectNames.length === 0
+      ? subjectList
+      : subjectList.filter((sub) => allowedSubjectNames.some((n) => n.trim().toLowerCase() === sub.name.trim().toLowerCase()));
+
+  return (
   <GlassCard title="İçerik Kütüphanesi" subtitle="Yeni içerik oluştur">
       <div className="list-stack" style={{ marginBottom: '1rem' }}>
         <div className="list-row">
@@ -3580,18 +3762,12 @@ const TeacherContent: React.FC<{
                 fontSize: '0.9rem',
               }}
             >
-              <option value="">Sınıf seçin</option>
-              <option value="4">4. Sınıf</option>
-              <option value="5">5. Sınıf</option>
-              <option value="6">6. Sınıf</option>
-              <option value="7">7. Sınıf</option>
-              <option value="8">8. Sınıf (LGS)</option>
-              <option value="9">9. Sınıf</option>
-              <option value="10">10. Sınıf</option>
-              <option value="11">11. Sınıf</option>
-              <option value="12">12. Sınıf</option>
-              <option value="TYT">TYT</option>
-              <option value="AYT">AYT</option>
+              <option value="">{gradeOptions.length === 0 ? 'Yetkili sınıf yok' : 'Sınıf seçin'}</option>
+              {gradeOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -3609,21 +3785,18 @@ const TeacherContent: React.FC<{
           >
             {loadingCurriculumSubjects ? (
               <option>Dersler yükleniyor...</option>
-            ) : curriculumSubjects.length > 0 ? (
+            ) : filteredSubjects.length > 0 ? (
               <>
-                 {curriculumSubjects.map((sub) => (
-                   <option key={sub.id} value={sub.id}>
-                     {sub.name}
-                   </option>
-                 ))}
-                 {/* Fallback veya ek seçenekler istenirse buraya eklenebilir */}
+                <option value="">Ders seçin</option>
+                {filteredSubjects.map((sub) => (
+                  <option key={sub.id} value={sub.id}>
+                    {sub.name}
+                  </option>
+                ))}
               </>
             ) : (
               <>
-                <option value="sub_matematik">Matematik</option>
-                <option value="sub_fizik">Fizik</option>
-                <option value="sub_biyoloji">Biyoloji</option>
-                <option value="sub_kimya">Kimya</option>
+                <option value="">{allowedSubjectNames.length === 0 ? 'Ders seçin' : 'Branşınıza ait ders bulunamadı'}</option>
               </>
             )}
           </select>
@@ -3792,7 +3965,8 @@ const TeacherContent: React.FC<{
       {contents.length === 0 && <div className="empty-state">İçerik bulunamadı.</div>}
     </div>
   </GlassCard>
-);
+  );
+};
 
 const TeacherCalendar: React.FC<{
   events: CalendarEvent[];
@@ -4117,7 +4291,7 @@ const TeacherCalendar: React.FC<{
   );
 };
 
-const TeacherAiAssistant: React.FC<{
+const _TeacherAiAssistant: React.FC<{
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
@@ -4408,6 +4582,7 @@ const TeacherAiAssistant: React.FC<{
     )}
   </>
 );
+void _TeacherAiAssistant;
 
 const TeacherMeetingModal: React.FC<{
   open: boolean;
@@ -4435,6 +4610,29 @@ const TeacherMeetingModal: React.FC<{
   teacherSubjects,
 }) => {
   if (!open) return null;
+
+  // Sınıfları sayısal sıraya göre sırala ve özel durumları ekle
+  const sortedGradeOptions = useMemo(() => {
+    const numericGrades = allowedGrades
+      .filter((g) => g !== 'Mezun' && !isNaN(Number(g)))
+      .map((g) => Number(g))
+      .sort((a, b) => a - b)
+      .map((g) => String(g));
+    
+    const specialGrades: string[] = [];
+    
+    // 9, 10, 11, 12 veya Mezun varsa TYT ve AYT ekle
+    const hasLise = allowedGrades.some((g) => ['9', '10', '11', '12', 'Mezun'].includes(g));
+    if (hasLise) {
+      specialGrades.push('TYT', 'AYT');
+    }
+    
+    // 8. sınıf varsa LGS ekle (8 zaten listede olacak, LGS ayrı bir seçenek değil)
+    // Mezun varsa ekle
+    const otherGrades = allowedGrades.filter((g) => g === 'Mezun');
+    
+    return [...numericGrades, ...otherGrades, ...specialGrades];
+  }, [allowedGrades]);
 
   const handleFieldChange = <K extends keyof TeacherMeetingDraft>(key: K, value: TeacherMeetingDraft[K]) => {
     onDraftChange({
@@ -4554,9 +4752,9 @@ const TeacherMeetingModal: React.FC<{
                 required
               >
                 <option value="">Seçin</option>
-                {allowedGrades.map((grade) => (
+                {sortedGradeOptions.map((grade) => (
                   <option key={grade} value={grade}>
-                    {grade === 'Mezun' ? 'Mezun' : `${grade}. Sınıf`}
+                    {grade === 'Mezun' ? 'Mezun' : grade === 'TYT' ? 'TYT' : grade === 'AYT' ? 'AYT' : grade === '8' ? '8. Sınıf (LGS)' : `${grade}. Sınıf`}
                   </option>
                 ))}
               </select>
@@ -4620,7 +4818,6 @@ const TeacherMeetingModal: React.FC<{
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                 {[
                   { id: 'class', label: 'Sınıf Dersi' },
-                  { id: 'teacher_student', label: 'Birebir Öğrenci' },
                 ].map((option) => (
                   <button
                     key={option.id}
@@ -4916,12 +5113,8 @@ const TeacherStudents: React.FC<{
         <>
           <button
             type="button"
-            className="ghost-btn"
+            className={showAllMessages ? 'primary-btn' : 'ghost-btn'}
             onClick={() => setShowAllMessages((prev) => !prev)}
-            style={{
-              background: showAllMessages ? 'var(--color-surface-strong)' : 'transparent',
-              color: showAllMessages ? 'var(--color-text-main)' : 'var(--color-text-muted)',
-            }}
           >
             <Users size={16} /> Tümü
           </button>
@@ -4939,23 +5132,12 @@ const TeacherStudents: React.FC<{
           marginBottom: '1rem',
         }}
       >
-        <div style={{ minWidth: 180, flex: '0 0 auto' }}>
-          <div style={{ fontSize: '0.8rem', marginBottom: 4, color: 'var(--color-text-muted)' }}>
-            Sınıf Seçiniz
-          </div>
+        <div className="students-filter-field students-filter-field--grade">
+          <div className="students-filter-label">Sınıf Seçiniz</div>
           <select
             value={selectedGradeLevel}
             onChange={(e) => setSelectedGradeLevel(e.target.value)}
-            className="students-filter-select"
-            style={{
-              width: '100%',
-              padding: '0.55rem 0.85rem',
-              borderRadius: 999,
-              border: '1px solid var(--color-border-subtle)',
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-main)',
-              fontSize: '0.9rem',
-            }}
+            className="students-filter-select students-filter-select--premium"
           >
             <option value="">
               {teacherAssignedGrades.length === 0 ? 'Yetkili sınıf yok' : 'Sınıf seçiniz'}
@@ -4968,25 +5150,14 @@ const TeacherStudents: React.FC<{
           </select>
         </div>
 
-        <div style={{ minWidth: 220, flex: '0 0 auto' }}>
-          <div style={{ fontSize: '0.8rem', marginBottom: 4, color: 'var(--color-text-muted)' }}>
-            Ders Seçiniz
-          </div>
+        <div className="students-filter-field students-filter-field--subject">
+          <div className="students-filter-label">Ders Seçiniz</div>
           <select
             value={selectedSubjectId}
             onChange={(e) => setSelectedSubjectId(e.target.value)}
             disabled={!selectedGradeLevel || subjectsLoading || availableSubjects.length === 0}
-            className="students-filter-select"
-            style={{
-              width: '100%',
-              padding: '0.55rem 0.85rem',
-              borderRadius: 999,
-              border: '1px solid var(--color-border-subtle)',
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-main)',
-              fontSize: '0.9rem',
-              opacity: !selectedGradeLevel || subjectsLoading ? 0.7 : 1,
-            }}
+            className="students-filter-select students-filter-select--premium"
+            style={{ opacity: !selectedGradeLevel || subjectsLoading ? 0.7 : 1 }}
           >
             {!selectedGradeLevel ? (
               <option value="">Önce sınıf seçiniz</option>
@@ -5016,7 +5187,6 @@ const TeacherStudents: React.FC<{
           type="button"
           className="ghost-btn"
           onClick={handleClearFilter}
-          style={{ paddingInline: '0.9rem', height: 36 }}
         >
           Filtreyi Temizle
         </button>

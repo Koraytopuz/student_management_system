@@ -168,7 +168,12 @@ const LiveClassInner: React.FC<{
 }> = ({ role, title, meetingId, authToken, onClose }) => {
   // Room context available if needed
   useRoomContext();
-  const { localParticipant } = useLocalParticipant();
+  const { 
+    localParticipant, 
+    isCameraEnabled, 
+    isMicrophoneEnabled, 
+    isScreenShareEnabled 
+  } = useLocalParticipant();
   const participants = useParticipants();
   const elapsedTime = useElapsedTime();
 
@@ -178,7 +183,7 @@ const LiveClassInner: React.FC<{
     identity ??
     (role === 'teacher' ? 'Öğretmen' : 'Öğrenci');
 
-  // State
+  // State - sync with LiveKit track states
   const [isMicOn, setIsMicOn] = useState(false); // Varsayılan olarak kapalı
   const [isCameraOn, setIsCameraOn] = useState(false); // Varsayılan olarak kapalı
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -348,6 +353,25 @@ const LiveClassInner: React.FC<{
       fetchStudentStats();
     }
   }, [role, fetchStudentStats]);
+
+  // Sync track states with LiveKit
+  useEffect(() => {
+    if (isCameraEnabled !== undefined) {
+      setIsCameraOn(isCameraEnabled);
+    }
+  }, [isCameraEnabled]);
+
+  useEffect(() => {
+    if (isMicrophoneEnabled !== undefined) {
+      setIsMicOn(isMicrophoneEnabled);
+    }
+  }, [isMicrophoneEnabled]);
+
+  useEffect(() => {
+    if (isScreenShareEnabled !== undefined) {
+      setIsScreenSharing(isScreenShareEnabled);
+    }
+  }, [isScreenShareEnabled]);
 
   const knownParticipantIds = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -581,24 +605,32 @@ const LiveClassInner: React.FC<{
 
   // Media controls
   const toggleMic = async () => {
+    if (!localParticipant) return;
     try {
-      await localParticipant?.setMicrophoneEnabled(!isMicOn);
-      setIsMicOn(!isMicOn);
+      const newState = !isMicOn;
+      await localParticipant.setMicrophoneEnabled(newState);
+      setIsMicOn(newState);
     } catch (e) {
       console.error('Mic toggle error:', e);
+      pushInfoToast('Mikrofon açılamadı/kapatılamadı');
     }
   };
 
   const toggleCamera = async () => {
+    if (!localParticipant) return;
     try {
-      await localParticipant?.setCameraEnabled(!isCameraOn);
-      setIsCameraOn(!isCameraOn);
+      const newState = !isCameraOn;
+      await localParticipant.setCameraEnabled(newState);
+      setIsCameraOn(newState);
     } catch (e) {
       console.error('Camera toggle error:', e);
+      pushInfoToast('Kamera açılamadı/kapatılamadı');
     }
   };
 
   const toggleScreenShare = async () => {
+    if (!localParticipant) return;
+    
     if (!canShareScreen) {
       if (role === 'student' && !pendingScreenRequest) {
         setPendingScreenRequest(true);
@@ -610,11 +642,14 @@ const LiveClassInner: React.FC<{
       }
       return;
     }
+    
     try {
-      await localParticipant?.setScreenShareEnabled(!isScreenSharing);
-      setIsScreenSharing(!isScreenSharing);
+      const newState = !isScreenSharing;
+      await localParticipant.setScreenShareEnabled(newState);
+      setIsScreenSharing(newState);
     } catch (e) {
       console.error('Screen share error:', e);
+      pushInfoToast('Ekran paylaşımı başlatılamadı/durdurulamadı');
     }
   };
 
@@ -1131,7 +1166,7 @@ const LiveClassInner: React.FC<{
 
         {/* Anket (Poll) Panel */}
         {pollPanelOpen && (
-          <div className="live-chat-panel" style={{ right: chatOpen ? 340 : 0 }}>
+          <div className="live-chat-panel" style={{ right: chatOpen ? 340 : 16 }}>
             <div className="live-chat-header">
               <span className="live-chat-title">Anket</span>
               <button className="participants-close" onClick={() => setPollPanelOpen(false)}>
@@ -1378,8 +1413,10 @@ const LiveClassInner: React.FC<{
                           justifyContent: 'space-between',
                           padding: '0.75rem 1rem',
                           borderRadius: 12,
-                          background: 'rgba(15,23,42,0.6)',
-                          border: '1px solid rgba(51,65,85,0.5)',
+                          background: 'rgba(15, 23, 42, 0.8)',
+                          backdropFilter: 'blur(8px)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
                         }}
                       >
                         <span style={{ fontWeight: 500, color: '#e2e8f0' }}>
@@ -1392,7 +1429,17 @@ const LiveClassInner: React.FC<{
                             gap: '0.5rem',
                             cursor: 'pointer',
                             fontSize: '0.9rem',
-                            color: attendancePresent[student.id] ? '#22c55e' : '#ef4444',
+                            fontWeight: 500,
+                            color: attendancePresent[student.id] !== false ? '#22c55e' : '#ef4444',
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: '8px',
+                            background: attendancePresent[student.id] !== false 
+                              ? 'rgba(34, 197, 94, 0.15)' 
+                              : 'rgba(239, 68, 68, 0.15)',
+                            border: `1px solid ${attendancePresent[student.id] !== false 
+                              ? 'rgba(34, 197, 94, 0.3)' 
+                              : 'rgba(239, 68, 68, 0.3)'}`,
+                            transition: 'all 0.2s ease',
                           }}
                         >
                           <input

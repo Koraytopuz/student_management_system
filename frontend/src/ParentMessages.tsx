@@ -376,7 +376,7 @@ export const ParentMessages: React.FC = () => {
                         resize: 'vertical',
                       }}
                     />
-                    <button type="submit" disabled={loading || !newMessage.text}>
+                    <button type="submit" className="primary-btn" disabled={loading || !newMessage.text}>
                       {loading ? 'Gönderiliyor...' : 'Gönder'}
                     </button>
                   </div>

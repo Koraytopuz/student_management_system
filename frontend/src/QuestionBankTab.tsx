@@ -5,7 +5,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Plus,
-  Filter,
   Sparkles,
   Check,
   X,
@@ -23,6 +22,7 @@ import {
   FolderOpen,
   List,
   ChevronDown,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { GlassCard } from './components/DashboardPrimitives';
 import {
@@ -32,6 +32,7 @@ import {
   updateQuestionBankItem,
   deleteQuestionBankItem,
   approveQuestionBankItem,
+  bulkApproveQuestionBankItems,
   generateQuestionBankItems,
   getSubjectsList,
 } from './api';
@@ -47,16 +48,11 @@ import type {
 
 interface QuestionBankTabProps {
   token: string | null;
+  /** Öğretmenin atandığı sınıflar; verilirse sadece bunlar listelenir */
+  allowedGrades?: string[];
+  /** Öğretmenin branşındaki dersler; verilirse sadece bunlar listelenir */
+  allowedSubjectNames?: string[];
 }
-
-const BLOOM_LEVELS: { value: BloomLevel; label: string }[] = [
-  { value: 'hatirlama', label: 'Hatırlama' },
-  { value: 'anlama', label: 'Anlama' },
-  { value: 'uygulama', label: 'Uygulama' },
-  { value: 'analiz', label: 'Analiz' },
-  { value: 'degerlendirme', label: 'Değerlendirme' },
-  { value: 'yaratma', label: 'Yaratma' },
-];
 
 const GRADE_LEVELS = ['4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
@@ -96,7 +92,7 @@ const QUESTION_TYPES = [
   { value: 'open_ended', label: 'Açık Uçlu' },
 ];
 
-export function QuestionBankTab({ token }: QuestionBankTabProps) {
+export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames = [] }: QuestionBankTabProps) {
   const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
   const [stats, setStats] = useState<QuestionBankStats | null>(null);
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
@@ -143,6 +139,10 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     count: 10,
   });
 
+  // AI üretim sonrası önizleme: her soru ayrı kartta
+  const [generatedPreview, setGeneratedPreview] = useState<QuestionBankItem[] | null>(null);
+  const [previewExpandedSolution, setPreviewExpandedSolution] = useState<Set<string>>(new Set());
+
   // Folder View States
   const [viewMode, setViewMode] = useState<'list' | 'folder'>('list');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -183,15 +183,21 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
 
   const handleTopicSelect = (grade: string, subject: string, topic: string) => {
     setSelectedTopicPath({ grade, subject, topic });
-    setFilters({
-      ...filters,
+    const subjItem = subjects.find((s) => (s.name || '').trim() === subject.trim());
+    const subjectIdFromQuestion = questionsForFolder.find(
+      (q) =>
+        q.gradeLevel === grade &&
+        (q.subject?.name || '').trim() === subject.trim() &&
+        (q.topic || '').trim() === topic.trim()
+    )?.subjectId;
+    const subjectId = subjItem?.id ?? subjectIdFromQuestion;
+    setFilters((prev) => ({
+      ...prev,
+      page: 1,
       gradeLevel: grade,
       topic: topic,
-    });
-    const subjItem = subjects.find(s => s.name === subject);
-    if (subjItem) {
-      setFilters(prev => ({ ...prev, subjectId: subjItem.id }));
-    }
+      subjectId: subjectId || undefined,
+    }));
     setViewMode('list');
   };
 
@@ -213,8 +219,6 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
   const subjectNameMatchesAllowed = (subjectName: string, allowedNormalized: Set<string>) => {
     const n = normalizeText(subjectName);
     if (allowedNormalized.has(n)) return true;
-
-    // Yaygın isim varyasyonlarını yakala
     if (allowedNormalized.has('din kültürü') && n.includes('din kültürü')) return true;
     if (allowedNormalized.has('edebiyat') && (n.includes('edebiyat') || n.includes('türk dili'))) return true;
     if (allowedNormalized.has('fen bilimleri') && n.includes('fen')) return true;
@@ -222,31 +226,44 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     if (allowedNormalized.has('türkçe') && n.includes('türkçe')) return true;
     if (allowedNormalized.has('matematik') && n.includes('matematik')) return true;
     if (allowedNormalized.has('felsefe') && n.includes('felsefe')) return true;
-
     return false;
   };
 
-  const getAvailableSubjectsForGrade = (grade?: string) => {
-    if (!grade) return filteredSubjects;
+  /** Öğretmene gösterilecek sınıflar: sadece atandığı sınıflar veya tümü */
+  const displayGradeLevels = useMemo(() => {
+    if (!allowedGrades || allowedGrades.length === 0) return GRADE_LEVELS;
+    const set = new Set(allowedGrades);
+    return GRADE_LEVELS.filter((g) => set.has(g));
+  }, [allowedGrades]);
+
+  /** Öğretmene gösterilecek dersler: sadece branşındaki dersler veya tümü */
+  const subjectsForDropdowns = useMemo(() => {
+    if (!allowedSubjectNames || allowedSubjectNames.length === 0) return filteredSubjects;
+    const allowedSet = new Set(allowedSubjectNames.map((n) => n.trim().toLocaleLowerCase('tr-TR')));
+    return filteredSubjects.filter((s) => subjectNameMatchesAllowed(s.name, allowedSet));
+  }, [filteredSubjects, allowedSubjectNames]);
+
+  const getAvailableSubjectsForGrade = (grade?: string, subjectList = subjectsForDropdowns) => {
+    if (!grade) return subjectList;
     const allowed = gradeSubjectsMapping[grade];
-    if (!allowed || allowed.length === 0) return filteredSubjects;
+    if (!allowed || allowed.length === 0) return subjectList;
     const allowedNormalized = new Set(allowed.map(normalizeText));
-    return filteredSubjects.filter((s) => subjectNameMatchesAllowed(s.name, allowedNormalized));
+    return subjectList.filter((s) => subjectNameMatchesAllowed(s.name, allowedNormalized));
   };
 
   const availableSubjectsForAi = useMemo(
     () => getAvailableSubjectsForGrade(aiForm.gradeLevel),
-    [aiForm.gradeLevel, filteredSubjects],
+    [aiForm.gradeLevel, subjectsForDropdowns],
   );
 
   const availableSubjectsForForm = useMemo(
     () => getAvailableSubjectsForGrade(formData.gradeLevel),
-    [formData.gradeLevel, filteredSubjects],
+    [formData.gradeLevel, subjectsForDropdowns],
   );
 
   const availableSubjectsForFilters = useMemo(
     () => getAvailableSubjectsForGrade(filters.gradeLevel),
-    [filters.gradeLevel, filteredSubjects],
+    [filters.gradeLevel, subjectsForDropdowns],
   );
 
   // Cascading behavior: sınıf değişince uyumsuz ders seçimini temizle
@@ -271,10 +288,25 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     }
   }, [filters.subjectId, availableSubjectsForFilters]);
 
-  // Load data
+  // Öğretmen sadece atandığı sınıfları görüyorsa, seçili sınıf geçersizse ilk yetkili sınıfa ayarla
   useEffect(() => {
-    loadData();
-  }, [filters]);
+    if (displayGradeLevels.length === 0) return;
+    if (!displayGradeLevels.includes(aiForm.gradeLevel)) {
+      setAiForm((p) => ({ ...p, gradeLevel: displayGradeLevels[0] }));
+    }
+  }, [displayGradeLevels.join(','), aiForm.gradeLevel]);
+
+  useEffect(() => {
+    if (displayGradeLevels.length === 0 || !formData.gradeLevel) return;
+    if (!displayGradeLevels.includes(formData.gradeLevel)) {
+      setFormData((p) => ({ ...p, gradeLevel: displayGradeLevels[0] }));
+    }
+  }, [displayGradeLevels.join(','), formData.gradeLevel]);
+
+  // Load data (token değişince de liste yüklensin)
+  useEffect(() => {
+    if (token) loadData();
+  }, [filters, token]);
 
   // Dosya (klasör) görünümünde tüm sınıf/ders/konu başlıklarını göstermek için tüm soruları yükle
   useEffect(() => {
@@ -440,6 +472,25 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
     }
   };
 
+  const handleBulkApprove = async () => {
+    if (!token) return;
+    const unapprovedAICount = questions.filter((q) => !q.isApproved && q.source === 'ai').length;
+    if (unapprovedAICount === 0) {
+      setError('Onaylanacak AI sorusu bulunamadı');
+      return;
+    }
+    if (!window.confirm(`Tüm onaylanmamış AI sorularını (${unapprovedAICount} adet) onaylamak istediğinize emin misiniz?`)) return;
+    
+    try {
+      const result = await bulkApproveQuestionBankItems(token, { source: 'ai' });
+      setSuccessMessage(result.message || `${result.count} soru onaylandı`);
+      loadData();
+      loadStats();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Toplu onaylama başarısız');
+    }
+  };
+
   const toggleAICard = () => {
     setShowAICard(!showAICard);
     if (!showAICard) {
@@ -461,14 +512,19 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
 
     setAiLoading(true);
     setError(null);
+    setGeneratedPreview(null);
     try {
       const result = await generateQuestionBankItems(token, aiForm);
-      setSuccessMessage(`${result.questions.length} soru üretildi`);
+      setSuccessMessage(`${result.questions.length} soru üretildi ve soru bankasına eklendi`);
       setShowAICard(false);
+      setGeneratedPreview(result.questions);
       loadData();
       loadStats();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI soru üretimi başarısız');
+    } catch (err: any) {
+      console.error('[QuestionBankTab] AI generation error:', err);
+      const errorMsg = err?.response?.data?.error || err?.message || 'AI soru üretimi başarısız';
+      const errorDetails = err?.response?.data?.details;
+      setError(errorDetails ? `${errorMsg}: ${errorDetails}` : errorMsg);
     } finally {
       setAiLoading(false);
     }
@@ -510,41 +566,39 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
 
   return (
     <div className="questionbank-page space-y-6">
-      {/* Header & Stats */}
-      <div className="flex flex-wrap gap-4 items-center justify-between">
-        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-          <BookOpen className="w-6 h-6" />
-          Soru Bankası
-        </h2>
-        <div className="flex gap-4 items-center">
-          <button
-             onClick={() => setViewMode(viewMode === 'list' ? 'folder' : 'list')}
-             className="qb-header-btn qb-header-btn--ghost"
-             type="button"
-             title={viewMode === 'list' ? 'Klasör Görünümü' : 'Liste Görünümü'}
-          >
-            {viewMode === 'list' ? <Folder className="qb-icon-premium w-4 h-4" /> : <List className="qb-icon-premium w-4 h-4" />}
-          </button>
-          <button
-            onClick={toggleAICard}
-            className={`qb-header-btn qb-header-btn--purple ${showAICard ? 'qb-header-btn--active' : ''}`}
-            type="button"
-          >
-            <Sparkles className="qb-icon-premium w-3.5 h-3.5" />
-            AI ile Üret
-          </button>
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            type="button"
-            className={`qb-header-btn qb-header-btn--ghost ${showFilters ? 'qb-header-btn--active' : ''}`}
-            title="Sınıf, ders ve konu ile filtrele"
-          >
-            <Filter className="qb-icon-premium w-4 h-4" />
-            Filtreler
-          </button>
-          <div className="flex items-center gap-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 shrink-0">
-            <span className="text-xl font-bold text-white tabular-nums">{stats?.total ?? 0}</span>
-            <span className="text-sm text-white/60">&nbsp;Toplam Soru</span>
+      {/* Header & Stats – premium bar */}
+      <div className="qb-premium-header" style={{ marginBottom: '1rem' }}>
+        <div className="qb-premium-header-actions" style={{ width: '100%', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              onClick={() => {
+                if (viewMode === 'list') {
+                  setViewMode('folder');
+                } else {
+                  setViewMode('list');
+                  setFilters({ page: 1, limit: 10 });
+                }
+              }}
+              className={viewMode === 'folder' ? 'primary-btn' : 'ghost-btn'}
+              type="button"
+              title={viewMode === 'list' ? 'Klasör Görünümü' : 'Liste Görünümü'}
+            >
+              {viewMode === 'list' ? <Folder className="qb-header-icon w-4 h-4" strokeWidth={1.75} /> : <List className="qb-header-icon w-4 h-4" strokeWidth={1.75} />}
+              {viewMode === 'list' ? 'Klasör' : 'Liste'}
+            </button>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              type="button"
+              className={`${showFilters ? 'primary-btn' : 'ghost-btn'}`}
+              title="Sınıf, ders ve konu ile filtrele"
+            >
+              <SlidersHorizontal className="qb-header-icon w-4 h-4" strokeWidth={1.75} />
+              Filtreler
+            </button>
+          </div>
+          <div className="qb-premium-stat">
+            <span className="qb-premium-stat-value">{stats?.total ?? 0}</span>
+            <span className="qb-premium-stat-label">Toplam Soru</span>
           </div>
         </div>
       </div>
@@ -577,7 +631,8 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                     onChange={(e) => setAiForm({ ...aiForm, gradeLevel: e.target.value })}
                     className="w-full px-4 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all appearance-none"
                   >
-                    {GRADE_LEVELS.map((g) => (
+                    <option value="" className="bg-slate-900">{displayGradeLevels.length === 0 ? 'Yetkili sınıf yok' : 'Sınıf seçin'}</option>
+                    {displayGradeLevels.map((g) => (
                       <option key={g} value={g} className="bg-slate-900">{g}. Sınıf</option>
                     ))}
                   </select>
@@ -597,7 +652,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                     onChange={(e) => setAiForm({ ...aiForm, subjectId: e.target.value })}
                     className="w-full px-4 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all appearance-none"
                   >
-                    <option value="" className="bg-slate-900">Ders Seçiniz</option>
+                    <option value="" className="bg-slate-900">{allowedSubjectNames.length > 0 && availableSubjectsForAi.length === 0 ? 'Branşınıza ait ders bulunamadı' : 'Ders Seçiniz'}</option>
                     {availableSubjectsForAi.map((s) => (
                       <option key={s.id} value={s.id} className="bg-slate-900">{s.name}</option>
                     ))}
@@ -651,15 +706,15 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-white/50 mb-2 uppercase tracking-wider">Bloom Taksonomisi</label>
+                <label className="block text-xs font-medium text-white/50 mb-2 uppercase tracking-wider">Soru Tipi</label>
                 <div className="relative">
                   <select
-                    value={aiForm.bloomLevel}
-                    onChange={(e) => setAiForm({ ...aiForm, bloomLevel: e.target.value as BloomLevel })}
+                    value={aiForm.questionType}
+                    onChange={(e) => setAiForm({ ...aiForm, questionType: e.target.value as 'multiple_choice' | 'true_false' | 'open_ended' })}
                     className="w-full px-4 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all appearance-none"
                   >
-                    {BLOOM_LEVELS.map((b) => (
-                      <option key={b.value} value={b.value} className="text-black">{b.label}</option>
+                    {QUESTION_TYPES.map((t) => (
+                      <option key={t.value} value={t.value} className="bg-slate-900">{t.label}</option>
                     ))}
                   </select>
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">
@@ -772,7 +827,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                       className="w-full px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-white text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none"
                     >
                       <option value="" className="bg-slate-900">Seçin</option>
-                      {GRADE_LEVELS.map((g) => (
+                      {displayGradeLevels.map((g) => (
                         <option key={g} value={g} className="text-black">{g}. Sınıf</option>
                       ))}
                     </select>
@@ -796,7 +851,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wider">Soru Tipi</label>
                   <div className="relative">
@@ -842,26 +897,6 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                         </button>
                       );
                     })}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wider">Bloom Seviyesi</label>
-                  <div className="relative">
-                    <select
-                      value={formData.bloomLevel || ''}
-                      onChange={(e) => setFormData({ ...formData, bloomLevel: e.target.value as BloomLevel })}
-                      className="w-full px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-white text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none"
-                    >
-                      <option value="" className="bg-slate-900">Seçin</option>
-                      {BLOOM_LEVELS.map((b) => (
-                        <option key={b.value} value={b.value} className="text-black">{b.label}</option>
-                      ))}
-                    </select>
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">
-                      <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -960,6 +995,107 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
         </div>
       )}
 
+      {/* Üretilen sorular önizleme: her soru ayrı kartta, premium görünüm */}
+      {generatedPreview && generatedPreview.length > 0 && (
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-400" />
+              Üretilen Sorular ({generatedPreview.length})
+            </h3>
+            <button
+              type="button"
+              onClick={() => { setGeneratedPreview(null); setSuccessMessage(null); loadData(); loadStats(); }}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 via-pink-500 to-rose-500 hover:from-purple-400 hover:via-pink-400 hover:to-rose-400 text-white text-sm font-semibold transition-all shadow-lg shadow-purple-500/40 hover:shadow-purple-500/60 border border-purple-300/50 flex items-center gap-2"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              Listeye dön
+            </button>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {generatedPreview.map((q, idx) => {
+              const isSolutionOpen = previewExpandedSolution.has(q.id);
+              const choicesList = Array.isArray(q.choices) ? q.choices : [];
+              return (
+                <GlassCard key={q.id} className="p-6 border border-white/10 rounded-2xl overflow-hidden flex flex-col shadow-xl">
+                  <p className="text-white/95 text-[15px] leading-relaxed mb-4 whitespace-pre-wrap">{q.text}</p>
+                  {q.imageUrl && q.imageUrl.trim() !== '' && (
+                    <div className="mb-4 rounded-xl overflow-hidden border border-white/10 bg-black/20 shadow-lg min-h-[120px] flex items-center justify-center">
+                      <img 
+                        src={q.imageUrl} 
+                        alt="Soru görseli" 
+                        className="w-full max-h-80 object-contain hidden"
+                        onError={(e) => {
+                          const img = e.target as HTMLImageElement;
+                          img.classList.add('hidden');
+                          const parent = img.parentElement;
+                          if (parent && !parent.querySelector('.img-fallback')) {
+                            const fallback = document.createElement('div');
+                            fallback.className = 'img-fallback py-8 px-4 text-center text-white/50 text-sm';
+                            fallback.textContent = 'Görsel yüklenemedi (URL geçersiz veya erişilemiyor)';
+                            parent.appendChild(fallback);
+                          }
+                        }}
+                        onLoad={(e) => {
+                          (e.target as HTMLImageElement).classList.remove('hidden');
+                        }}
+                      />
+                    </div>
+                  )}
+                  {choicesList.length > 0 && (
+                    <ul className="space-y-2 mb-4">
+                      {choicesList.map((c, i) => {
+                        const letter = String.fromCharCode(65 + i);
+                        const isCorrect = (q.correctAnswer || '').toUpperCase().replace(/[^A-E]/g, '') === letter;
+                        return (
+                          <li
+                            key={i}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${isCorrect ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-white/5 text-white/80 border border-white/10'}`}
+                          >
+                            <span className="font-medium shrink-0">{letter})</span>
+                            <span>{c}</span>
+                            {isCorrect && <Check className="w-4 h-4 shrink-0 text-emerald-400" />}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  {q.correctAnswer && !choicesList.length && (
+                    <p className="text-sm text-white/70 mb-4">
+                      Doğru cevap: <span className="font-medium text-emerald-400">{q.correctAnswer}</span>
+                    </p>
+                  )}
+                  {q.solutionExplanation && (
+                    <div className="mt-auto pt-4 border-t border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewExpandedSolution((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(q.id)) next.delete(q.id);
+                            else next.add(q.id);
+                            return next;
+                          });
+                        }}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-violet-500 hover:from-indigo-400 hover:via-purple-400 hover:to-violet-400 text-white text-sm font-semibold transition-all shadow-md shadow-indigo-500/30 hover:shadow-indigo-500/50 border border-indigo-300/50 hover:border-indigo-200/70 w-full justify-center"
+                      >
+                        {isSolutionOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                        <span>Çözüm Açıklaması</span>
+                      </button>
+                      {isSolutionOpen && (
+                        <p className="mt-3 text-sm text-white/70 leading-relaxed whitespace-pre-wrap rounded-lg bg-white/5 p-3 border border-white/10">
+                          {q.solutionExplanation}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </GlassCard>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Filtreler: Sınıf, Ders, Konu (header'da Filtreler ile açılır) */}
       {showFilters && (
         <div className="flex flex-wrap gap-4 items-center p-4 rounded-xl bg-white/5 border border-white/10">
@@ -969,7 +1105,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
             className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500/50 text-sm"
           >
             <option value="">Tüm Sınıflar</option>
-            {GRADE_LEVELS.map((g) => (
+            {displayGradeLevels.map((g) => (
               <option key={g} value={g}>{g}. Sınıf</option>
             ))}
           </select>
@@ -978,8 +1114,8 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
             onChange={(e) => handleFilterChange('subjectId', e.target.value || undefined)}
             className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500/50 text-sm"
           >
-            <option value="">Tüm Dersler</option>
-            {availableSubjectsForFilters.map((s) => (
+                <option value="">{allowedSubjectNames.length > 0 && availableSubjectsForFilters.length === 0 ? 'Branşınıza ait ders yok' : 'Tüm Dersler'}</option>
+                {availableSubjectsForFilters.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
@@ -993,16 +1129,16 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
         </div>
       )}
 
-      {/* Questions List or Folder View — FolderTree: VS Code style, space-y-1, no mb on li */}
+      {/* Questions List or Folder View — premium kart */}
       {viewMode === 'folder' ? (
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm max-h-[75vh] overflow-y-auto">
-          <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50 sticky top-0 z-10 backdrop-blur-sm">
-            <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-              <Folder className="w-5 h-5 text-indigo-500" />
+        <div className="qb-folders-card">
+          <div className="qb-folders-card-header">
+            <h3 className="qb-folders-card-title">
+              <Folder className="qb-folders-card-icon" />
               Soru Klasörleri
             </h3>
           </div>
-          <div className="p-5">
+          <div className="qb-folders-card-body">
             {folderStructureLoading ? (
               <div className="text-center py-12 text-gray-500 flex flex-col items-center gap-2">
                 <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
@@ -1108,11 +1244,51 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
         ) : questions.length === 0 ? (
           <div className="text-center py-12 text-white/60">
             <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p>Henüz soru yok</p>
-            <p className="text-sm mt-2">Yukarıdaki butonlarla soru ekleyebilirsiniz</p>
+            {(stats?.total ?? 0) > 0 && (filters.gradeLevel || filters.subjectId || filters.topic) ? (
+              <>
+                <p>Seçili filtreye uygun soru bulunamadı</p>
+                <p className="text-sm mt-2">Filtreleri temizleyerek tüm {stats?.total} soruyu görebilirsiniz.</p>
+                <button
+                  type="button"
+                  className="primary-btn mt-4"
+                  onClick={() => {
+                    setLoading(true);
+                    setFilters({ page: 1, limit: 10 });
+                  }}
+                >
+                  Filtreleri temizle
+                </button>
+              </>
+            ) : (
+              <>
+                <p>Henüz soru yok</p>
+                <p className="text-sm mt-2">Yukarıdaki butonlarla soru ekleyebilirsiniz</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
+            {questions.some((q) => !q.isApproved && q.source === 'ai') && (
+              <div className="flex items-center justify-between p-4 bg-gradient-to-r from-emerald-500/10 to-green-500/10 rounded-xl border border-emerald-500/30">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-emerald-400" />
+                  <div>
+                    <p className="text-white font-medium text-sm">
+                      {questions.filter((q) => !q.isApproved && q.source === 'ai').length} onaylanmamış AI sorusu var
+                    </p>
+                    <p className="text-white/60 text-xs mt-0.5">Tümünü tek seferde onaylayabilirsiniz</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleBulkApprove}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-400 hover:to-green-400 text-white text-sm font-semibold transition-all shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 border border-emerald-300/50 flex items-center gap-2"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  Tümünü Onayla
+                </button>
+              </div>
+            )}
             {questions.map((q) => (
               <div key={q.id} className="p-4 bg-white/5 rounded-lg border border-white/10 hover:border-white/20 transition">
                 <div className="flex items-start justify-between gap-4">
@@ -1127,18 +1303,18 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                       {getDifficultyBadge(q.difficulty)}
                       {getSourceBadge(q.source, q.isApproved)}
                     </div>
-                    <p className="text-white font-medium">{q.text}</p>
-                    {q.choices && (
+                    <p className="text-white font-medium whitespace-pre-wrap">{q.text || '(Soru metni yok)'}</p>
+                    {Array.isArray(q.choices) && q.choices.length > 0 && (
                       <div className="mt-2 grid grid-cols-2 gap-1 text-sm text-white/70">
                         {(q.choices as string[]).map((c, i) => (
                           <div key={i} className={`${c === q.correctAnswer || String.fromCharCode(65 + i) === q.correctAnswer ? 'text-green-400' : ''}`}>
-                            {String.fromCharCode(65 + i)}) {c}
+                            {String.fromCharCode(65 + i)}) {c || '\u00A0'}
                           </div>
                         ))}
                       </div>
                     )}
                     <div className="mt-2 text-sm text-white/50">
-                      Konu: {q.topic}
+                      Konu: {q.topic || '\u00A0'}
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -1238,7 +1414,7 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                   onChange={(e) => setAiForm({ ...aiForm, gradeLevel: e.target.value })}
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500"
                 >
-                  {GRADE_LEVELS.map((g) => (
+                  {displayGradeLevels.map((g) => (
                     <option key={g} value={g}>{g}. Sınıf</option>
                   ))}
                 </select>
@@ -1280,14 +1456,14 @@ export function QuestionBankTab({ token }: QuestionBankTabProps) {
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-white/70 mb-1">Bloom Seviyesi</label>
+                <label className="block text-sm text-white/70 mb-1">Soru Tipi</label>
                 <select
-                  value={aiForm.bloomLevel}
-                  onChange={(e) => setAiForm({ ...aiForm, bloomLevel: e.target.value as BloomLevel })}
+                  value={aiForm.questionType}
+                  onChange={(e) => setAiForm({ ...aiForm, questionType: e.target.value as 'multiple_choice' | 'true_false' | 'open_ended' })}
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500"
                 >
-                  {BLOOM_LEVELS.map((b) => (
-                    <option key={b.value} value={b.value}>{b.label}</option>
+                  {QUESTION_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </select>
               </div>

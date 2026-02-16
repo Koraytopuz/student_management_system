@@ -9,7 +9,6 @@ import {
   type TeacherCoachingNote,
   type TeacherStudentProfile,
   type TeacherTest,
-  type CoachingGoalStatus,
   getTeacherCoachingSessions,
   getTeacherCoachingGoals,
   getTeacherCoachingNotes,
@@ -17,7 +16,6 @@ import {
   updateTeacherCoachingSession,
   deleteTeacherCoachingSession,
   createTeacherCoachingGoal,
-  updateTeacherCoachingGoal,
   createTeacherCoachingNote,
 } from './api';
 
@@ -208,10 +206,7 @@ export const CoachingTab: React.FC<{
 
   useEffect(() => {
     if (!token) return;
-    if (!selectedStudentId && students[0]) {
-      onSelectStudent(students[0].id);
-      return;
-    }
+    if (!selectedStudentId) return;
     Promise.all([refresh(), refreshGoals(), refreshNotes()]).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, selectedStudentId]);
@@ -347,20 +342,6 @@ export const CoachingTab: React.FC<{
       );
     } finally {
       setGoalsLoading(false);
-    }
-  };
-
-  const handleToggleGoalStatus = async (goal: TeacherCoachingGoal) => {
-    if (!token) return;
-    const nextStatus: CoachingGoalStatus =
-      goal.status === 'completed' ? 'pending' : 'completed';
-    try {
-      await updateTeacherCoachingGoal(token, goal.id, { status: nextStatus });
-      await refreshGoals();
-    } catch (e) {
-      setGoalsError(
-        e instanceof Error ? e.message : 'Hedef güncellenemedi.',
-      );
     }
   };
 
@@ -847,21 +828,9 @@ export const CoachingTab: React.FC<{
             </div>
           )}
 
-          {/* Hedefler / Notlar sekmeleri */}
-          <div style={{ marginBottom: '1rem', width: '100%', minWidth: 0 }}>
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '0.25rem',
-                borderRadius: 999,
-                padding: 4,
-                background: 'var(--color-surface-strong)',
-                border: '1px solid var(--color-border-subtle)',
-                marginBottom: '0.75rem',
-                maxWidth: '100%',
-              }}
-            >
+          {/* Hedefler / Notlar sekmeleri – premium tab bar */}
+          <div className="coaching-detail-tabs-wrap">
+            <div className="coaching-detail-tabs">
               {[
                 { id: 'goals' as const, label: 'Hedefler' },
                 { id: 'notes' as const, label: 'Gelişim Notları' },
@@ -875,22 +844,15 @@ export const CoachingTab: React.FC<{
                   <button
                     key={tab.id}
                     type="button"
+                    className={`coaching-detail-tab ${isActive ? 'coaching-detail-tab--active' : ''}`}
                     onClick={() => setActiveDetailTab(tab.id)}
-                    style={{
-                      border: 'none',
-                      borderRadius: 999,
-                      padding: '0.35rem 0.9rem',
-                      fontSize: '0.8rem',
-                      cursor: 'pointer',
-                      background: isActive ? 'var(--color-primary-soft)' : 'transparent',
-                      color: isActive ? 'var(--color-primary-strong)' : 'var(--color-text-muted)',
-                    }}
                   >
                     {tab.label}
                   </button>
                 );
               })}
             </div>
+          </div>
 
             {(() => {
               const tabTitles: Record<typeof activeDetailTab, { title: string; subtitle: string }> = {
@@ -1020,73 +982,44 @@ export const CoachingTab: React.FC<{
                   )}
                   {goals.map((goal) => {
                     const deadlineLabel = dayjs(goal.deadline).format('DD MMM YYYY');
-                    const isOverdue = goal.isOverdue;
                     return (
                       <div key={goal.id} className="list-row">
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', flex: 1 }}>
-                          <input
-                            type="checkbox"
-                            checked={goal.status === 'completed'}
-                            onChange={() => handleToggleGoalStatus(goal)}
-                            style={{ marginTop: 4 }}
-                          />
-                          <div style={{ flex: 1 }}>
-                            <strong
-                              style={{
-                                display: 'block',
-                                color:
-                                  goal.status === 'completed'
-                                    ? 'var(--color-text-muted)'
-                                    : 'var(--color-text-main)',
-                                textDecoration:
-                                  goal.status === 'completed' ? 'line-through' : 'none',
-                              }}
-                            >
-                              {goal.title}
-                            </strong>
-                            {goal.description && (
-                              <small
-                                style={{
-                                  display: 'block',
-                                  marginTop: 2,
-                                  color: 'var(--color-text-muted)',
-                                }}
-                              >
-                                {goal.description}
-                              </small>
-                            )}
+                        <div style={{ flex: 1 }}>
+                          <strong
+                            style={{
+                              display: 'block',
+                              color:
+                                goal.status === 'completed'
+                                  ? 'var(--color-text-muted)'
+                                  : 'var(--color-text-main)',
+                              textDecoration:
+                                goal.status === 'completed' ? 'line-through' : 'none',
+                            }}
+                          >
+                            {goal.title}
+                          </strong>
+                          {goal.description && (
                             <small
                               style={{
                                 display: 'block',
-                                marginTop: 4,
-                                color: isOverdue
-                                  ? 'var(--color-danger)'
-                                  : 'var(--color-text-muted)',
+                                marginTop: 2,
+                                color: 'var(--color-text-muted)',
                               }}
                             >
-                              Bitiş: {deadlineLabel}{' '}
-                              {isOverdue && goal.status === 'pending' ? '(Gecikmiş)' : ''}
+                              {goal.description}
                             </small>
-                          </div>
+                          )}
+                          <small
+                            style={{
+                              display: 'block',
+                              marginTop: 4,
+                              color: 'var(--color-text-muted)',
+                            }}
+                          >
+                            Bitiş: {deadlineLabel}
+                            {goal.status === 'completed' ? ' · Öğrenci tamamladı' : ''}
+                          </small>
                         </div>
-                        <TagChip
-                          label={
-                            goal.status === 'completed'
-                              ? 'Tamamlandı'
-                              : goal.status === 'missed'
-                                ? 'Kaçırıldı'
-                                : isOverdue
-                                  ? 'Overdue'
-                                  : 'Devam ediyor'
-                          }
-                          tone={
-                            goal.status === 'completed'
-                              ? 'success'
-                              : isOverdue || goal.status === 'missed'
-                                ? 'warning'
-                                : 'info'
-                          }
-                        />
                       </div>
                     );
                   })}
@@ -1331,13 +1264,6 @@ export const CoachingTab: React.FC<{
                           trendTone="positive"
                         />
                         <MetricCard
-                          label="Ortalama Başarı"
-                          value={profileLoading ? '…' : `${aggregateStats.avgScore}%`}
-                          helper="Tüm testler"
-                          trendLabel="Genel seviye"
-                          trendTone="neutral"
-                        />
-                        <MetricCard
                           label="Doğru / Yanlış / Boş"
                           value={profileLoading ? '…' : `${aggregateStats.totalCorrect} / ${aggregateStats.totalIncorrect} / ${aggregateStats.totalBlank}`}
                           helper="Toplam soru"
@@ -1459,7 +1385,6 @@ export const CoachingTab: React.FC<{
                 </GlassCard>
               );
             })()}
-            </div>
           </>
           )}
         </div>
