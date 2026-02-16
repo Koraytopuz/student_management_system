@@ -54,7 +54,7 @@ interface QuestionBankTabProps {
   allowedSubjectNames?: string[];
 }
 
-const GRADE_LEVELS = ['4', '5', '6', '7', '8', '9', '10', '11', '12'];
+const GRADE_LEVELS = ['12', '11', '10', '9', '8', '7', '6', '5', '4'];
 
 /**
  * Sınıf -> Ders eşlemesi (cascading dropdown)
@@ -488,15 +488,6 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
       loadStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Toplu onaylama başarısız');
-    }
-  };
-
-  const toggleAICard = () => {
-    setShowAICard(!showAICard);
-    if (!showAICard) {
-      setTimeout(() => {
-        aiCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 100);
     }
   };
 
@@ -1013,7 +1004,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
             </button>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {generatedPreview.map((q, idx) => {
+            {generatedPreview.map((q) => {
               const isSolutionOpen = previewExpandedSolution.has(q.id);
               const choicesList = Array.isArray(q.choices) ? q.choices : [];
               return (
@@ -1152,7 +1143,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
             ) : (
               <ul className="flex flex-col gap-3">
                 {Object.entries(folderStructure).sort((a, b) => {
-                  const order = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'TYT', 'AYT'];
+                  const order = ['12', '11', '10', '9', '8', '7', '6', '5', '4', 'TYT', 'AYT'];
                   return order.indexOf(a[0]) - order.indexOf(b[0]);
                 }).map(([grade, subjects]) => {
                   const gradeTotal = Object.values(subjects).reduce((acc, topics) => acc + Object.values(topics).reduce((a, b) => a + b, 0), 0);

@@ -1818,7 +1818,13 @@ export function summarizeTeacherText(
 /** Öğrenciye özel çalışma planı */
 export function getStudentStudyPlan(
   token: string,
-  payload?: { focusTopic?: string; weeklyHours?: number; gradeLevel?: string; subject?: string },
+  payload?: {
+    focusTopic?: string;
+    weeklyHours?: number;
+    gradeLevel?: string;
+    subject?: string;
+    subjectId?: string;
+  },
 ) {
   return apiRequest<{ studyPlan: string; planId: string }>('/student/ai/study-plan', {
     method: 'POST',

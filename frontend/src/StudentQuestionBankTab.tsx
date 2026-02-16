@@ -34,11 +34,21 @@ export function StudentQuestionBankTab({
   defaultGradeLevel,
   onTestStarted,
 }: StudentQuestionBankTabProps) {
+  const parseStudentGrade = (value?: string | null): string | null => {
+    if (!value) return null;
+    const match = value.match(/\d{1,2}/);
+    if (match) return match[0];
+    return value.trim();
+  };
+
+  const baseGrade = parseStudentGrade(defaultGradeLevel);
+  const initialGrade = baseGrade ?? '9';
+
   const [meta, setMeta] = useState<StudentQuestionBankMetaResponse | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
   const [metaError, setMetaError] = useState<string | null>(null);
 
-  const [gradeLevel, setGradeLevel] = useState<string>(defaultGradeLevel ?? '9');
+  const [gradeLevel, setGradeLevel] = useState<string>(initialGrade);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
   const [selectedTopic, setSelectedTopic] = useState<string>('');
   const [selectedSubtopic, setSelectedSubtopic] = useState<string>('');
@@ -115,10 +125,16 @@ export function StudentQuestionBankTab({
     };
   }, [token]);
 
-  const gradeLevels = useMemo(
-    () => ['4', '5', '6', '7', '8', '9', '10', '11', '12'],
-    [],
-  );
+  // Öğrenci sadece kendi sınıfına (ve gerekirse TYT/AYT içeriklerine) göre test oluşturabilsin
+  const gradeLevels = useMemo(() => {
+    if (!baseGrade) return ['9'];
+    const grades: string[] = [baseGrade];
+    // 9–12 arası öğrenciler için TYT/AYT de göster
+    if (['9', '10', '11', '12'].includes(baseGrade)) {
+      grades.push('TYT', 'AYT');
+    }
+    return grades;
+  }, [baseGrade]);
 
   const subjects: StudentQuestionBankSubjectMeta[] = meta?.subjects ?? [];
   const currentSubject = subjects.find(
@@ -126,7 +142,6 @@ export function StudentQuestionBankTab({
   );
   const topics = currentSubject?.topics ?? [];
   const currentTopic = topics.find((t) => t.topic === selectedTopic);
-  const subtopics = currentTopic?.subtopics ?? [];
 
   useEffect(() => {
     if (!currentSubject && subjects.length > 0) {
@@ -135,6 +150,13 @@ export function StudentQuestionBankTab({
       setSelectedSubtopic('');
     }
   }, [subjects.length, currentSubject]);
+
+  // Eğer seçili sınıf, izin verilen sınıflar dışında kalırsa en yakın geçerli sınıfa zorla
+  useEffect(() => {
+    if (!gradeLevels.includes(gradeLevel)) {
+      setGradeLevel(gradeLevels[0] ?? '9');
+    }
+  }, [gradeLevels.join(','), gradeLevel]);
 
   const handleStartTest = async () => {
     if (!selectedSubjectId || !selectedTopic) {
@@ -289,13 +311,13 @@ export function StudentQuestionBankTab({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 sqb-page">
       <div className="flex items-center justify-between gap-4">
-        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+        <h2 className="text-xl font-semibold sqb-title flex items-center gap-2">
           <BookOpen className="w-5 h-5" />
           Soru Havuzu
         </h2>
-        <div className="flex items-center gap-2 text-sm text-white/70">
+        <div className="flex items-center gap-2 text-sm sqb-subtitle">
           <Brain className="w-4 h-4 text-indigo-400" />
           <span>Pratik yap veya takıldığın soruları sor.</span>
         </div>
@@ -303,30 +325,30 @@ export function StudentQuestionBankTab({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
-          <h3 className="text-sm font-medium text-white/80 flex items-center gap-2 px-1">
+          <h3 className="text-sm font-medium sqb-section-title flex items-center gap-2 px-1">
             <PlayCircle className="w-4 h-4 text-indigo-400" />
             Hızlı Test Oluştur
           </h3>
-          <GlassCard className="p-5 space-y-5 border-white/5">
+          <GlassCard className="p-5 space-y-5 sqb-card sqb-card--filters">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <label className="block text-xs text-white/50 mb-1.5 uppercase tracking-wider font-semibold">
+                <label className="block text-xs sqb-label mb-1.5 uppercase tracking-wider font-semibold">
                   Sınıf
                 </label>
                 <select
                   value={gradeLevel}
                   onChange={(e) => setGradeLevel(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
+                  className="w-full sqb-control"
                 >
                   {gradeLevels.map((g) => (
-                    <option key={g} value={g} className="bg-slate-900">
+                    <option key={g} value={g}>
                       {g}. Sınıf
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-white/50 mb-1.5 uppercase tracking-wider font-semibold">
+                <label className="block text-xs sqb-label mb-1.5 uppercase tracking-wider font-semibold">
                   Ders
                 </label>
                 <select
@@ -336,18 +358,18 @@ export function StudentQuestionBankTab({
                     setSelectedTopic('');
                     setSelectedSubtopic('');
                   }}
-                  className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
+                  className="w-full sqb-control"
                 >
-                  <option value="" className="bg-slate-900">Seçin</option>
+                  <option value="">Seçin</option>
                   {subjects.map((s) => (
-                    <option key={s.subjectId} value={s.subjectId} className="bg-slate-900">
+                    <option key={s.subjectId} value={s.subjectId}>
                       {s.subjectName}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-white/50 mb-1.5 uppercase tracking-wider font-semibold">
+                <label className="block text-xs sqb-label mb-1.5 uppercase tracking-wider font-semibold">
                   Konu
                 </label>
                 <select
@@ -356,38 +378,21 @@ export function StudentQuestionBankTab({
                     setSelectedTopic(e.target.value);
                     setSelectedSubtopic('');
                   }}
-                  className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
+                  className="w-full sqb-control"
                 >
-                  <option value="" className="bg-slate-900">Seçin</option>
+                  <option value="">Seçin</option>
                   {topics.map((t) => (
-                    <option key={t.topic} value={t.topic} className="bg-slate-900">
+                    <option key={t.topic} value={t.topic}>
                       {t.topic} ({t.questionCount})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-white/50 mb-1.5 uppercase tracking-wider font-semibold">
-                  Alt Konu
-                </label>
-                <select
-                  value={selectedSubtopic}
-                  onChange={(e) => setSelectedSubtopic(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
-                >
-                  <option value="" className="bg-slate-900">Tümü</option>
-                  {subtopics.map((st) => (
-                    <option key={st} value={st} className="bg-slate-900">
-                      {st}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-white/5">
+            <div className="flex flex-wrap items-center justify-between gap-4 pt-4 sqb-divider">
               <div className="flex items-center gap-3">
-                <label className="text-xs text-white/50 uppercase tracking-wider font-semibold">
+                <label className="text-xs sqb-label uppercase tracking-wider font-semibold">
                   Soru Sayısı
                 </label>
                 <input
@@ -402,7 +407,7 @@ export function StudentQuestionBankTab({
                         : Number(e.target.value),
                     )
                   }
-                  className="w-20 px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-white text-sm text-center focus:outline-none focus:border-indigo-500/50"
+                  className="w-20 sqb-control text-center"
                 />
               </div>
 
@@ -415,7 +420,7 @@ export function StudentQuestionBankTab({
                   !selectedSubjectId ||
                   !selectedTopic
                 }
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-sm font-semibold shadow-lg shadow-indigo-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95"
+                className="primary-btn gap-2 px-6"
               >
                 {creatingTest ? (
                   <>
@@ -441,15 +446,15 @@ export function StudentQuestionBankTab({
         </div>
 
         <div className="space-y-4">
-          <h3 className="text-sm font-medium text-white flex items-center gap-2 px-1">
-            <Camera className="w-4 h-4 text-rose-400" />
+          <h3 className="text-sm font-medium sqb-section-title flex items-center gap-2 px-1">
+            <Camera className="w-4 h-4 text-indigo-400" />
             Öğretmene Sor
           </h3>
-          <GlassCard className="p-5 space-y-4 border-white/10 bg-slate-900/90 relative overflow-hidden group shadow-lg shadow-rose-900/20">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/5 blur-3xl rounded-full -mr-16 -mt-16 pointer-events-none group-hover:bg-rose-500/10 transition-colors" />
+          <GlassCard className="p-5 space-y-4 sqb-card sqb-card--ask relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 blur-3xl rounded-full -mr-16 -mt-16 pointer-events-none group-hover:bg-indigo-500/10 transition-colors" />
 
             <div className="space-y-3">
-              <p className="text-xs text-white/80 leading-relaxed">
+              <p className="text-xs sqb-muted leading-relaxed">
                 Çözemediğin bir soru mu var? Fotoğrafını çek veya galeriden yükle, öğretmenin anında görsün!
               </p>
 
@@ -472,6 +477,10 @@ export function StudentQuestionBankTab({
                     padding: '0.45rem 1rem',
                     fontSize: '0.8rem',
                     borderRadius: 999,
+                    border: '1px solid rgba(59,130,246,0.9)',
+                    background: 'rgba(219,234,254,0.95)', // mavi, açık tema için belirgin
+                    color: '#1d4ed8', // koyu mavi metin
+                    boxShadow: '0 6px 18px rgba(37,99,235,0.35)',
                   }}
                 >
                   <Camera className="w-4 h-4" />
@@ -488,6 +497,10 @@ export function StudentQuestionBankTab({
                     padding: '0.45rem 1rem',
                     fontSize: '0.8rem',
                     borderRadius: 999,
+                    border: '1px solid rgba(59,130,246,0.85)',
+                    background: 'rgba(15,23,42,0.9)',
+                    color: '#e0f2fe',
+                    boxShadow: '0 6px 16px rgba(15,23,42,0.7)',
                   }}
                 >
                   <Upload className="w-4 h-4" />
@@ -500,7 +513,7 @@ export function StudentQuestionBankTab({
                   style={{
                     display: 'block',
                     fontSize: '0.8rem',
-                    color: 'rgba(255,255,255,0.85)',
+                    color: 'var(--color-text-muted)',
                     marginBottom: '0.25rem',
                     fontWeight: 700,
                   }}
@@ -510,13 +523,11 @@ export function StudentQuestionBankTab({
                 <select
                   value={selectedTeacherId}
                   onChange={(e) => setSelectedTeacherId(e.target.value)}
-                  className="ghost-btn"
+                  className="sqb-control"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
                     fontSize: '0.85rem',
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.1)',
                   }}
                   disabled={teachersLoading}
                 >
@@ -524,7 +535,7 @@ export function StudentQuestionBankTab({
                     <option value="">Öğretmen bulunamadı</option>
                   ) : (
                     teachers.map((t) => (
-                      <option key={t.id} value={t.id} style={{ background: '#0b1220' }}>
+                      <option key={t.id} value={t.id}>
                         {t.name} {t.subjectAreas && t.subjectAreas.length > 0 ? `(${t.subjectAreas.join(', ')})` : ''}
                       </option>
                     ))
@@ -567,23 +578,23 @@ export function StudentQuestionBankTab({
                 </div>
               )}
 
-              <div className="relative">
-                <div className="absolute top-3 left-3 pointer-events-none">
-                  <MessageSquare className="w-4 h-4 text-white/30" />
+              <div className="flex items-start gap-2">
+                <div className="mt-1">
+                  <MessageSquare className="w-4 h-4 sqb-icon-muted" />
                 </div>
                 <textarea
                   value={askTeacherMessage}
                   onChange={(e) => setAskTeacherMessage(e.target.value)}
                   placeholder="Sorunla ilgili eklemek istediğin bir not var mı?"
                   rows={2}
-                  className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-xs placeholder:text-white/20 focus:outline-none focus:border-rose-500/30 transition-all resize-none"
+                  className="w-full px-3 py-2.5 sqb-control text-xs resize-none"
                 />
               </div>
 
               <button
                 onClick={handleAskTeacher}
                 disabled={askTeacherSending || (!askTeacherFile && !askTeacherMessage.trim())}
-                className="w-full flex items-center justify-center gap-2 py-2.5 bg-rose-600 hover:bg-rose-500 disabled:bg-white/5 text-white text-sm font-bold rounded-xl shadow-lg shadow-rose-900/20 transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+                className="primary-btn w-full justify-center gap-2"
               >
                 {askTeacherSending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -614,7 +625,7 @@ export function StudentQuestionBankTab({
                 position: 'fixed',
                 inset: 0,
                 zIndex: 80,
-                background: 'rgba(0,0,0,0.8)',
+                background: 'var(--ui-modal-backdrop-strong)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -625,11 +636,11 @@ export function StudentQuestionBankTab({
                 style={{
                   width: '100%',
                   maxWidth: 480,
-                  background: '#0b1220',
+                  background: 'var(--ui-modal-surface)',
                   borderRadius: 16,
                   padding: '1rem',
-                  border: '1px solid rgba(148,163,184,0.5)',
-                  color: '#e5e7eb',
+                  border: '1px solid var(--ui-modal-border)',
+                  color: 'var(--color-text-main)',
                 }}
               >
                 <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Kamera ile Fotoğraf Çek</div>

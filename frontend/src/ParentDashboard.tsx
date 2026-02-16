@@ -421,7 +421,7 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
             style={{
               display: 'block',
               fontSize: '0.75rem',
-              color: 'rgba(248,250,252,0.7)',
+              color: 'var(--color-text-muted)',
               marginBottom: '0.25rem',
               fontWeight: 600,
             }}
@@ -436,16 +436,16 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
             style={{
               padding: '0.55rem 0.75rem',
               borderRadius: 12,
-              border: '1px solid rgba(148,163,184,0.4)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
+              border: '1px solid var(--ui-control-border)',
+              background: 'var(--ui-control-bg)',
+              color: 'var(--color-text-main)',
             }}
           >
             <option value="">
               {loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}
             </option>
             {teachers.map((t) => (
-              <option key={t.id} value={t.id} style={{ background: '#020617' }}>
+              <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
@@ -457,7 +457,7 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
             style={{
               display: 'block',
               fontSize: '0.75rem',
-              color: 'rgba(248,250,252,0.7)',
+              color: 'var(--color-text-muted)',
               marginBottom: '0.25rem',
               fontWeight: 600,
             }}
@@ -473,9 +473,9 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
             style={{
               padding: '0.55rem 0.75rem',
               borderRadius: 12,
-              border: '1px solid rgba(148,163,184,0.4)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
+            border: '1px solid var(--ui-control-border)',
+            background: 'var(--ui-control-bg)',
+            color: 'var(--color-text-main)',
             }}
           />
         </div>
@@ -485,7 +485,7 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
             style={{
               display: 'block',
               fontSize: '0.75rem',
-              color: 'rgba(248,250,252,0.7)',
+            color: 'var(--color-text-muted)',
               marginBottom: '0.25rem',
               fontWeight: 600,
             }}
@@ -502,9 +502,9 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
               resize: 'vertical',
               padding: '0.6rem 0.75rem',
               borderRadius: 12,
-              border: '1px solid rgba(148,163,184,0.4)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
+            border: '1px solid var(--ui-control-border)',
+            background: 'var(--ui-control-bg)',
+            color: 'var(--color-text-main)',
               minHeight: 96,
             }}
           />

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Award, Bell, BookOpen, Calendar, CalendarCheck, CheckCircle, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
+import { Award, Bell, BookOpen, Calendar, CalendarCheck, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { useReadingMode } from './ReadingModeContext';
 import {
@@ -7,7 +7,6 @@ import {
   downloadAnalysisPdf,
   getStudentAssignments,
   getStudentAssignmentDetail,
-  getStudentCalendar,
   getStudentContents,
   getStudentDashboard,
   getStudentMeetings,
@@ -31,7 +30,6 @@ import {
   getStudentBadges,
   recordFocusSession,
   resolveContentUrl,
-  type CalendarEvent,
   type ProgressCharts,
   type ProgressOverview,
   type StudentAssignment,
@@ -48,7 +46,7 @@ import {
   submitStudentExamAnswers,
 } from './api';
 import { Breadcrumb, DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
-import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
+import type { BreadcrumbItem, SidebarItem, SidebarSubItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { StudentPlanner, type PlannerCreatePayload } from './components/StudentPlanner.tsx';
 import { DrawingCanvas } from './DrawingCanvas';
@@ -60,12 +58,13 @@ import { StudentBadgesTab } from './StudentBadges';
 import { FocusZone } from './components/FocusZone';
 import { ExamOpticalFormOverlay, type ExamSimple } from './ExamOpticalFormOverlay';
 import { StudentExamList } from './pages/student/StudentExamList';
+import { LessonScheduleTab } from './LessonScheduleTab';
 
 type StudentTab =
   | 'overview'
   | 'assignments'
   | 'planner'
-  | 'grades'
+  | 'schedule'
   | 'coursenotes'
   | 'pomodoro'
   | 'questionbank'
@@ -75,22 +74,9 @@ type StudentTab =
   | 'notifications'
   | 'complaints'
   | 'exam-analysis';
-type AssignmentStatus = 'todo' | 'in-progress' | 'done' | 'overdue';
 
 const sortMeetingsByDate = (items: StudentMeeting[]): StudentMeeting[] =>
   [...items].sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
-
-const getWeekRange = () => {
-  const now = new Date();
-  const day = now.getDay() || 7;
-  const start = new Date(now);
-  start.setDate(now.getDate() - day + 1);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
-};
 
 const formatShortDate = (iso?: string) => {
   if (!iso) return '-';
@@ -103,14 +89,6 @@ const formatCountdown = (totalSeconds: number) => {
   const ss = String(safe % 60).padStart(2, '0');
   return `${mm}:${ss}`;
 };
-
-const deriveStatus = (assignment: StudentAssignment): AssignmentStatus => {
-  const due = new Date(assignment.dueDate).getTime();
-  if (Number.isNaN(due)) return 'todo';
-  return due < Date.now() ? 'overdue' : 'todo';
-};
-
-
 
 const MEETING_WINDOW_BEFORE_MS = 10 * 60 * 1000; // 10 dk önce katılıma izin
 
@@ -149,7 +127,6 @@ export const StudentDashboard: React.FC = () => {
   const assignmentsState = useApiState<StudentAssignment[]>([]);
   const progressState = useApiState<ProgressOverview>(null);
   const chartsState = useApiState<ProgressCharts>(null);
-  const calendarState = useApiState<CalendarEvent[]>([]);
   const coachingState = useApiState<StudentCoachingSession[]>([]);
   const [badges, setBadges] = useState<StudentBadgeProgress[]>([]);
   const [badgesLoading, setBadgesLoading] = useState(false);
@@ -168,13 +145,6 @@ export const StudentDashboard: React.FC = () => {
       .catch(() => {});
     progressState.run(() => getStudentProgressTopics(token)).catch(() => {});
     chartsState.run(() => getStudentProgressCharts(token)).catch(() => {});
-    const { start, end } = getWeekRange();
-    calendarState
-      .run(async () => {
-        const payload = await getStudentCalendar(token, start.toISOString(), end.toISOString());
-        return payload.events;
-      })
-      .catch(() => {});
     todosState.run(() => getStudentTodos(token)).catch(() => {});
     coachingState.run(() => getStudentCoachingSessions(token)).catch(() => {});
   }, [token]);
@@ -235,49 +205,23 @@ export const StudentDashboard: React.FC = () => {
     };
   }, [token]);
 
-  const groupedAssignments = useMemo(() => {
-    const groups: Record<AssignmentStatus, StudentAssignment[]> = {
-      todo: [],
-      'in-progress': [],
-      done: [],
-      overdue: [],
-    };
-    assignments.forEach((assignment) => {
-      groups[deriveStatus(assignment)].push(assignment);
-    });
-    return groups;
-  }, [assignments]);
-
   const metrics = useMemo(() => {
     const summary = dashboardState.data;
     return [
       {
-        label: 'Genel Ortalama',
-        value: `${summary?.averageScorePercent ?? 0}%`,
-        helper: 'Son 7 gün',
-        trendLabel: `${summary?.testsSolvedThisWeek ?? 0} test`,
-        trendTone: 'positive' as const,
-      },
-      {
         label: 'Çözülen Soru',
         value: `${summary?.totalQuestionsThisWeek ?? 0}`,
         helper: 'Bu hafta',
-        trendLabel: 'Hedef: 200',
-        trendTone: 'neutral' as const,
       },
       {
         label: 'Bekleyen Ödev',
         value: `${summary?.pendingAssignmentsCount ?? 0}`,
         helper: 'Aktif görevler',
-        trendLabel: assignments.length ? `${assignments.length} toplam` : 'Güncel',
-        trendTone: 'neutral' as const,
       },
       {
         label: 'İzlenen İçerik',
         value: `${summary?.lastWatchedContents?.length ?? 0}`,
         helper: 'Son içerikler',
-        trendLabel: 'Güncel',
-        trendTone: 'positive' as const,
       },
     ];
   }, [dashboardState.data, assignments.length]);
@@ -355,12 +299,6 @@ export const StudentDashboard: React.FC = () => {
     return sorted[0];
   }, [meetings]);
 
-  const isNextMeetingFromCoaching = useMemo(() => {
-    if (!nextMeeting) return false;
-    const sessions = coachingState.data ?? [];
-    return sessions.some((session) => session.meetingId === nextMeeting.id);
-  }, [nextMeeting, coachingState.data]);
-
   useEffect(() => {
     if (!token) return;
     loadNotifications().catch(() => {});
@@ -414,18 +352,18 @@ export const StudentDashboard: React.FC = () => {
         'Canlı derse katılırken bir sorun oluştu. Lütfen kısa bir süre sonra tekrar deneyin.',
       );
     } catch (error) {
-      setJoinMeetingHint(
-        error instanceof Error
-          ? `Canlı derse katılamadın: ${error.message}`
-          : 'Canlı derse katılırken bir hata oluştu.',
-      );
+      const message =
+        error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase();
+      if (message.includes('not started') || message.includes('başlatılmadı') || message.includes('başlatılmamış')) {
+        setJoinMeetingHint('Canlı dersiniz öğretmen tarafından başlatılmamıştır.');
+      } else {
+        setJoinMeetingHint(
+          error instanceof Error
+            ? `Canlı derse katılamadın: ${error.message}`
+            : 'Canlı derse katılırken bir hata oluştu.',
+        );
+      }
     }
-  };
-
-  const [initialDocToShow, setInitialDocToShow] = useState<{ url: string; title: string } | null>(null);
-  const handleOpenContent = (initialDoc?: { url: string; title: string }) => {
-    setInitialDocToShow(initialDoc ?? null);
-    setShowNotesLibrary(true);
   };
 
   const [activeExamToSolve, setActiveExamToSolve] = useState<ExamSimple | null>(null);
@@ -484,8 +422,13 @@ export const StudentDashboard: React.FC = () => {
   } | null>(null);
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
   const [aiFeedbackLoading, setAiFeedbackLoading] = useState(false);
-  const [showNotesLibrary, setShowNotesLibrary] = useState(false);
   const [startedAssignmentIds, setStartedAssignmentIds] = useState<string[]>([]);
+
+  const handleNavigate = (tab: StudentTab) => {
+    setActiveTest(null);
+    setActiveTab(tab);
+  };
+
   const [activePdfAssignment, setActivePdfAssignment] = useState<{
     assignment: PdfTestAssignment;
     fileUrl: string;
@@ -726,7 +669,7 @@ export const StudentDashboard: React.FC = () => {
     ];
     if (activeTab === 'assignments') items.push({ label: 'Ödevler' });
     else if (activeTab === 'planner') items.push({ label: 'Planlama' });
-    else if (activeTab === 'grades') items.push({ label: 'Sınav Analizi' });
+    else if (activeTab === 'schedule') items.push({ label: 'Ders Programı' });
     else if (activeTab === 'coursenotes') items.push({ label: 'Ders Notları' });
     else if (activeTab === 'pomodoro') items.push({ label: 'Pomodoro' });
     else if (activeTab === 'questionbank') items.push({ label: 'Soru Havuzu' });
@@ -739,29 +682,15 @@ export const StudentDashboard: React.FC = () => {
     return items;
   }, [activeTab]);
 
-  const sidebarItems = useMemo<SidebarItem[]>(
+  const derslerimSubItems: SidebarSubItem[] = useMemo(
     () => [
-      {
-        id: 'overview',
-        label: 'Genel Bakış',
-        icon: <BookOpen size={18} />,
-        description: 'Performans',
-        active: activeTab === 'overview',
-        onClick: () => {
-          setShowNotesLibrary(false);
-          setActiveTest(null);
-          setActiveTab('overview');
-        },
-      },
       {
         id: 'assignments',
         label: 'Ödevler',
         icon: <ListChecks size={18} />,
         description: 'Takip',
-        badge: assignments.length || undefined,
         active: activeTab === 'assignments',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('assignments');
         },
@@ -771,24 +700,21 @@ export const StudentDashboard: React.FC = () => {
         label: 'Planlama',
         icon: <Calendar size={18} />,
         description: 'Görevler',
-        badge: plannerTodos.filter((todo) => todo.status !== 'completed').length || undefined,
         active: activeTab === 'planner',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('planner');
         },
       },
       {
-        id: 'grades',
-        label: 'Notlar',
-        icon: <Award size={18} />,
-        description: 'Analiz',
-        active: activeTab === 'grades',
+        id: 'schedule',
+        label: 'Ders Programı',
+        icon: <CalendarCheck size={18} />,
+        description: 'Haftalık plan',
+        active: activeTab === 'schedule',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
-          setActiveTab('grades');
+          setActiveTab('schedule');
         },
       },
       {
@@ -798,7 +724,6 @@ export const StudentDashboard: React.FC = () => {
         description: 'Konu Anlatımları',
         active: activeTab === 'coursenotes',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('coursenotes');
         },
@@ -810,7 +735,6 @@ export const StudentDashboard: React.FC = () => {
         description: 'Focus Zone',
         active: activeTab === 'pomodoro',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('pomodoro');
         },
@@ -822,7 +746,6 @@ export const StudentDashboard: React.FC = () => {
         description: 'Konu Testleri',
         active: activeTab === 'questionbank',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('questionbank');
         },
@@ -834,7 +757,6 @@ export const StudentDashboard: React.FC = () => {
         description: 'Başarılarım',
         active: activeTab === 'badges',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('badges');
         },
@@ -846,19 +768,54 @@ export const StudentDashboard: React.FC = () => {
         description: 'Planlı dersler',
         active: activeTab === 'liveclasses',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('liveclasses');
         },
       },
       {
+        id: 'exam-analysis',
+        label: 'Sınav Analizi',
+        icon: <FileText size={18} />,
+        description: 'Detaylı rapor',
+        active: activeTab === 'exam-analysis',
+        onClick: () => {
+          setActiveTest(null);
+          setActiveTab('exam-analysis');
+        },
+      },
+    ],
+    [activeTab],
+  );
+
+  const sidebarItems = useMemo<SidebarItem[]>(
+    () => [
+      {
+        id: 'overview',
+        label: 'Genel Bakış',
+        icon: <BookOpen size={18} />,
+        description: 'Performans',
+        active: activeTab === 'overview',
+        onClick: () => {
+          setActiveTest(null);
+          setActiveTab('overview');
+        },
+      },
+      {
+        id: 'derslerim',
+        label: 'Derslerim',
+        icon: <BookOpen size={18} />,
+        description: 'Ders akışı',
+        badge: assignments.length || undefined,
+        active: derslerimSubItems.some((s) => s.active),
+        children: derslerimSubItems,
+      },
+      {
         id: 'coaching',
-        label: 'Koçluk',
+        label: 'Kişisel Takip',
         icon: <CalendarCheck size={18} />,
         description: 'Görüşmeler',
         active: activeTab === 'coaching',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('coaching');
         },
@@ -870,25 +827,12 @@ export const StudentDashboard: React.FC = () => {
         description: 'Admin',
         active: activeTab === 'complaints',
         onClick: () => {
-          setShowNotesLibrary(false);
           setActiveTest(null);
           setActiveTab('complaints');
         },
       },
-      {
-        id: 'exam-analysis',
-        label: 'Sınav Analizi',
-        icon: <FileText size={18} />,
-        description: 'Detaylı rapor',
-        active: activeTab === 'exam-analysis',
-        onClick: () => {
-          setShowNotesLibrary(false);
-          setActiveTest(null);
-          setActiveTab('exam-analysis');
-        },
-      },
     ],
-    [activeTab, assignments.length, plannerTodos.length, unreadNotificationsCount],
+    [activeTab, assignments.length, plannerTodos.length, derslerimSubItems],
   );
 
   return (
@@ -904,8 +848,8 @@ export const StudentDashboard: React.FC = () => {
             ? 'Ödev Akışı'
             : activeTab === 'planner'
               ? 'Planlama'
-              : activeTab === 'grades'
-                ? 'Sınav Analizi'
+              : activeTab === 'schedule'
+                ? 'Ders Programı'
                 : activeTab === 'pomodoro'
                   ? 'Pomodoro'
                   : activeTab === 'questionbank'
@@ -915,13 +859,13 @@ export const StudentDashboard: React.FC = () => {
                     : activeTab === 'liveclasses'
                       ? 'Canlı Dersler'
                       : activeTab === 'coaching'
-                        ? 'Koçluk Görüşmeleri'
+                        ? 'Kişisel Gelişim'
                         : activeTab === 'notifications'
                           ? 'Bildirimler'
                           : 'Şikayet/Öneri'
       }
       subtitle="Gerçek verilerle çalışma serini ve ödevlerini yönet."
-      status={{ label: `${dashboardState.data?.testsSolvedThisWeek ?? 0} test çözüldü`, tone: 'warning' }}
+      status={undefined}
       breadcrumbs={breadcrumbs}
       sidebarItems={sidebarItems}
       user={{
@@ -930,58 +874,12 @@ export const StudentDashboard: React.FC = () => {
         subtitle: 'Öğrenci',
         profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
       }}
-      headerActions={
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button
-            type="button"
-            className="ghost-btn"
-            aria-label="Bildirimler"
-            onClick={() => {
-              setActiveTab('notifications');
-              loadNotifications().catch(() => {});
-            }}
-            style={{ position: 'relative' }}
-          >
-            <Bell size={16} />
-            {unreadNotificationsCount > 0 && (
-              <span
-                style={{
-                  position: 'absolute',
-                  top: -4,
-                  right: -4,
-                  background: '#ef4444',
-                  color: 'white',
-                  borderRadius: 999,
-                  padding: '0 6px',
-                  fontSize: '0.7rem',
-                  lineHeight: '16px',
-                  height: 16,
-                  minWidth: 16,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
-              </span>
-            )}
-          </button>
-        </div>
-      }
       onLogout={logout}
     >
       {activeTab === 'overview' && (
         <StudentOverview
           metrics={metrics}
-          meeting={nextMeeting}
-          isCoachingMeeting={isNextMeetingFromCoaching}
-          events={calendarState.data ?? []}
-          groupedAssignments={groupedAssignments}
-          contents={contents}
-          onJoinMeeting={handleJoinMeeting}
-          onOpenContentLibrary={handleOpenContent}
-          joinMeetingHint={joinMeetingHint}
-          loading={dashboardState.loading}
+          onNavigate={handleNavigate}
         />
       )}
       {activeTab === 'badges' && (
@@ -1010,14 +908,60 @@ export const StudentDashboard: React.FC = () => {
           defaultGradeLevel={user?.gradeLevel}
         />
       )}
-      {activeTab === 'grades' && token && user && (
-        <StudentGrades
-          progress={progressState.data}
-          charts={chartsState.data}
-          loading={progressState.loading}
-          token={token}
-          user={user}
-        />
+      {activeTab === 'schedule' && token && user && (
+        <GlassCard
+          title="Ders Programım"
+          subtitle="Kendi planını oluştur, rehber öğretmeninin atadığı programlarla birlikte gör."
+          className="student-schedule-card"
+        >
+          <div className="student-schedule-layout">
+            <div className="student-schedule-left">
+              <h3 className="student-schedule-section-title">Kişisel Çalışma Programım</h3>
+              <p className="student-schedule-helper">
+                Haftalık çalışma planını oluştur. Ders ve konu bazlı plan yap, odaklanmak istediğin saatleri belirle.
+              </p>
+              <LessonScheduleTab
+                token={token}
+                students={[]}
+                allowedGrades={user.gradeLevel ? [user.gradeLevel] : []}
+                mode="student"
+              />
+            </div>
+            <div className="student-schedule-right">
+              <h3 className="student-schedule-section-title">Rehber Öğretmen Programları</h3>
+              <p className="student-schedule-helper">
+                Rehber öğretmeninin senin için veya sınıfın için hazırladığı ders programlarını buradan takip edebilirsin.
+              </p>
+              {meetings.length === 0 ? (
+                <div className="student-schedule-premium-hint">
+                  <span>Henüz öğretmenin tarafından atanmış bir program bulunmuyor.</span>
+                </div>
+              ) : (
+                <div className="student-schedule-premium-hint student-schedule-teacher-programs">
+                  <span className="student-schedule-teacher-label">
+                    Önümüzdeki canlı dersler / rehberlik seansları:
+                  </span>
+                  <div className="student-schedule-teacher-programs-list">
+                    {meetings.slice(0, 3).map((m) => (
+                      <div key={m.id} className="student-schedule-teacher-program-item">
+                        <div className="student-schedule-teacher-title">{m.title}</div>
+                        <div className="student-schedule-teacher-meta">
+                          {new Date(m.scheduledAt).toLocaleString('tr-TR', {
+                            day: '2-digit',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          {m.durationMinutes ? ` • ${m.durationMinutes} dk` : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </GlassCard>
       )}
       {activeTab === 'coursenotes' && (
         <NotesLibraryOverlay
@@ -1025,6 +969,7 @@ export const StudentDashboard: React.FC = () => {
           initialDoc={null}
           globalReadingMode={readingMode}
           token={token}
+          studentGradeLevel={user?.gradeLevel}
           embedded
           onClose={() => {}}
         />
@@ -1062,6 +1007,11 @@ export const StudentDashboard: React.FC = () => {
       )}
       {activeTab === 'liveclasses' && (
         <GlassCard title="Canlı Dersler" subtitle="Planlanmış canlı ders ve toplantılar">
+          {joinMeetingHint && (
+            <div className="card-subtitle" style={{ marginBottom: '0.5rem' }}>
+              {joinMeetingHint}
+            </div>
+          )}
           {meetings.length === 0 && (
             <div className="empty-state">Henüz planlanmış canlı dersiniz yok.</div>
           )}
@@ -1253,7 +1203,50 @@ export const StudentDashboard: React.FC = () => {
                         </div>
                       )}
                   </div>
-                  <TagChip label={n.read ? 'Okundu' : 'Yeni'} tone={n.read ? 'success' : 'warning'} />
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.25rem',
+                      marginLeft: '0.75rem',
+                      alignSelf: 'center',
+                    }}
+                  >
+                    {!n.read && (
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        style={{ fontSize: '0.75rem', padding: '0.15rem 0.6rem' }}
+                        onClick={async () => {
+                          if (!token) return;
+                          try {
+                            await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
+                            await loadNotifications();
+                          } catch {
+                            // ignore
+                          }
+                        }}
+                      >
+                        Okundu
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      style={{ fontSize: '0.75rem', padding: '0.15rem 0.6rem', color: '#ef4444' }}
+                      onClick={async () => {
+                        if (!token) return;
+                        try {
+                          await apiRequest(`/student/notifications/${n.id}`, { method: 'DELETE' }, token);
+                          await loadNotifications();
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                    >
+                      Sil
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1432,12 +1425,12 @@ export const StudentDashboard: React.FC = () => {
             style={{
               minWidth: 320,
               maxWidth: 420,
-              background: 'rgba(15,23,42,0.97)',
+              background: 'var(--ui-modal-surface)',
               borderRadius: 16,
               padding: '1rem 1.1rem',
-              boxShadow: '0 25px 60px rgba(0,0,0,0.8)',
-              border: '1px solid rgba(55,65,81,0.9)',
-              color: '#e5e7eb',
+              boxShadow: 'var(--ui-modal-shadow)',
+              border: '1px solid var(--ui-modal-border)',
+              color: 'var(--color-text-main)',
               maxHeight: '80vh',
               overflowY: 'auto',
             }}
@@ -1465,9 +1458,6 @@ export const StudentDashboard: React.FC = () => {
                 style={{
                   padding: '0.25rem 0.7rem',
                   fontSize: '0.8rem',
-                  border: '1px solid rgba(148,163,184,0.9)',
-                  background: 'rgba(15,23,42,0.9)',
-                  color: '#e5e7eb',
                 }}
               >
                 Kapat
@@ -1557,60 +1547,6 @@ export const StudentDashboard: React.FC = () => {
                       ? 'AI yorum hazırlanıyor...'
                       : 'Detaylı AI yorumunu göster'}
                   </button>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    style={{
-                      fontSize: '0.75rem',
-                      padding: '0.25rem 0.7rem',
-                      border: '1px solid rgba(59,130,246,0.9)',
-                      background: 'rgba(30,64,175,0.5)',
-                      color: '#bfdbfe',
-                    }}
-                    disabled={aiFeedbackLoading}
-                    onClick={async () => {
-                      if (!token || !lastTestResult.testResultId) return;
-                      setAiFeedbackLoading(true);
-                      try {
-                        const res = await getStudentTestFeedback(
-                          token,
-                          lastTestResult.testResultId,
-                          'pdf',
-                        );
-                        if (res.attachment) {
-                          const blob = new Blob(
-                            [
-                              Uint8Array.from(
-                                atob(res.attachment.data),
-                                (c) => c.charCodeAt(0),
-                              ),
-                            ],
-                            { type: res.attachment.mimeType },
-                          );
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = res.attachment.filename;
-                          a.click();
-                          URL.revokeObjectURL(url);
-                        } else {
-                          // eslint-disable-next-line no-alert
-                          alert('İndirilebilir PDF bulunamadı.');
-                        }
-                      } catch (e) {
-                        // eslint-disable-next-line no-alert
-                        alert(
-                          e instanceof Error
-                            ? e.message
-                            : 'PDF indirilemedi.',
-                        );
-                      } finally {
-                        setAiFeedbackLoading(false);
-                      }
-                    }}
-                  >
-                    PDF indir
-                  </button>
                 </div>
               )}
               {aiFeedback && (
@@ -1630,18 +1566,6 @@ export const StudentDashboard: React.FC = () => {
           </div>
         </div>
       )}
-      {showNotesLibrary && (
-        <NotesLibraryOverlay
-          contents={contents}
-          initialDoc={initialDocToShow}
-          globalReadingMode={readingMode}
-          token={token}
-          onClose={() => {
-            setShowNotesLibrary(false);
-            setInitialDocToShow(null);
-          }}
-        />
-      )}
       {liveClass && (
         <LiveClassOverlay
           url={liveClass.url}
@@ -1649,61 +1573,38 @@ export const StudentDashboard: React.FC = () => {
           title={liveClass.title}
           role="student"
           authToken={token ?? undefined}
-          onClose={() => setLiveClass(null)}
+          onClose={(reason) => {
+            setLiveClass(null);
+            if (reason === 'teacher_missing') {
+              setJoinMeetingHint('Canlı dersiniz öğretmen tarafından başlatılmamıştır.');
+            }
+          }}
         />
       )}
 
       {solutionOverlay?.open && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15,23,42,0.75)',
-            zIndex: 95,
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: '1.5rem',
-          }}
+          className="ui-modal-overlay ui-modal-overlay--strong"
+          style={{ zIndex: 95 }}
           onClick={() => setSolutionOverlay(null)}
         >
           <div
-            style={{
-              width: 'min(860px, 96vw)',
-              background: '#0b1220',
-              borderRadius: 18,
-              border: '1px solid rgba(55,65,81,0.9)',
-              color: '#e5e7eb',
-              boxShadow: '0 30px 80px rgba(0,0,0,0.75)',
-              overflow: 'hidden',
-            }}
+            className="ui-modal"
+            style={{ width: 'min(860px, 96vw)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div
-              style={{
-                padding: '1rem 1.1rem',
-                borderBottom: '1px solid rgba(31,41,55,0.9)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>Çözüm</div>
+            <div className="ui-modal-header">
+              <div className="ui-modal-title">Çözüm</div>
               <button
                 type="button"
                 className="ghost-btn"
                 onClick={() => setSolutionOverlay(null)}
-                style={{
-                  border: '1px solid rgba(148,163,184,0.9)',
-                  background: 'rgba(15,23,42,0.9)',
-                  color: '#e5e7eb',
-                }}
               >
                 Kapat
               </button>
             </div>
-            <div style={{ padding: '1rem 1.1rem' }}>
-              <div style={{ opacity: 0.85, marginBottom: '0.75rem' }}>{solutionOverlay.title}</div>
+            <div className="ui-modal-body">
+              <div className="ui-modal-subtitle">{solutionOverlay.title}</div>
               {solutionOverlay.mode === 'audio_only' ? (
                 <audio
                   controls
@@ -1737,7 +1638,7 @@ export const StudentDashboard: React.FC = () => {
           </div>
         </div>
       )}
-      {activeTab === 'grades' && user && token && (
+      {activeTab === 'exam-analysis' && user && token && (
         <StudentExamList
           token={token}
           user={{ id: user.id || '', name: user.name || '', email: user.email || '' }}
@@ -1814,8 +1715,7 @@ const TestSolveOverlay: React.FC<{
       style={{
         position: 'fixed',
         inset: 0,
-        background:
-          'radial-gradient(circle at top left, rgba(15,23,42,0.98), rgba(15,23,42,0.96))',
+        background: 'var(--ui-modal-backdrop-strong)',
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
@@ -1828,14 +1728,15 @@ const TestSolveOverlay: React.FC<{
           width: '100%',
           maxWidth: 1200,
           maxHeight: '100%',
-          background: readingModeEnabled ? 'rgba(255,250,240,0.98)' : '#0b1220',
+          background: 'var(--ui-modal-surface)',
           borderRadius: 24,
           padding: '1.75rem',
-          boxShadow: '0 30px 80px rgba(0,0,0,0.65)',
+          boxShadow: 'var(--ui-modal-shadow)',
+          border: '1px solid var(--ui-modal-border)',
           display: 'flex',
           flexDirection: 'column',
           gap: '1.75rem',
-          color: readingModeEnabled ? '#111827' : '#e5e7eb',
+          color: 'var(--color-text-main)',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -1875,11 +1776,6 @@ const TestSolveOverlay: React.FC<{
               type="button"
               onClick={onClose}
               className="ghost-btn"
-              style={{
-                color: readingModeEnabled ? '#111827' : '#e5e7eb',
-                border: readingModeEnabled ? '1px solid rgba(148,163,184,0.6)' : '1px solid rgba(148,163,184,0.9)',
-                background: readingModeEnabled ? 'rgba(255,247,237,0.9)' : 'rgba(15,23,42,0.9)',
-              }}
             >
               Kapat
             </button>
@@ -1889,9 +1785,9 @@ const TestSolveOverlay: React.FC<{
             style={{
               padding: '1rem 1.25rem',
               borderRadius: 16,
-              background: readingModeEnabled ? 'rgba(255,247,237,0.95)' : 'linear-gradient(135deg, #111827, #020617)',
-              border: readingModeEnabled ? '1px solid rgba(148,163,184,0.45)' : '1px solid rgba(55,65,81,0.9)',
-              boxShadow: '0 18px 40px rgba(0,0,0,0.75)',
+              background: 'var(--panel-surface)',
+              border: '1px solid var(--panel-border)',
+              boxShadow: 'var(--shadow-soft)',
             }}
           >
             <p style={{ margin: 0, fontSize: '1.05rem', lineHeight: readingModeEnabled ? 1.85 : 1.6 }}>
@@ -1912,11 +1808,11 @@ const TestSolveOverlay: React.FC<{
                       background:
                         answerValue === choice
                           ? 'rgba(59,130,246,0.15)'
-                          : 'rgba(15,23,42,0.8)',
+                        : 'var(--list-row-bg)',
                       border:
                         answerValue === choice
                           ? '1px solid rgba(129,140,248,0.9)'
-                          : '1px solid rgba(31,41,55,0.9)',
+                        : '1px solid var(--list-row-border)',
                       cursor: 'pointer',
                     }}
                   >
@@ -1940,15 +1836,6 @@ const TestSolveOverlay: React.FC<{
                     type="button"
                     onClick={() => onChangeAnswer(question.id, val)}
                     className={answerValue === val ? 'primary-btn' : 'ghost-btn'}
-                    style={
-                      answerValue === val
-                        ? undefined
-                        : {
-                            border: '1px solid rgba(148,163,184,0.9)',
-                            background: 'rgba(15,23,42,0.9)',
-                            color: '#e5e7eb',
-                          }
-                    }
                   >
                     {val === 'true' ? 'Doğru' : 'Yanlış'}
                   </button>
@@ -1961,18 +1848,8 @@ const TestSolveOverlay: React.FC<{
                 value={answerValue}
                 onChange={(event) => onChangeAnswer(question.id, event.target.value)}
                 placeholder="Cevabını buraya yaz"
-                style={{
-                  width: '100%',
-                  marginTop: '1rem',
-                  minHeight: 120,
-                  borderRadius: 12,
-                  border: '1px solid rgba(55,65,81,0.9)',
-                  background: '#020617',
-                  color: '#e5e7eb',
-                  resize: 'vertical',
-                  padding: '0.75rem 1rem',
-                  fontSize: '0.9rem',
-                }}
+                className="ui-control ui-control--textarea"
+                style={{ width: '100%', marginTop: '1rem', minHeight: 120, padding: '0.75rem 1rem', fontSize: '0.9rem' }}
               />
             )}
 
@@ -1990,11 +1867,6 @@ const TestSolveOverlay: React.FC<{
                   className="ghost-btn"
                   onClick={handlePrev}
                   disabled={currentIndex === 0}
-                  style={{
-                    border: '1px solid rgba(148,163,184,0.9)',
-                    background: 'rgba(15,23,42,0.9)',
-                    color: '#e5e7eb',
-                  }}
                 >
                   Önceki
                 </button>
@@ -2003,11 +1875,6 @@ const TestSolveOverlay: React.FC<{
                   className="ghost-btn"
                   onClick={handleNext}
                   disabled={currentIndex === questions.length - 1}
-                  style={{
-                    border: '1px solid rgba(148,163,184,0.9)',
-                    background: 'rgba(15,23,42,0.9)',
-                    color: '#e5e7eb',
-                  }}
                 >
                   Sonraki
                 </button>
@@ -2026,11 +1893,6 @@ const TestSolveOverlay: React.FC<{
                 type="button"
                 className="ghost-btn"
                 onClick={() => setShowDrawing(true)}
-                style={{
-                  border: '1px solid rgba(148,163,184,0.9)',
-                  background: 'rgba(15,23,42,0.9)',
-                  color: '#e5e7eb',
-                }}
               >
                 Çizim Alanını Aç
               </button>
@@ -2039,9 +1901,9 @@ const TestSolveOverlay: React.FC<{
                 className="ghost-btn"
                 onClick={() => setAskTeacherQuestionId(question.id)}
                 style={{
-                  border: '1px solid rgba(59,130,246,0.9)',
-                  background: 'rgba(30,58,138,0.5)',
-                  color: '#93c5fd',
+                  border: '1px solid rgba(59,130,246,0.55)',
+                  background: 'rgba(59,130,246,0.14)',
+                  color: 'var(--color-text-main)',
                 }}
               >
                 Bu soruyu öğretmene sor
@@ -2052,30 +1914,19 @@ const TestSolveOverlay: React.FC<{
       </div>
       {showDrawing && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15,23,42,0.95)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 70,
-            padding: '1.5rem',
-          }}
+          className="ui-modal-overlay ui-modal-overlay--strong"
+          style={{ zIndex: 70 }}
         >
           <div
+            className="ui-modal ui-modal--xl"
             style={{
               width: '100%',
               maxWidth: 1200,
               maxHeight: '100%',
-              background: '#020617',
-              borderRadius: 24,
               padding: '1.25rem',
-              boxShadow: '0 30px 80px rgba(0,0,0,0.75)',
               display: 'flex',
               flexDirection: 'column',
               gap: '0.75rem',
-              color: '#e5e7eb',
             }}
           >
             <div
@@ -2098,26 +1949,13 @@ const TestSolveOverlay: React.FC<{
                 type="button"
                 className="ghost-btn"
                 onClick={() => setShowDrawing(false)}
-                style={{
-                  border: '1px solid rgba(148,163,184,0.9)',
-                  background: 'rgba(15,23,42,0.9)',
-                  color: '#e5e7eb',
-                }}
               >
                 Kapat
               </button>
             </div>
             <div
-              style={{
-                maxHeight: 180,
-                overflowY: 'auto',
-                padding: '0.75rem 0.9rem',
-                borderRadius: 14,
-                background: 'rgba(15,23,42,0.95)',
-                border: '1px solid rgba(51,65,85,0.9)',
-                fontSize: '0.9rem',
-                marginBottom: '0.5rem',
-              }}
+              className="ui-panel"
+              style={{ maxHeight: 180, overflowY: 'auto', padding: '0.75rem 0.9rem', fontSize: '0.9rem', marginBottom: '0.5rem' }}
             >
               <div
                 style={{
@@ -2180,15 +2018,6 @@ const TestSolveOverlay: React.FC<{
                   type="button"
                   className={drawingTool === tool.id ? 'primary-btn' : 'ghost-btn'}
                   onClick={() => setDrawingTool(tool.id as any)}
-                  style={
-                    drawingTool === tool.id
-                      ? undefined
-                      : {
-                          border: '1px solid rgba(55,65,81,0.9)',
-                          background: 'rgba(15,23,42,0.9)',
-                          color: '#e5e7eb',
-                        }
-                  }
                 >
                   {tool.label}
                 </button>
@@ -2257,13 +2086,8 @@ const TestSolveOverlay: React.FC<{
               </label>
             </div>
             <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                borderRadius: 16,
-                background: '#020617',
-                padding: '0.5rem',
-              }}
+              className="ui-panel"
+              style={{ flex: 1, minHeight: 0, padding: '0.5rem' }}
             >
               <DrawingCanvas
                 width={canvasWidth}
@@ -2281,33 +2105,19 @@ const TestSolveOverlay: React.FC<{
       )}
       {askTeacherQuestionId && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15,23,42,0.9)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 75,
-            padding: '1.5rem',
-          }}
+          className="ui-modal-overlay"
+          style={{ zIndex: 75 }}
           onClick={() => { setAskTeacherQuestionId(null); setAskTeacherMessage(''); }}
         >
           <div
-            style={{
-              width: '100%',
-              maxWidth: 420,
-              background: '#0b1220',
-              borderRadius: 16,
-              padding: '1.25rem',
-              boxShadow: '0 30px 80px rgba(0,0,0,0.75)',
-              border: '1px solid rgba(55,65,81,0.9)',
-              color: '#e5e7eb',
-            }}
+            className="ui-modal"
+            style={{ width: '100%', maxWidth: 420, padding: '1.25rem' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Bu soruyu öğretmene sor</div>
-            <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 1rem 0' }}>
+            <div className="ui-modal-title" style={{ marginBottom: '0.5rem' }}>
+              Bu soruyu öğretmene sor
+            </div>
+            <p className="ui-modal-subtitle" style={{ fontSize: '0.9rem', margin: '0 0 1rem 0' }}>
               Öğretmeniniz sesli veya video/ekran paylaşımı ile çözüm gönderecek.
             </p>
             <textarea
@@ -2315,24 +2125,14 @@ const TestSolveOverlay: React.FC<{
               value={askTeacherMessage}
               onChange={(e) => setAskTeacherMessage(e.target.value)}
               rows={3}
-              style={{
-                width: '100%',
-                padding: '0.6rem',
-                borderRadius: 8,
-                border: '1px solid rgba(71,85,105,0.9)',
-                background: 'rgba(15,23,42,0.9)',
-                color: '#e5e7eb',
-                fontSize: '0.9rem',
-                resize: 'vertical',
-                marginBottom: '1rem',
-              }}
+              className="ui-control ui-control--textarea"
+              style={{ marginBottom: '1rem' }}
             />
             <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end' }}>
               <button
                 type="button"
                 className="ghost-btn"
                 onClick={() => { setAskTeacherQuestionId(null); setAskTeacherMessage(''); }}
-                style={{ border: '1px solid rgba(148,163,184,0.9)', color: '#e5e7eb' }}
               >
                 İptal
               </button>
@@ -2362,10 +2162,35 @@ const NotesLibraryOverlay: React.FC<{
   initialDoc?: { url: string; title: string } | null;
   globalReadingMode?: boolean;
   token: string | null;
+  /** Öğrencinin sınıf seviyesi (örn. "11", "11. Sınıf", "11/TYT" vb.) */
+  studentGradeLevel?: string | null;
   embedded?: boolean;
   onClose: () => void;
-}> = ({ contents, initialDoc, globalReadingMode, token, embedded = false, onClose }) => {
-  const gradeOptions = ['all', '9', '10', '11', '12'] as const;
+}> = ({ contents, initialDoc, globalReadingMode, token, studentGradeLevel, embedded = false, onClose }) => {
+  const parseStudentGrade = (value?: string | null): string | null => {
+    if (!value) return null;
+    const match = value.match(/\d{1,2}/);
+    if (match) return match[0];
+    return value.trim();
+  };
+
+  const baseGrade = parseStudentGrade(studentGradeLevel);
+
+  // Öğrencinin sınıfına göre erişebileceği sınıflar:
+  // - Varsayılan: 9–12
+  // - 11 veya 12 ise: kendi sınıfı + TYT/AYT
+  const allowedGrades = useMemo(() => {
+    if (!baseGrade) {
+      return ['9', '10', '11', '12'];
+    }
+    const grades: string[] = [baseGrade];
+    if (baseGrade === '11' || baseGrade === '12') {
+      grades.push('TYT', 'AYT');
+    }
+    return grades;
+  }, [baseGrade]);
+
+  const gradeOptions = ['all', ...allowedGrades];
   const [activeGrade, setActiveGrade] = useState<string>('all');
   const [activeVideoContent, setActiveVideoContent] = useState<StudentContent | null>(null);
   const [videoCompleted, setVideoCompleted] = useState(false);
@@ -2439,8 +2264,10 @@ const NotesLibraryOverlay: React.FC<{
   };
 
   const contentsForGrade = contents.filter((c) => {
-    if (activeGrade === 'all') return true;
     const gl = normalizeGradeLevel(c.gradeLevel ?? '9');
+    // Öğrencinin erişebileceği sınıflar dışında içeriğe izin verme
+    if (!allowedGrades.includes(gl)) return false;
+    if (activeGrade === 'all') return true;
     return gl === activeGrade;
   });
 
@@ -2476,8 +2303,16 @@ const NotesLibraryOverlay: React.FC<{
     const items: BreadcrumbItem[] = [
       { label: 'Ders Notları', onClick: closeContent },
       {
-        label: activeGrade === 'all' ? 'Tüm Sınıflar' : `${activeGrade}. Sınıf`,
-        onClick: () => { setActiveTopic(null); closeContent(); },
+        label:
+          activeGrade === 'all'
+            ? 'Tüm Sınıflar'
+            : activeGrade === 'TYT' || activeGrade === 'AYT'
+              ? activeGrade
+              : `${activeGrade}. Sınıf`,
+        onClick: () => {
+          setActiveTopic(null);
+          closeContent();
+        },
       },
     ];
     if (activeSubject) {
@@ -2505,9 +2340,13 @@ const NotesLibraryOverlay: React.FC<{
               inset: 0,
               zIndex: 65,
             }),
-        background: overlayIsReadingMode
-          ? 'radial-gradient(circle at top left, #fff7ed, #fffaf0)'
-          : 'radial-gradient(circle at top left, rgba(15,23,42,0.96), rgba(15,23,42,0.98))',
+        // Dashboard içine gömülü görünümde (embedded) koyu arka planı kaldır,
+        // sadece tam ekran overlay'de radial gradient kullan.
+        background: embedded
+          ? 'transparent'
+          : overlayIsReadingMode
+            ? 'radial-gradient(circle at top left, #fff7ed, #fffaf0)'
+            : 'radial-gradient(circle at top left, rgba(15,23,42,0.96), rgba(15,23,42,0.98))',
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'flex-start',
@@ -2520,14 +2359,14 @@ const NotesLibraryOverlay: React.FC<{
           width: '100%',
           maxWidth: 1400,
           maxHeight: '100%',
-          background: overlayIsReadingMode ? '#fffaf0' : '#020617',
+          background: overlayIsReadingMode ? 'var(--color-surface)' : 'var(--ui-modal-surface)',
           borderRadius: 24,
           padding: '1.5rem',
-          boxShadow: overlayIsReadingMode ? '0 30px 80px rgba(15,23,42,0.15)' : '0 30px 80px rgba(0,0,0,0.85)',
+          boxShadow: overlayIsReadingMode ? 'var(--shadow-soft)' : 'var(--ui-modal-shadow)',
           display: 'flex',
           flexDirection: 'column',
           gap: '1.25rem',
-          color: overlayIsReadingMode ? '#1f2937' : '#e5e7eb',
+          color: 'var(--color-text-main)',
           overflow: 'hidden',
           border: overlayIsReadingMode ? '1px solid rgba(251,191,36,0.3)' : undefined,
           transition: 'background 0.3s ease, color 0.3s ease, box-shadow 0.3s ease',
@@ -2567,11 +2406,6 @@ const NotesLibraryOverlay: React.FC<{
                   onClose();
                 }
               }}
-              style={{
-                border: '1px solid rgba(148,163,184,0.9)',
-                background: 'rgba(15,23,42,0.9)',
-                color: '#e5e7eb',
-              }}
             >
               Kapat
             </button>
@@ -2592,8 +2426,8 @@ const NotesLibraryOverlay: React.FC<{
               gap: '0.75rem',
               padding: '0.9rem 1rem',
               borderRadius: 18,
-              background: 'rgba(15,23,42,0.85)',
-              border: '1px solid rgba(51,65,85,0.9)',
+              background: 'var(--panel-surface)',
+              border: '1px solid var(--ui-modal-border)',
             }}
           >
             <div>
@@ -2615,14 +2449,14 @@ const NotesLibraryOverlay: React.FC<{
                     style={
                       activeGrade === grade
                         ? undefined
-                        : {
-                            border: '1px solid rgba(55,65,81,0.9)',
-                            background: 'rgba(15,23,42,0.9)',
-                            color: '#e5e7eb',
-                          }
+                        : undefined
                     }
                   >
-                    {grade === 'all' ? 'Tümü' : `${grade}. Sınıf`}
+                    {grade === 'all'
+                      ? 'Tümü'
+                      : grade === 'TYT' || grade === 'AYT'
+                        ? grade
+                        : `${grade}. Sınıf`}
                   </button>
                 ))}
               </div>
@@ -2653,11 +2487,7 @@ const NotesLibraryOverlay: React.FC<{
                     style={
                       activeSubject === subjectId
                         ? undefined
-                        : {
-                            border: '1px solid rgba(55,65,81,0.9)',
-                            background: 'rgba(15,23,42,0.9)',
-                            color: '#e5e7eb',
-                          }
+                        : undefined
                     }
                   >
                     {SUBJECT_LABELS[subjectId] ?? subjectId}
@@ -2691,11 +2521,7 @@ const NotesLibraryOverlay: React.FC<{
                     style={
                       activeTopic === topic
                         ? undefined
-                        : {
-                            border: '1px solid rgba(55,65,81,0.9)',
-                            background: 'rgba(15,23,42,0.9)',
-                            color: '#e5e7eb',
-                          }
+                        : undefined
                     }
                   >
                     {topic}
@@ -2708,8 +2534,8 @@ const NotesLibraryOverlay: React.FC<{
           <div
             style={{
               borderRadius: 18,
-              background: 'rgba(15,23,42,0.92)',
-              border: '1px solid rgba(51,65,85,0.9)',
+              background: 'var(--panel-surface)',
+              border: '1px solid var(--panel-border)',
               padding: '1rem 1.1rem',
               overflowY: 'auto',
               display: 'flex',
@@ -2729,10 +2555,10 @@ const NotesLibraryOverlay: React.FC<{
                       key={content.id}
                       style={{
                         cursor: content.url ? 'pointer' : 'default',
-                        background: 'rgba(248,250,252,0.96)',
+                        background: 'var(--list-row-bg)',
                         borderRadius: 16,
-                        border: '1px solid rgba(148,163,184,0.4)',
-                        color: '#0f172a',
+                        border: '1px solid var(--list-row-border)',
+                        color: 'var(--color-text-main)',
                       }}
                       onClick={() => {
                         if (!content.url) return;
@@ -2746,10 +2572,8 @@ const NotesLibraryOverlay: React.FC<{
                       }}
                     >
                       <div>
-                        <strong style={{ color: '#0f172a' }}>{content.title}</strong>
-                        <small style={{ color: '#4b5563' }}>
-                          {isVideo ? 'Video' : 'PDF / Doküman'}
-                        </small>
+                        <strong>{content.title}</strong>
+                        <small>{isVideo ? 'Video' : 'PDF / Doküman'}</small>
                       </div>
                       {content.url && (
                         <button
@@ -2780,8 +2604,8 @@ const NotesLibraryOverlay: React.FC<{
                 ref={docViewerRef}
                 style={{
                   borderRadius: 16,
-                  background: pdfIsReadingMode ? '#fffaf0' : 'rgba(15,23,42,0.95)',
-                  border: `1px solid ${pdfIsReadingMode ? 'rgba(251,191,36,0.5)' : 'rgba(148,163,184,0.5)'}`,
+                  background: pdfIsReadingMode ? 'var(--color-surface)' : 'var(--panel-surface)',
+                  border: `1px solid ${pdfIsReadingMode ? 'rgba(251,191,36,0.5)' : 'var(--panel-border)'}`,
                   overflow: 'hidden',
                   display: 'flex',
                   flexDirection: 'column',
@@ -3049,7 +2873,7 @@ const NotesLibraryOverlay: React.FC<{
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(15,23,42,0.75)',
+            background: 'var(--ui-modal-backdrop-strong)',
             zIndex: 80,
             display: 'flex',
             alignItems: 'flex-start',
@@ -3061,19 +2885,19 @@ const NotesLibraryOverlay: React.FC<{
             style={{
               width: '100%',
               maxWidth: 360,
-              background: '#020617',
+              background: 'var(--ui-modal-surface)',
               borderRadius: 20,
               padding: '1.25rem 1.4rem',
-              boxShadow: '0 26px 70px rgba(0,0,0,0.9)',
-              border: '1px solid rgba(148,163,184,0.9)',
+              boxShadow: 'var(--ui-modal-shadow)',
+              border: '1px solid var(--ui-modal-border)',
               display: 'flex',
               flexDirection: 'column',
               gap: '0.75rem',
-              color: '#e5e7eb',
+              color: 'var(--color-text-main)',
             }}
           >
             <div style={{ fontSize: '1rem', fontWeight: 600 }}>Videodan çıkmak üzeresin</div>
-            <div style={{ fontSize: '0.85rem', color: '#cbd5f5' }}>
+            <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
               Çıkarsan bu videodaki izleme ilerlemen kaydedilmeyebilir. Devam etmek istediğine emin
               misin?
             </div>
@@ -3132,205 +2956,49 @@ const StudentOverview: React.FC<{
     trendLabel?: string;
     trendTone?: 'positive' | 'neutral' | 'negative';
   }>;
-  meeting: StudentMeeting | null;
-  isCoachingMeeting?: boolean;
-  events: CalendarEvent[];
-  groupedAssignments: Record<AssignmentStatus, StudentAssignment[]>;
-  contents: StudentContent[];
-  onJoinMeeting: (meetingId?: string) => void;
-  onOpenContentLibrary: (initialDoc?: { url: string; title: string }) => void;
-  loading: boolean;
-  joinMeetingHint?: string | null;
-}> = ({
-  metrics,
-  meeting,
-  isCoachingMeeting,
-  events,
-  groupedAssignments,
-  contents,
-  onJoinMeeting,
-  onOpenContentLibrary,
-  loading,
-  joinMeetingHint,
-}) => (
-  <>
-    <div className="metric-grid">
-      {metrics.map((metric) => (
-        <MetricCard key={metric.label} {...metric}>
-          <div className="sparkline-bar" />
-        </MetricCard>
-      ))}
-    </div>
+  onNavigate?: (tab: StudentTab) => void;
+}> = ({ metrics, onNavigate }) => {
+  const shortcuts: { id: StudentTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'assignments', label: 'Ödevler', icon: <ListChecks size={20} /> },
+    { id: 'planner', label: 'Planlama', icon: <Calendar size={20} /> },
+    { id: 'liveclasses', label: 'Canlı Dersler', icon: <Video size={20} /> },
+    { id: 'coursenotes', label: 'Ders Notları', icon: <FileText size={20} /> },
+  ];
 
-    <div className="dual-grid">
-      <GlassCard title="Bugünkü Plan" subtitle="Toplantı ve ders bağlantıları">
-        <div className="list-stack">
-          <div className="list-row">
-            <div>
-              <strong>{meeting?.title ?? 'Canlı Ders'}</strong>
-              <small>
-                {meeting
-                  ? `${formatShortDate(meeting.scheduledAt)}`
-                  : 'Planlı ders bulunamadı'}
-              </small>
-            </div>
-            <button
-              type="button"
-              className="primary-btn"
-              onClick={() => onJoinMeeting(meeting?.id)}
-              disabled={!meeting}
-            >
-              {meeting && isCoachingMeeting ? 'Görüşmeye Katıl' : 'Derse Katıl'}{' '}
-              <ArrowRight size={16} />
-            </button>
-          </div>
-          {joinMeetingHint && (
-            <div className="card-subtitle" style={{ marginTop: '0.35rem' }}>
-              {joinMeetingHint}
-            </div>
-          )}
-        </div>
-      </GlassCard>
-
-      <GlassCard title="Haftalık Takvim" subtitle="Planlı etkinlikler">
-        {loading && <div className="empty-state">Takvim yükleniyor...</div>}
-        {!loading && events.length === 0 && <div className="empty-state">Takvimde kayıt yok.</div>}
-        {!loading && events.length > 0 && (
-          <div className="calendar-events-list">
-            {events.slice(0, 5).map((event) => {
-              const t = (event.type || '').toLowerCase();
-              const title = (event.title || '').toLowerCase();
-              let Icon = CalendarCheck;
-              if (t.includes('test') || title.includes('test')) Icon = ClipboardList;
-              else if (t.includes('meeting') || t.includes('live') || title.includes('canlı')) Icon = Video;
-              else if (t.includes('lesson') || t.includes('ders')) Icon = BookOpen;
-
-              const isMeeting = t.includes('meeting') || t.includes('live') || title.includes('canlı');
-              const meetingId = event.relatedId;
-              const startTime = event.startDate ? new Date(event.startDate).getTime() : NaN;
-              const endTime = event.endDate ? new Date(event.endDate).getTime() : startTime + 30 * 60 * 1000;
-              const now = Date.now();
-              const canJoin =
-                isMeeting &&
-                Boolean(meetingId) &&
-                !Number.isNaN(startTime) &&
-                now >= startTime - MEETING_WINDOW_BEFORE_MS &&
-                now <= endTime;
-
-              return (
-                <div
-                  key={event.id}
-                  className="calendar-event calendar-event-inline"
-                  style={canJoin ? { cursor: 'pointer' } : undefined}
-                  onClick={() => {
-                    if (canJoin) onJoinMeeting(meetingId);
-                  }}
-                >
-                  <span className="calendar-event-icon"><Icon size={14} /></span>
-                  <div>
-                    <span className="calendar-event-title">{event.title}</span>
-                    <span className="calendar-event-meta">{formatShortDate(event.startDate)} · {event.status ?? 'Plan'}</span>
-                  </div>
-                  {canJoin && (
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onJoinMeeting(meetingId);
-                      }}
-                      style={{ marginLeft: 'auto', padding: '0.25rem 0.7rem', fontSize: '0.75rem' }}
-                    >
-                      Katıl
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </GlassCard>
-    </div>
-
-    <GlassCard title="Konu Anlatımları" subtitle="Öğretmeninizin paylaştığı PDF ve videolar">
-      <div className="list-stack">
-        {(contents ?? []).slice(0, 6).map((content) => {
-          const isVideo = (content.url ?? '').toLowerCase().endsWith('.mp4');
-          return (
-            <div className="list-row" key={content.id}>
-              <div>
-                <strong>{content.title}</strong>
-                <small>{isVideo ? 'Video' : 'PDF / Doküman'}</small>
-              </div>
-              {content.url && (
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={() => {
-                    if (isVideo) {
-                      window.open(resolveContentUrl(content.url!), '_blank', 'noopener,noreferrer');
-                    } else {
-                      onOpenContentLibrary({
-                        url: resolveContentUrl(content.url!),
-                        title: content.title ?? 'Doküman',
-                      });
-                    }
-                  }}
-                >
-                  Aç
-                </button>
-              )}
-            </div>
-          );
-        })}
-        {(!contents || contents.length === 0) && (
-          <div className="empty-state">Henüz içerik yüklenmedi.</div>
-        )}
+  return (
+    <>
+      <div className="metric-grid">
+        {metrics.map((metric) => (
+          <MetricCard key={metric.label} {...metric}>
+            <div className="sparkline-bar" />
+          </MetricCard>
+        ))}
       </div>
-    </GlassCard>
 
-    <GlassCard title="Ödev Akışı" subtitle="Görev durumu">
-      <div className="kanban">
-        <KanbanColumn title="Bekleyen" count={groupedAssignments.todo.length}>
-          {groupedAssignments.todo.map((assignment) => (
-            <KanbanCard key={assignment.id} assignment={assignment} />
-          ))}
-        </KanbanColumn>
-        <KanbanColumn title="Geciken" count={groupedAssignments.overdue.length}>
-          {groupedAssignments.overdue.map((assignment) => (
-            <KanbanCard key={assignment.id} assignment={assignment} completed />
-          ))}
-        </KanbanColumn>
-      </div>
-    </GlassCard>
-  </>
-);
-
-const KanbanColumn: React.FC<{ title: string; count: number; children: React.ReactNode }> = ({
-  title,
-  count,
-  children,
-}) => (
-  <div className="kanban-column">
-    <h4>
-      {title} ({count})
-    </h4>
-    {count === 0 ? <p className="card-subtitle">Henüz öğe yok</p> : children}
-  </div>
-);
-
-const KanbanCard: React.FC<{ assignment: StudentAssignment; completed?: boolean }> = ({ assignment, completed }) => (
-  <div className="kanban-card">
-    <strong>{assignment.title}</strong>
-    <p className="card-subtitle">{formatShortDate(assignment.dueDate)}</p>
-    <TagChip label={completed ? 'Geciken' : 'Bekliyor'} tone={completed ? 'warning' : 'info'} />
-    {completed && (
-      <span className="progress-pill" style={{ marginTop: '0.5rem' }}>
-        <CheckCircle size={14} /> Teslim bekleniyor
-      </span>
-    )}
-  </div>
-);
+      {onNavigate && (
+        <GlassCard
+          title="Kısayollar"
+          subtitle="En önemli bölümlere hızlı erişim"
+          className="overview-shortcuts-card"
+        >
+          <div className="overview-shortcuts-grid">
+            {shortcuts.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="overview-shortcut-btn"
+                onClick={() => onNavigate(s.id)}
+              >
+                <span className="overview-shortcut-icon">{s.icon}</span>
+                <span className="overview-shortcut-label">{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+    </>
+  );
+};
 
 const StudentAssignments: React.FC<{
   assignments: StudentAssignment[];
@@ -3371,9 +3039,7 @@ const StudentGrades: React.FC<{
   progress: ProgressOverview | null;
   charts: ProgressCharts | null;
   loading: boolean;
-  token: string;
-  user: { id: string; name: string; email: string };
-}> = ({ progress, charts, loading, token, user }) => (
+}> = ({ progress, charts, loading }) => (
   <div className="space-y-6">
   <div className="dual-grid">
     <GlassCard
@@ -3407,16 +3073,12 @@ const StudentGrades: React.FC<{
               <strong>{topic.topic}</strong>
               <small>Tamamlama: {topic.completionPercent}%</small>
             </div>
-            <span className="progress-pill">
-              {topic.averageScorePercent}% <Calendar size={14} />
-            </span>
           </div>
         ))}
         {charts?.daily?.length === 0 && <div className="empty-state">Veri bulunamadı.</div>}
       </div>
     </GlassCard>
   </div>
-  <StudentExamList token={token} user={user} />
   </div>
 );
 
@@ -3444,8 +3106,8 @@ const StudentCoachingTab: React.FC<{
   return (
     <div className="panel-grid">
       <GlassCard
-        title="Koçluk Görüşmeleri"
-        subtitle="Öğretmeninle yaptığın birebir gelişim seansları."
+        title="Kişisel Gelişim"
+        subtitle="Öğretmeninle yaptığın birebir gelişim ve takip seansları."
       >
         <div className="metric-grid">
           <MetricCard
@@ -3480,7 +3142,7 @@ const StudentCoachingTab: React.FC<{
         <div style={{ marginTop: '1.25rem' }}>
           <h3 style={{ fontSize: '0.95rem', marginBottom: '0.35rem' }}>Tüm Seanslar</h3>
           {loading && sessions.length === 0 && (
-            <div className="empty-state">Koçluk kayıtların yükleniyor...</div>
+            <div className="empty-state">Kişisel gelişim kayıtların yükleniyor...</div>
           )}
           {!loading && sessions.length === 0 && (
             <div className="empty-state">
@@ -3604,110 +3266,73 @@ const StudentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
   };
 
   return (
-    <GlassCard title="Şikayet / Öneri" subtitle="Admin’e iletilir (isteğe bağlı öğretmen seçimi)">
-      <div style={{ display: 'grid', gap: '0.85rem' }}>
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.75rem',
-              color: 'rgba(248,250,252,0.7)',
-              marginBottom: '0.25rem',
-              fontWeight: 600,
-            }}
-          >
-            Öğretmen (opsiyonel)
-          </label>
-          <select
-            value={form.aboutTeacherId}
-            onChange={(e) => setForm((p) => ({ ...p, aboutTeacherId: e.target.value }))}
-            disabled={loadingTeachers}
-            className="w-full text-sm"
-            style={{
-              padding: '0.55rem 0.75rem',
-              borderRadius: 12,
-              border: '1px solid rgba(148,163,184,0.4)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
-            }}
-          >
-            <option value="">
-              {loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}
-            </option>
-            {teachers.map((t) => (
-              <option key={t.id} value={t.id} style={{ background: '#020617' }}>
-                {t.name}
+    <GlassCard
+      title="Şikayet / Öneri"
+      subtitle="Admin’e iletilir (isteğe bağlı öğretmen seçimi)"
+      icon={<ClipboardList size={18} />}
+      actions={<TagChip label="Gizli · Admin" tone="info" />}
+      className="complaint-card"
+    >
+      <div className="complaint-form">
+        <div className="complaint-grid">
+          <div className="complaint-field">
+            <label className="complaint-label">
+              Öğretmen <span className="complaint-label-optional">(opsiyonel)</span>
+            </label>
+            <select
+              value={form.aboutTeacherId}
+              onChange={(e) => setForm((p) => ({ ...p, aboutTeacherId: e.target.value }))}
+              disabled={loadingTeachers}
+              className="complaint-control"
+            >
+              <option value="">
+                {loadingTeachers ? 'Öğretmenler yükleniyor...' : 'Öğretmen seç (opsiyonel)'}
               </option>
-            ))}
-          </select>
+              {teachers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <div className="complaint-hint">
+              İstersen belirli bir öğretmenle ilgili geri bildirim gönderebilirsin.
+            </div>
+          </div>
+
+          <div className="complaint-field">
+            <label className="complaint-label">Konu</label>
+            <input
+              type="text"
+              placeholder="Örn: Sınıf ortamı, ders anlatımı..."
+              value={form.subject}
+              onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
+              className="complaint-control"
+            />
+            <div className="complaint-hint">Kısa ve net bir başlık yaz.</div>
+          </div>
+
+          <div className="complaint-field complaint-field--full">
+            <label className="complaint-label">Açıklama</label>
+            <textarea
+              placeholder="Geri bildiriminizi mümkün olduğunca detaylı yazın."
+              value={form.body}
+              onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
+              rows={6}
+              className="complaint-control complaint-control--textarea"
+            />
+            <div className="complaint-hint">
+              Detay eklemek çözüm süresini hızlandırır (tarih, olay, beklediğin sonuç gibi).
+            </div>
+          </div>
         </div>
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.75rem',
-              color: 'rgba(248,250,252,0.7)',
-              marginBottom: '0.25rem',
-              fontWeight: 600,
-            }}
-          >
-            Konu
-          </label>
-          <input
-            type="text"
-            placeholder="Örn: Sınıf ortamı, ders anlatımı..."
-            value={form.subject}
-            onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
-            className="w-full text-sm"
-            style={{
-              padding: '0.55rem 0.75rem',
-              borderRadius: 12,
-              border: '1px solid rgba(148,163,184,0.4)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
-            }}
-          />
-        </div>
+        {error && <div className="complaint-alert complaint-alert--error">{error}</div>}
+        {success && <div className="complaint-alert complaint-alert--success">{success}</div>}
 
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '0.75rem',
-              color: 'rgba(248,250,252,0.7)',
-              marginBottom: '0.25rem',
-              fontWeight: 600,
-            }}
-          >
-            Açıklama
-          </label>
-          <textarea
-            placeholder="Geri bildiriminizi mümkün olduğunca detaylı yazın."
-            value={form.body}
-            onChange={(e) => setForm((p) => ({ ...p, body: e.target.value }))}
-            rows={5}
-            className="w-full text-sm"
-            style={{
-              resize: 'vertical',
-              padding: '0.6rem 0.75rem',
-              borderRadius: 12,
-              border: '1px solid rgba(148,163,184,0.4)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
-              minHeight: 96,
-            }}
-          />
-        </div>
-
-        {error && <div className="error">{error}</div>}
-        {success && (
-          <div style={{ color: '#22c55e', fontSize: '0.85rem', fontWeight: 500 }}>{success}</div>
-        )}
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div className="complaint-actions">
           <button
             type="button"
-            className="primary-btn"
+            className="primary-btn complaint-submit"
             onClick={() => handleSubmit().catch(() => {})}
             disabled={saving}
           >

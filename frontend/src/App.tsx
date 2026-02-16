@@ -50,14 +50,15 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const stored = window.localStorage.getItem('theme_mode');
     if (stored === 'dark') return true;
     if (stored === 'light') return false;
-    return window.matchMedia &&
-      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
 
   React.useEffect(() => {
     const root = document.documentElement;
     root.dataset.theme = isDark ? 'dark' : 'light';
-    window.localStorage.setItem('theme_mode', isDark ? 'dark' : 'light');
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('theme_mode', isDark ? 'dark' : 'light');
+    }
   }, [isDark]);
 
   const panelTitle =
@@ -124,16 +125,6 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             </Link>
           </div>
           <div className="topbar-right">
-            <div className="topbar-theme">
-              <button
-                type="button"
-                className="theme-toggle"
-                onClick={() => setIsDark((prev) => !prev)}
-                aria-label={isDark ? 'Açık tema' : 'Koyu tema'}
-              >
-                {isDark ? <Sun size={16} /> : <Moon size={16} />}
-              </button>
-            </div>
             {user ? (
               <>
                 {showReadingModeButton && (
@@ -149,6 +140,18 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     }}
                   >
                     <BookOpen size={18} />
+                  </button>
+                )}
+                {/* Tema ikonu – okuma modunun yanında, tıklanarak tema değiştirilebilir */}
+                {!isAuthRoute && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    aria-label={isDark ? 'Aydınlık temaya geç' : 'Karanlık temaya geç'}
+                    onClick={() => setIsDark((prev) => !prev)}
+                    style={{ padding: '0.5rem' }}
+                  >
+                    {isDark ? <Moon size={18} /> : <Sun size={18} />}
                   </button>
                 )}
                 {panelTitle && user.role !== 'admin' && /^\/(teacher|student|parent)/.test(location.pathname) && (

@@ -355,7 +355,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
                   height: '3rem',
                   borderRadius: '50%',
                   objectFit: 'cover',
-                  border: '2px solid rgba(255,255,255,0.1)',
+                  border: '2px solid var(--glass-border)',
                 }}
               />
             ) : (

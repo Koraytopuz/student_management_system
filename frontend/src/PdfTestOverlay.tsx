@@ -277,12 +277,12 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
         style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(15,23,42,0.95)',
+          background: 'var(--ui-modal-backdrop-strong)',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
           zIndex: 60,
-          color: '#e5e7eb',
+          color: 'var(--color-text-main)',
         }}
       >
         <div style={{ textAlign: 'center' }}>
@@ -298,7 +298,7 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
         style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(15,23,42,0.95)',
+          background: 'var(--ui-modal-backdrop-strong)',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
@@ -309,11 +309,11 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
         <div
           style={{
             maxWidth: 420,
-            background: '#0b1220',
+            background: 'var(--ui-modal-surface)',
             borderRadius: 16,
             padding: '1.5rem',
             border: '1px solid rgba(239,68,68,0.5)',
-            color: '#e5e7eb',
+            color: 'var(--color-text-main)',
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: '0.5rem', color: '#fca5a5' }}>
@@ -324,11 +324,6 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
             type="button"
             className="ghost-btn"
             onClick={onClose}
-            style={{
-              border: '1px solid rgba(148,163,184,0.9)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
-            }}
           >
             Kapat
           </button>
@@ -343,14 +338,14 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
         style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(15,23,42,0.95)',
+          background: 'var(--ui-modal-backdrop-strong)',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
           zIndex: 60,
         }}
       >
-        <div style={{ color: '#e5e7eb', textAlign: 'center' }}>
+        <div style={{ color: 'var(--color-text-main)', textAlign: 'center' }}>
           <p>Bu PDF dosyasında sayfa bulunamadı.</p>
           <button type="button" className="ghost-btn" onClick={onClose}>
             Kapat
@@ -369,14 +364,14 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
           zIndex: 60,
           display: 'flex',
           flexDirection: 'column',
-          background: '#0b1220',
-          color: '#e5e7eb',
+          background: 'var(--ui-modal-surface)',
+          color: 'var(--color-text-main)',
         }}
       >
         <div
           style={{
             padding: '0.75rem 1rem',
-            borderBottom: '1px solid rgba(55,65,81,0.8)',
+            borderBottom: '1px solid var(--ui-modal-border)',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -419,11 +414,6 @@ export const PdfTestOverlay: React.FC<PdfTestOverlayProps> = ({
             type="button"
             onClick={onClose}
             className="ghost-btn"
-            style={{
-              border: '1px solid rgba(148,163,184,0.9)',
-              background: 'rgba(15,23,42,0.9)',
-              color: '#e5e7eb',
-            }}
           >
             Kapat
           </button>

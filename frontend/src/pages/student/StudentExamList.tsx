@@ -105,10 +105,12 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Sınav Sonuçlarım ve Analizler</h2>
-      </div>
+    <GlassCard
+      className="exam-list-card"
+      title="Sınav Sonuçlarım ve Analizler"
+      subtitle="Girdiğin sınavların sonuçlarını ve analizlerini burada görebilirsin"
+    >
+      <div className="space-y-6">
 
       {/* Bekleyen Sınavlar - Sınıfa atanmış, henüz sonuç girilmemiş */}
       {assignedExams.length > 0 && (
@@ -208,6 +210,7 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
         </div>
       )}
       </div>
-    </div>
+      </div>
+    </GlassCard>
   );
 };

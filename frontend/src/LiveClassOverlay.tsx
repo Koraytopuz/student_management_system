@@ -38,7 +38,8 @@ type LiveClassOverlayProps = {
   meetingId?: string;
   /** Backend API için auth token (localStorage'dan bağımsız) */
   authToken?: string;
-  onClose: () => void;
+  /** reason: 'teacher_missing' = öğretmen yayında değil, ana sayfada uyarı gösterilebilir */
+  onClose: (reason?: 'teacher_missing') => void;
 };
 
 type Toast = {
@@ -164,7 +165,7 @@ const LiveClassInner: React.FC<{
   title?: string;
   meetingId?: string;
   authToken?: string;
-  onClose: () => void;
+  onClose: (reason?: 'teacher_missing') => void;
 }> = ({ role, title, meetingId, authToken, onClose }) => {
   // Room context available if needed
   useRoomContext();
@@ -260,6 +261,46 @@ const LiveClassInner: React.FC<{
   };
 
   const allParticipants = [localParticipantData, ...remoteParticipants];
+
+  // Öğrenci, öğretmen gelmeden odaya girmesin (öğretmen başlatmadı/katılmadı)
+  const [teacherMissing, setTeacherMissing] = useState(false);
+  const teacherWaitTimeoutRef = useRef<number | null>(null);
+  const remoteCountRef = useRef<number>(0);
+
+  useEffect(() => {
+    remoteCountRef.current = remoteParticipants.length;
+  }, [remoteParticipants.length]);
+
+  useEffect(() => {
+    if (role !== 'student') return;
+    if (!identity) return;
+    if (sessionEnded) return;
+    if (teacherMissing) return;
+
+    // Öğretmen veya başka bir katılımcı geldiyse bekleme iptal
+    if (remoteParticipants.length > 0) {
+      if (teacherWaitTimeoutRef.current != null) {
+        window.clearTimeout(teacherWaitTimeoutRef.current);
+        teacherWaitTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (teacherWaitTimeoutRef.current == null) {
+      teacherWaitTimeoutRef.current = window.setTimeout(() => {
+        if (remoteCountRef.current === 0) {
+          setTeacherMissing(true);
+        }
+      }, 4500);
+    }
+
+    return () => {
+      if (teacherWaitTimeoutRef.current != null) {
+        window.clearTimeout(teacherWaitTimeoutRef.current);
+        teacherWaitTimeoutRef.current = null;
+      }
+    };
+  }, [role, identity, sessionEnded, teacherMissing, remoteParticipants.length]);
 
   const filteredParticipants = allParticipants.filter((p) =>
     p.name.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -1508,11 +1549,7 @@ const LiveClassInner: React.FC<{
 
       {/* Control Bar */}
       <div className="live-control-bar">
-        <div className="live-control-bar-left">
-          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem', fontFamily: 'monospace', letterSpacing: '1px' }}>
-            {meetingCode}
-          </span>
-        </div>
+        <div className="live-control-bar-left" />
 
         {/* Center Controls */}
         <button
@@ -1610,40 +1647,7 @@ const LiveClassInner: React.FC<{
           </button>
         )}
 
-        {role === 'student' && (
-          <button
-            className={`control-btn ${assignmentsOpen ? 'control-btn--active' : ''}`}
-            onClick={() => {
-              setAssignmentsOpen(!assignmentsOpen);
-              if (chatOpen) setChatOpen(false);
-              if (participantsOpen) setParticipantsOpen(false);
-            }}
-            title="Ödevler"
-            style={{ position: 'relative' }}
-          >
-            <span style={{ fontSize: '20px', fontWeight: 'bold' }}>📚</span>
-            {pendingAssignments.length > 0 && (
-              <span style={{
-                position: 'absolute',
-                top: '4px',
-                right: '4px',
-                background: '#ea4335',
-                color: '#fff',
-                borderRadius: '50%',
-                width: '18px',
-                height: '18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '11px',
-                fontWeight: 'bold',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-              }}>
-                {pendingAssignments.length}
-              </span>
-            )}
-          </button>
-        )}
+        {/* Student assignments control intentionally removed */}
 
         <button className="control-btn control-btn--danger" onClick={handleClose} title="Toplantıdan çık">
           <PhoneOff size={24} strokeWidth={2} />
@@ -1661,6 +1665,36 @@ const LiveClassInner: React.FC<{
           {/* Right side empty for now */}
         </div>
       </div>
+
+      {/* Teacher not started / not joined yet (Student) */}
+      {role === 'student' && teacherMissing && !sessionEnded && (
+        <div
+          className="ui-modal-overlay ui-modal-overlay--strong"
+          style={{ zIndex: 210 }}
+          onClick={() => onClose('teacher_missing')}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="ui-modal"
+            style={{ width: 'min(520px, 94vw)', padding: '1.25rem' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="ui-modal-title" style={{ marginBottom: '0.35rem' }}>
+              Katılım mümkün değil
+            </div>
+            <div className="ui-modal-subtitle" style={{ marginBottom: '1rem' }}>
+              Canlı dersiniz öğretmen tarafından başlatılmamıştır. Lütfen öğretmeninizin derse
+              katılmasını bekleyin ve tekrar deneyin.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" className="primary-btn" onClick={() => onClose('teacher_missing')}>
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Session Ended Modal */}
       {sessionEnded && (

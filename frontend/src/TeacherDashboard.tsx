@@ -146,7 +146,7 @@ type TeacherMeetingDraft = {
   subjectName?: string;
 };
 
-const ALL_GRADES: string[] = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'];
+const ALL_GRADES: string[] = ['12', '11', '10', '9', '8', '7', '6', '5', '4', 'Mezun'];
 
 type AiGeneratedQuestion = {
   index: number;
@@ -1582,6 +1582,7 @@ export const TeacherDashboard: React.FC = () => {
           token={token}
           students={students}
           allowedGrades={teacherAssignedGrades}
+          mode="teacher"
         />
       )}
       {activeTab === 'support' && (
@@ -2460,15 +2461,49 @@ const TeacherTests: React.FC<{
       .then((subjects) => {
         setAiGenSubjects(subjects);
         if (subjects.length > 0) {
-           const exists = subjects.some(s => s.id === aiGenSubject);
-           if (!exists) {
-             setAiGenSubject(subjects[0].id);
-           }
+          // Önce öğretmenin branşına ait dersleri filtrele
+          const filtered =
+            allowedSubjectNames.length === 0
+              ? subjects
+              : subjects.filter((sub) =>
+                  allowedSubjectNames.some(
+                    (n) => n.trim().toLowerCase() === sub.name.trim().toLowerCase(),
+                  ),
+                );
+
+          const candidateList = filtered.length > 0 ? filtered : subjects;
+          const exists = candidateList.some((s) => s.id === aiGenSubject);
+          if (!exists && candidateList[0]) {
+            setAiGenSubject(candidateList[0].id);
+          }
         }
       })
       .catch(() => setAiGenSubjects([]))
       .finally(() => setAiGenSubjectsLoading(false));
-  }, [token, aiGenGrade]);
+  }, [token, aiGenGrade, allowedSubjectNames, aiGenSubject]);
+
+  // Öğretmenin yetkili olduğu sınıflara göre AI sınıf seçenekleri
+  const aiGradeOptions = useMemo(() => {
+    const hasLise =
+      allowedGrades.length === 0 ||
+      allowedGrades.some((g) => ['9', '10', '11', '12'].includes(g));
+    return GRADE_OPTIONS.filter((opt) => {
+      if (opt.isLgsOrYks) return hasLise; // TYT/AYT sadece 9–12 öğretmenleri
+      if (allowedGrades.length === 0) return true;
+      return allowedGrades.includes(opt.value);
+    });
+  }, [allowedGrades]);
+
+  // AI için dersleri, öğretmenin branşına göre filtrele
+  const filteredAiGenSubjects = useMemo(() => {
+    if (aiGenSubjects.length === 0) return [];
+    if (allowedSubjectNames.length === 0) return aiGenSubjects;
+    return aiGenSubjects.filter((sub) =>
+      allowedSubjectNames.some(
+        (n) => n.trim().toLowerCase() === sub.name.trim().toLowerCase(),
+      ),
+    );
+  }, [aiGenSubjects, allowedSubjectNames]);
 
   // --- Asset Upload için Müfredat Konuları ve Dersleri ---
   const [assetCurriculumSubjects, setAssetCurriculumSubjects] = useState<Array<{ id: string; name: string }>>([]);
@@ -2876,36 +2911,26 @@ const TeacherTests: React.FC<{
           </div>
           {expandedCards.has('ai-generate') && (
             <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-              <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+            <div style={{ display: 'grid', gap: '0.6rem', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
             <select value={aiGenGrade} onChange={(e) => setAiGenGrade(e.target.value)}>
-              <option value="4">4. Sınıf</option>
-              <option value="5">5. Sınıf</option>
-              <option value="6">6. Sınıf</option>
-              <option value="7">7. Sınıf</option>
-              <option value="8">8. Sınıf</option>
-              <option value="9">9. Sınıf</option>
-              <option value="10">10. Sınıf</option>
-              <option value="11">11. Sınıf</option>
-              <option value="12">12. Sınıf</option>
-              <option value="TYT">TYT</option>
-              <option value="AYT">AYT</option>
+              <option value="">{aiGradeOptions.length === 0 ? 'Yetkili sınıf yok' : 'Sınıf seçin'}</option>
+              {aiGradeOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
             <select value={aiGenSubject} onChange={(e) => setAiGenSubject(e.target.value)}>
               {aiGenSubjectsLoading ? (
                 <option>Yükleniyor...</option>
-              ) : aiGenSubjects.length > 0 ? (
-                aiGenSubjects.map((sub) => (
+              ) : filteredAiGenSubjects.length > 0 ? (
+                filteredAiGenSubjects.map((sub) => (
                   <option key={sub.id} value={sub.id}>
                     {sub.name}
                   </option>
                 ))
               ) : (
-                <>
-                  <option value="sub_matematik">Matematik</option>
-                  <option value="sub_fizik">Fizik</option>
-                  <option value="sub_biyoloji">Biyoloji</option>
-                  <option value="sub_kimya">Kimya</option>
-                </>
+                <option value="">{allowedSubjectNames.length === 0 ? 'Ders seçin' : 'Branşınıza ait ders bulunamadı'}</option>
               )}
             </select>
             
@@ -3294,15 +3319,15 @@ const TeacherTests: React.FC<{
               value={assetDraft.gradeLevel}
               onChange={(e) => setAssetDraft((p) => ({ ...p, gradeLevel: e.target.value }))}
             >
-              <option value="4">4. Sınıf</option>
-              <option value="5">5. Sınıf</option>
-              <option value="6">6. Sınıf</option>
-              <option value="7">7. Sınıf</option>
-              <option value="8">8. Sınıf</option>
-              <option value="9">9. Sınıf</option>
-              <option value="10">10. Sınıf</option>
-              <option value="11">11. Sınıf</option>
               <option value="12">12. Sınıf</option>
+              <option value="11">11. Sınıf</option>
+              <option value="10">10. Sınıf</option>
+              <option value="9">9. Sınıf</option>
+              <option value="8">8. Sınıf</option>
+              <option value="7">7. Sınıf</option>
+              <option value="6">6. Sınıf</option>
+              <option value="5">5. Sınıf</option>
+              <option value="4">4. Sınıf</option>
               <option value="TYT">TYT</option>
               <option value="AYT">AYT</option>
             </select>
@@ -3673,15 +3698,15 @@ const TeacherOverview: React.FC<{
 };
 
 const GRADE_OPTIONS: { value: string; label: string; isLgsOrYks?: boolean }[] = [
-  { value: '4', label: '4. Sınıf' },
-  { value: '5', label: '5. Sınıf' },
-  { value: '6', label: '6. Sınıf' },
-  { value: '7', label: '7. Sınıf' },
-  { value: '8', label: '8. Sınıf (LGS)' },
-  { value: '9', label: '9. Sınıf' },
-  { value: '10', label: '10. Sınıf' },
-  { value: '11', label: '11. Sınıf' },
   { value: '12', label: '12. Sınıf' },
+  { value: '11', label: '11. Sınıf' },
+  { value: '10', label: '10. Sınıf' },
+  { value: '9', label: '9. Sınıf' },
+  { value: '8', label: '8. Sınıf (LGS)' },
+  { value: '7', label: '7. Sınıf' },
+  { value: '6', label: '6. Sınıf' },
+  { value: '5', label: '5. Sınıf' },
+  { value: '4', label: '4. Sınıf' },
   { value: 'TYT', label: 'TYT', isLgsOrYks: true },
   { value: 'AYT', label: 'AYT', isLgsOrYks: true },
 ];
@@ -4000,6 +4025,7 @@ const TeacherCalendar: React.FC<{
   announcementError,
 }) => {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedAnnouncementId, setSelectedAnnouncementId] = useState<string | null>(null);
 
   const announcementGradeLevels = useMemo(() => {
     const set = new Set<string>();
@@ -4267,23 +4293,58 @@ const TeacherCalendar: React.FC<{
         <div className="calendar-recent-announcements">
           <div className="calendar-recent-title">Son Duyurular</div>
           <div className="list-stack">
-            {announcements.slice(0, 3).map((announcement) => (
-              <div className="list-row" key={announcement.id}>
-                <div>
-                  <strong>{announcement.title}</strong>
-                  <small>
-                    {announcement.scheduledDate
-                      ? `Planlanan: ${new Date(announcement.scheduledDate).toLocaleString('tr-TR')}`
-                      : 'Taslak'}{' '}
-                    — {new Date(announcement.createdAt).toLocaleDateString('tr-TR')}
-                  </small>
+            {announcements.slice(0, 3).map((announcement) => {
+              const isSelected = selectedAnnouncementId === announcement.id;
+              return (
+                <div
+                  className={`list-row ${isSelected ? 'list-row--selected' : ''}`}
+                  key={announcement.id}
+                  onClick={() =>
+                    setSelectedAnnouncementId(isSelected ? null : announcement.id)
+                  }
+                  style={{ cursor: 'pointer' }}
+                >
+                  <div>
+                    <strong>{announcement.title}</strong>
+                    <small>
+                      {announcement.scheduledDate
+                        ? `Planlanan: ${new Date(announcement.scheduledDate).toLocaleString('tr-TR')}`
+                        : 'Taslak'}{' '}
+                      — {new Date(announcement.createdAt).toLocaleDateString('tr-TR')}
+                    </small>
+                  </div>
+                  {isSelected && (
+                    <span
+                      className="calendar-event-actions"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => {
+                          // Gelecekte backend desteği geldğinde gerçek düzenleme burada yapılabilir
+                          // Şimdilik kullanıcıya bilgi verelim.
+                          // eslint-disable-next-line no-alert
+                          alert('Duyurular için düzenleme şu an desteklenmiyor.');
+                        }}
+                      >
+                        Düzenle
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn calendar-event-delete"
+                        onClick={() => {
+                          // eslint-disable-next-line no-alert
+                          alert('Duyurular için silme şu an desteklenmiyor.');
+                        }}
+                      >
+                        Sil
+                      </button>
+                    </span>
+                  )}
                 </div>
-                <TagChip
-                  label={announcement.status === 'draft' ? 'Taslak' : 'Planlandı'}
-                  tone={announcement.status === 'draft' ? 'info' : 'warning'}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -4611,12 +4672,12 @@ const TeacherMeetingModal: React.FC<{
 }) => {
   if (!open) return null;
 
-  // Sınıfları sayısal sıraya göre sırala ve özel durumları ekle
+  // Sınıfları büyükten küçüğe sırala (12, 11, 10, ..., 4) ve özel durumları ekle
   const sortedGradeOptions = useMemo(() => {
     const numericGrades = allowedGrades
       .filter((g) => g !== 'Mezun' && !isNaN(Number(g)))
       .map((g) => Number(g))
-      .sort((a, b) => a - b)
+      .sort((a, b) => b - a)
       .map((g) => String(g));
     
     const specialGrades: string[] = [];
@@ -4627,11 +4688,10 @@ const TeacherMeetingModal: React.FC<{
       specialGrades.push('TYT', 'AYT');
     }
     
-    // 8. sınıf varsa LGS ekle (8 zaten listede olacak, LGS ayrı bir seçenek değil)
     // Mezun varsa ekle
     const otherGrades = allowedGrades.filter((g) => g === 'Mezun');
     
-    return [...numericGrades, ...otherGrades, ...specialGrades];
+    return [...numericGrades, ...specialGrades, ...otherGrades];
   }, [allowedGrades]);
 
   const handleFieldChange = <K extends keyof TeacherMeetingDraft>(key: K, value: TeacherMeetingDraft[K]) => {

@@ -1,19 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Play,
-  Pause,
-  RotateCcw,
-  CloudRain,
-  Coffee,
-  Music,
-  Flame,
-  Zap,
-  Target,
-  Sparkles,
-  Plus,
-  Minus,
-} from 'lucide-react';
+import { Play, Pause, RotateCcw, Flame, Zap, Target, Sparkles, Plus, Minus, CloudRain } from 'lucide-react';
 
 const DEFAULT_DURATION_MINUTES = 25;
 const MIN_DURATION_MINUTES = 5;
@@ -31,29 +18,14 @@ const FOCUS_LEVELS: { level: number; title: string }[] = [
   { level: 6, title: 'Efsane' },
 ];
 
-const getSoundUrl = (id: string) => {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '';
-  return `${base}/sounds/${id}.mp3`;
-};
-
-// Telifsiz ses kaynakları - public/sounds/ klasöründeki dosyalar kullanılır
-const AMBIENT_OPTIONS: Array<{
-  id: string;
-  label: string;
-  icon: typeof CloudRain;
-  url: string;
-}> = [
-  { id: 'rain', label: 'Yağmur', icon: CloudRain, url: getSoundUrl('rain') },
-  { id: 'cafe', label: 'Kafe', icon: Coffee, url: getSoundUrl('cafe') },
-  { id: 'lofi', label: 'Lo-Fi', icon: Music, url: getSoundUrl('lofi') },
-];
-
 const STORAGE_KEY = 'focus_zone_data';
 
 type FocusZoneData = {
   totalXp: number;
   dailyStreak: number;
-  lastCompletedDate: string | null;
+  // Son giriş yapılan gün (YYYY-MM-DD). Öğrenci o gün en az bir kez
+  // Focus Zone ekranını açtığında güncellenir ve günlük giriş serisini hesaplamak için kullanılır.
+  lastVisitDate: string | null;
 };
 
 function loadFocusData(): FocusZoneData {
@@ -64,13 +36,14 @@ function loadFocusData(): FocusZoneData {
       return {
         totalXp: parsed.totalXp ?? 0,
         dailyStreak: parsed.dailyStreak ?? 0,
-        lastCompletedDate: parsed.lastCompletedDate ?? null,
+        // Eski verilerde sadece lastCompletedDate olabilir; onu lastVisitDate olarak taşıyoruz.
+        lastVisitDate: (parsed as any).lastVisitDate ?? (parsed as any).lastCompletedDate ?? null,
       };
     }
   } catch {
     // ignore
   }
-  return { totalXp: 0, dailyStreak: 0, lastCompletedDate: null };
+  return { totalXp: 0, dailyStreak: 0, lastVisitDate: null };
 }
 
 function saveFocusData(data: FocusZoneData) {
@@ -108,34 +81,30 @@ export const FocusZone: React.FC<{
   const [focusData, setFocusData] = useState<FocusZoneData>(loadFocusData);
   const [subject, setSubject] = useState('');
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
-  const [ambient, setAmbient] = useState<string | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [youtubeEmbedUrl, setYoutubeEmbedUrl] = useState<string | null>(null);
+  const [youtubeError, setYoutubeError] = useState<string | null>(null);
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevXpRef = useRef(focusData.totalXp);
+  const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null);
+  // Web Audio API tabanlı yağmur sesi
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const rainSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const [isRainPlaying, setIsRainPlaying] = useState(false);
+  const [rainError, setRainError] = useState<string | null>(null);
 
   const { level, title, progressPct } = getLevelAndTitle(focusData.totalXp);
   const progress = totalSeconds > 0 ? 1 - secondsLeft / totalSeconds : 0;
 
   const completeSession = useCallback(() => {
     const newXp = focusData.totalXp + XP_PER_SESSION;
-    const today = new Date().toISOString().slice(0, 10);
-
-    let newStreak = focusData.dailyStreak;
-    if (focusData.lastCompletedDate) {
-      const last = new Date(focusData.lastCompletedDate);
-      const diff = Math.floor((Date.now() - last.getTime()) / (24 * 60 * 60 * 1000));
-      if (diff === 1) newStreak += 1;
-      else if (diff > 1) newStreak = 1;
-    } else {
-      newStreak = 1;
-    }
-
     const next = {
       totalXp: newXp,
-      dailyStreak: newStreak,
-      lastCompletedDate: today,
+      // Günlük giriş serisi artık giriş/ziyaret bazlı olarak ayrı bir effect ile güncelleniyor.
+      dailyStreak: focusData.dailyStreak,
+      lastVisitDate: focusData.lastVisitDate,
     };
     setFocusData(next);
     saveFocusData(next);
@@ -152,7 +121,7 @@ export const FocusZone: React.FC<{
 
     setSecondsLeft(durationMinutes * 60);
     setIsRunning(false);
-  }, [focusData.totalXp, focusData.dailyStreak, focusData.lastCompletedDate, onXpEarned, durationMinutes]);
+  }, [focusData.totalXp, focusData.dailyStreak, focusData.lastVisitDate, onXpEarned, durationMinutes]);
 
   useEffect(() => {
     if (isRunning && secondsLeft > 0) {
@@ -190,34 +159,162 @@ export const FocusZone: React.FC<{
     setDurationMinutes((m) => Math.max(MIN_DURATION_MINUTES, m - DURATION_STEP));
   };
 
+  const handleToggleRainSound = async () => {
+    setRainError(null);
+
+    // Zaten çalıyorsa durdur
+    if (isRainPlaying) {
+      try {
+        if (rainSourceRef.current) {
+          rainSourceRef.current.stop();
+          rainSourceRef.current.disconnect();
+          rainSourceRef.current = null;
+        }
+      } catch {
+        // ignore
+      }
+      setIsRainPlaying(false);
+      return;
+    }
+
+    // Web Audio ile basit yağmur sesi (white noise + gain)
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext ||
+          (window as any).webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (!ctx) {
+        throw new Error('AudioContext desteklenmiyor');
+      }
+
+      const bufferSize = ctx.sampleRate * 2; // 2 saniyelik loop
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i += 1) {
+        // Yumuşak white noise
+        data[i] = (Math.random() * 2 - 1) * 0.3;
+      }
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.35;
+      source.connect(gain).connect(ctx.destination);
+      source.start(0);
+
+      rainSourceRef.current = source;
+      setIsRainPlaying(true);
+    } catch (err) {
+      console.warn('[FocusZone] Yağmur sesi çalınamadı (Web Audio):', err);
+      setIsRainPlaying(false);
+      setRainError(
+        'Tarayıcınız yağmur sesini çalamıyor veya ses desteği kapalı.',
+      );
+    }
+  };
+
+  // Öğrencinin günlük giriş serisini (streak) hesapla.
+  // Mantık: Öğrenci her gün en az bir kez Focus Zone ekranına girdiğinde,
+  // o gün için seri +1 olur. Gün atlanırsa seri 1'e sıfırlanır.
+  useEffect(() => {
+    const today = new Date();
+    const todayKey = today.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    setFocusData((prev) => {
+      // Aynı gün içinde tekrar girilirse hiçbir şey yapma
+      if (prev.lastVisitDate === todayKey) return prev;
+
+      let newStreak = prev.dailyStreak || 0;
+      if (prev.lastVisitDate) {
+        const last = new Date(prev.lastVisitDate);
+        // Farkı tam gün cinsinden hesapla
+        const diffDays = Math.floor(
+          (today.setHours(0, 0, 0, 0) - last.setHours(0, 0, 0, 0)) / (24 * 60 * 60 * 1000),
+        );
+
+        if (diffDays === 1) {
+          // Bir önceki günden sonra aralıksız devam: seri +1
+          newStreak += 1;
+        } else {
+          // Gün atlanmış veya ileri tarih: seriyi 1'den yeniden başlat
+          newStreak = 1;
+        }
+      } else {
+        // İlk kez giriş: seri 1
+        newStreak = 1;
+      }
+
+      const next: FocusZoneData = {
+        totalXp: prev.totalXp,
+        dailyStreak: newStreak,
+        lastVisitDate: todayKey,
+      };
+      saveFocusData(next);
+      return next;
+    });
+  }, []);
+
   // Süre değişince (ve çalışmıyorken) timer'ı güncelle
   useEffect(() => {
     if (!isRunning) setSecondsLeft(durationMinutes * 60);
   }, [durationMinutes, isRunning]);
 
-  // Ambient ses çalma
+  // Bileşen unmount olduğunda Web Audio kaynaklarını temizle
   useEffect(() => {
-    const opt = AMBIENT_OPTIONS.find((a) => a.id === ambient);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-      audioRef.current = null;
-    }
-    if (ambient && opt?.url) {
-      const audio = new Audio(opt.url);
-      audio.loop = true;
-      audio.volume = 0.4;
-      audioRef.current = audio;
-      audio.play().catch(() => {});
-    }
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        audioRef.current = null;
+      try {
+        if (rainSourceRef.current) {
+          rainSourceRef.current.stop();
+          rainSourceRef.current.disconnect();
+          rainSourceRef.current = null;
+        }
+        if (audioCtxRef.current) {
+          audioCtxRef.current.close();
+          audioCtxRef.current = null;
+        }
+      } catch {
+        // ignore
       }
     };
-  }, [ambient]);
+  }, []);
+
+  // YouTube odak sesi – iframe embed
+  const handleToggleYoutubeAudio = () => {
+    if (youtubeEmbedUrl) {
+      setYoutubeEmbedUrl(null);
+      setYoutubeError(null);
+      return;
+    }
+
+    const raw = youtubeUrl.trim();
+    if (!raw) {
+      setYoutubeError('Lütfen bir YouTube odak videosu URL\'si girin.');
+      return;
+    }
+
+    try {
+      let videoId: string | null = null;
+      if (raw.includes('youtube.com') || raw.includes('youtu.be')) {
+        const url = new URL(raw);
+        if (url.hostname.includes('youtu.be')) {
+          videoId = url.pathname.replace('/', '');
+        } else {
+          videoId = url.searchParams.get('v');
+        }
+      }
+      if (!videoId || !/^[a-zA-Z0-9_-]{6,}$/.test(videoId)) {
+        setYoutubeError('Geçerli bir YouTube video bağlantısı girin.');
+        return;
+      }
+      const embed = `https://www.youtube.com/embed/${videoId}?autoplay=1&loop=1&playlist=${videoId}`;
+      setYoutubeEmbedUrl(embed);
+      setYoutubeError(null);
+    } catch {
+      setYoutubeError('Geçerli bir YouTube video bağlantısı girin.');
+    }
+  };
 
   const isDark = document.documentElement.dataset.theme === 'dark';
 
@@ -740,41 +837,91 @@ export const FocusZone: React.FC<{
               opacity: 0.9,
             }}
           >
-            Ambient Mode
+            Odak Sesi
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {AMBIENT_OPTIONS.map((opt) => {
-              const Icon = opt.icon;
-              const active = ambient === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className="focus-ambient-btn"
-                  data-active={active ? 'true' : 'false'}
-                  onClick={() => setAmbient(active ? null : opt.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    padding: '0.65rem 1rem',
-                    borderRadius: 12,
-                    border: active ? '1px solid rgba(99,102,241,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                    background: active ? 'rgba(99,102,241,0.15)' : 'transparent',
-                    color: 'inherit',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem',
-                  }}
-                >
-                  <Icon size={20} opacity={active ? 1 : 0.7} />
-                  {opt.label}
-                </button>
-              );
-            })}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <label
+                style={{
+                  fontSize: '0.8rem',
+                  opacity: 0.8,
+                }}
+              >
+                YouTube odak videosu URL&apos;si
+              </label>
+              <input
+                type="text"
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                placeholder="Örn: https://www.youtube.com/watch?v=..."
+                style={{
+                  width: '100%',
+                  padding: '0.5rem 0.75rem',
+                  borderRadius: 10,
+                  border: '1px solid var(--ui-control-border)',
+                  background: 'var(--ui-control-bg)',
+                  color: 'var(--color-text-main)',
+                  fontSize: '0.85rem',
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={handleToggleYoutubeAudio}
+                style={{
+                  padding: '0.45rem 1rem',
+                  borderRadius: 999,
+                  fontSize: '0.85rem',
+                }}
+              >
+                {youtubeEmbedUrl ? 'Sesi Durdur' : 'Sesi Başlat'}
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.35rem' }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={handleToggleRainSound}
+                style={{
+                  padding: '0.45rem 1rem',
+                  borderRadius: 999,
+                  fontSize: '0.85rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  cursor: 'pointer',
+                }}
+              >
+                <CloudRain size={16} />
+                <span>{isRainPlaying ? 'Yağmuru Durdur' : 'Yağmur Sesi'}</span>
+              </button>
+              {rainError && (
+                <p style={{ margin: 0, fontSize: '0.75rem', color: '#ef4444' }}>
+                  {rainError}
+                </p>
+              )}
+            </div>
+            {youtubeError && (
+              <p style={{ fontSize: '0.75rem', color: '#ef4444' }}>{youtubeError}</p>
+            )}
+            {!youtubeError && !youtubeEmbedUrl && (
+              <p style={{ margin: 0, fontSize: '0.75rem', opacity: 0.65 }}>
+                YouTube sekmesindeki video sesi bu oturum boyunca arka planda çalar. Telifli
+                içeriklerde yalnızca kendi hesabınızla dinlediğinizden emin olun.
+              </p>
+            )}
+            {youtubeEmbedUrl && (
+              <iframe
+                ref={youtubeIframeRef}
+                src={youtubeEmbedUrl}
+                title="Odak sesi"
+                allow="autoplay; encrypted-media"
+                style={{ width: 0, height: 0, border: 'none', opacity: 0, pointerEvents: 'none' }}
+              />
+            )}
           </div>
-          <p style={{ margin: '1rem 0 0', fontSize: '0.75rem', opacity: 0.6 }}>
-            Sesler döngü halinde çalınır • Telifsiz kaynaklar
-          </p>
         </motion.div>
       </div>
 

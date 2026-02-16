@@ -41,6 +41,16 @@ export function getLiveKitUrl() {
   return livekitUrl;
 }
 
+/** Odada en az bir katılımcı (öğretmen) var mı kontrol et */
+export async function hasParticipantsInRoom(roomName: string): Promise<boolean> {
+  try {
+    const participants = await roomService.listParticipants(roomName);
+    return participants.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Tüm katılımcıların mikrofonlarını kapat (öğretmen için). TrackType.AUDIO = 0 */
 export async function muteAllParticipantsInRoom(roomName: string): Promise<{ muted: number }> {
   const participants = await roomService.listParticipants(roomName);

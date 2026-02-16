@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { MessageCircle, Search, Send, Users } from 'lucide-react';
 import {
-  createTeacherFeedback,
   getTeacherParents,
   sendTeacherMessage,
   type TeacherStudent,
 } from './api';
 import { GlassCard } from './components/DashboardPrimitives';
+import { sortGradeLevelsDescending } from './lib/utils';
 
 type ParentOperationsTabProps = {
   token: string | null;
@@ -26,15 +26,6 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
 
   // Detay ve mesaj alanı için seçimler
   const [selectedStudentId, setSelectedStudentId] = useState<string>(students[0]?.id ?? '');
-
-  // Veli notu taslağı
-  const [feedbackDraft, setFeedbackDraft] = useState({
-    type: 'general_feedback',
-    title: '',
-    content: '',
-  });
-  const [feedbackSaving, setFeedbackSaving] = useState(false);
-  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   // Veli mesajı durumu
   const [parents, setParents] = useState<
@@ -96,33 +87,6 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
     setParentMessageText('');
   }, [selectedStudentId, selectedGradeLevel]);
 
-  const handleCreateFeedback = async () => {
-    if (!token || !selectedStudentId) return;
-    const title = feedbackDraft.title.trim();
-    const content = feedbackDraft.content.trim();
-    if (!title || !content) {
-      setFeedbackError('Lütfen başlık ve içerik girin.');
-      return;
-    }
-    setFeedbackSaving(true);
-    setFeedbackError(null);
-    try {
-      await createTeacherFeedback(token, {
-        studentId: selectedStudentId,
-        type: feedbackDraft.type,
-        title,
-        content,
-      });
-      setFeedbackDraft({ type: 'general_feedback', title: '', content: '' });
-      // eslint-disable-next-line no-alert
-      alert('Değerlendirme kaydedildi. Sadece veli panelinde görüntülenir.');
-    } catch (e) {
-      setFeedbackError(e instanceof Error ? e.message : 'Kaydedilemedi.');
-    } finally {
-      setFeedbackSaving(false);
-    }
-  };
-
   const handleSendParentMessage = async () => {
     if (!token || !selectedStudentId || !selectedParentId || !parentMessageText.trim()) return;
     setSendingParentMessage(true);
@@ -152,15 +116,14 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
   const isClassSelected = selectedGradeLevel !== '';
   const selectedStudent = students.find((s) => s.id === selectedStudentId);
 
-  const uniqueAllowedGrades = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (allowedGrades.length > 0 ? allowedGrades : students.map((s) => s.gradeLevel).filter(Boolean)) as string[],
-        ),
+  const uniqueAllowedGrades = useMemo(() => {
+    const raw = Array.from(
+      new Set(
+        (allowedGrades.length > 0 ? allowedGrades : students.map((s) => s.gradeLevel).filter(Boolean)) as string[],
       ),
-    [allowedGrades, students],
-  );
+    );
+    return sortGradeLevelsDescending(raw);
+  }, [allowedGrades, students]);
 
   return (
     <div className="page-grid">

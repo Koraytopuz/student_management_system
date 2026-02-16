@@ -29,7 +29,7 @@ import {
 } from './types';
 import { getStudentBadgeProgress } from './services/badgeService';
 import { notifyParentsOfStudent } from './services/notificationService';
-import { createLiveKitToken, getLiveKitUrl } from './livekit';
+import { createLiveKitToken, getLiveKitUrl, hasParticipantsInRoom } from './livekit';
 import { callGemini } from './ai';
 
 const router = express.Router();
@@ -618,22 +618,54 @@ router.post(
       weeklyHours = 5,
       gradeLevel,
       subject,
+      subjectId,
     } = req.body as {
       focusTopic?: string;
       weeklyHours?: number;
       gradeLevel?: string;
       subject?: string;
+      subjectId?: string;
     };
     try {
+      // Eğer gradeLevel gönderilmediyse, öğrencinin profilinden al
+      const student =
+        !gradeLevel
+          ? await prisma.user.findUnique({
+              where: { id: studentId },
+              select: { gradeLevel: true },
+            })
+          : null;
+      const effectiveGradeLevel = (gradeLevel ?? student?.gradeLevel ?? '').trim();
+
       const [studentResults, watchRecords] = await Promise.all([
         prisma.testResult.findMany({
-          where: { studentId },
+          where: {
+            studentId,
+            ...(subjectId
+              ? {
+                  assignment: {
+                    test: {
+                      subjectId,
+                    },
+                  },
+                }
+              : {}),
+          },
           include: { assignment: { include: { test: true } } },
           orderBy: { completedAt: 'desc' },
           take: 20,
         }),
         prisma.watchRecord.findMany({
-          where: { studentId },
+          where: {
+            studentId,
+            ...(subjectId
+              ? {
+                  content: {
+                    subjectId,
+                  },
+                }
+              : {}),
+          },
           include: { content: true },
           orderBy: { lastWatchedAt: 'desc' },
           take: 15,
@@ -651,7 +683,7 @@ router.post(
 
       const context = `
 Öğrenci verileri:
-- Sınıf: ${gradeLevel || 'belirtilmedi'}
+- Sınıf: ${effectiveGradeLevel || 'belirtilmedi'}
 - Ders: ${subject || 'belirtilmedi'}
 - Son test sayısı: ${studentResults.length}
 - Ortalama puan: ${avgScore != null ? Math.round(avgScore) + '%' : 'veri yok'}
@@ -674,7 +706,7 @@ Planı şu formatta ver:
 
 ÖNEMLİ:
 - Eğer odak konu belirtilmişse, planın en az %70'i bu konu etrafında olsun; diğer konular destekleyici nitelikte kalsın.
-- Sınıf seviyesi (${gradeLevel || 'belirtilmedi'}) ve ders bilgisine (${subject || 'belirtilmedi'}) uygun, gerçekçi ve uygulanabilir öneriler ver.`;
+- Sınıf seviyesi (${effectiveGradeLevel || 'belirtilmedi'}) ve ders bilgisine (${subject || 'belirtilmedi'}) uygun, gerçekçi ve uygulanabilir öneriler ver.`;
       const result = await callGemini(prompt, {
         systemInstruction:
           'Sen deneyimli bir rehber öğretmensin. Öğrencilere gerçekçi, uygulanabilir ve motive edici çalışma planları hazırlarsın.',
@@ -686,7 +718,7 @@ Planı şu formatta ver:
         data: {
           studentId,
           focusTopic: focusTopic?.trim() || null,
-          gradeLevel: gradeLevel?.trim() || null,
+          gradeLevel: effectiveGradeLevel || null,
           subject: subject?.trim() || null,
           weeklyHours,
           content: result,
@@ -2617,6 +2649,14 @@ router.post(
     }
 
     const roomId = meeting.roomId;
+
+    // Öğretmen odada değilse öğrenci katılamaz (LiveKit odasında katılımcı yoksa)
+    const teacherInRoom = await hasParticipantsInRoom(roomId);
+    if (!teacherInRoom) {
+      return res
+        .status(409)
+        .json({ error: 'Canlı dersiniz öğretmen tarafından başlatılmamıştır.' });
+    }
 
     const token = await createLiveKitToken({
       roomName: roomId,

@@ -12,7 +12,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { downloadStudentStudyPlanPdf, getStudentStudyPlan, getStudentStudyPlans } from '../api';
+import {
+  downloadStudentStudyPlanPdf,
+  getStudentStudyPlan,
+  getStudentStudyPlans,
+  getStudentQuestionBankMeta,
+} from '../api';
 import type {
   StudentAssignment,
   StudentContent,
@@ -20,6 +25,7 @@ import type {
   TodoPriority,
   TodoStatus,
   StudentStudyPlan,
+  StudentQuestionBankSubjectMeta,
 } from '../api';
 
 export type PlannerCreatePayload = {
@@ -118,9 +124,26 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
   const [studyPlanGradeLevel, setStudyPlanGradeLevel] = useState(
     defaultGradeLevel ?? '9',
   );
-  const [studyPlanSubject, setStudyPlanSubject] = useState('');
+  // Çalışma planı için seçilen ders (subjectId) ve müfredat verileri
+  const [studyPlanSubject, setStudyPlanSubject] = useState(''); // subjectId
+  const [studyPlanSubjectName, setStudyPlanSubjectName] = useState(''); // serbest metin ders adı
+  const [studyPlanSubjects, setStudyPlanSubjects] = useState<
+    StudentQuestionBankSubjectMeta[]
+  >([]);
+  const [studyPlanSubjectsLoading, setStudyPlanSubjectsLoading] =
+    useState(false);
+  const [studyPlanTopics, setStudyPlanTopics] = useState<string[]>([]);
   const [studyPlans, setStudyPlans] = useState<StudentStudyPlan[]>([]);
   const [selectedStudyPlanId, setSelectedStudyPlanId] = useState<string | null>(null);
+  const [studyPlanModalOpen, setStudyPlanModalOpen] = useState(false);
+
+  // Planner sütunları ve detay kartı için genişlet/daralt halleri
+  const [expandedColumns, setExpandedColumns] = useState<Record<TodoStatus, boolean>>({
+    pending: false,
+    in_progress: false,
+    completed: false,
+  });
+  const [detailExpanded, setDetailExpanded] = useState(false);
 
   const [createDraft, setCreateDraft] = useState<{
     title: string;
@@ -183,6 +206,87 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
       priority: selectedTodo.priority,
     });
   }, [selectedTodo]);
+
+  // Çalışma planı modalı açıldığında öğrencinin sınıfına ait soru bankası derslerini yükle
+  useEffect(() => {
+    if (!token || !studyPlanOpen || !studyPlanGradeLevel) {
+      setStudyPlanSubjects([]);
+      setStudyPlanSubject('');
+      setStudyPlanTopics([]);
+      return;
+    }
+    setStudyPlanSubjectsLoading(true);
+    getStudentQuestionBankMeta(token, studyPlanGradeLevel)
+      .then((meta) => {
+        const list = meta?.subjects ?? [];
+        setStudyPlanSubjects(list);
+
+        if (list.length === 0) {
+          setStudyPlanSubject('');
+          setStudyPlanSubjectName('');
+          setStudyPlanTopics([]);
+          setStudyPlanFocusTopic('');
+          return;
+        }
+
+        // Mevcut seçim hala geçerliyse koru, aksi halde ilk dersi öneri olarak doldur
+        setStudyPlanSubject((prev) => {
+          if (prev && list.some((s) => s.subjectId === prev)) return prev;
+          return list[0].subjectId;
+        });
+        setStudyPlanSubjectName((prev) => {
+          if (prev && prev.trim().length > 0) return prev;
+          return list[0].subjectName;
+        });
+      })
+      .catch(() => {
+        setStudyPlanSubjects([]);
+        setStudyPlanTopics([]);
+      })
+      .finally(() => {
+        setStudyPlanSubjectsLoading(false);
+      });
+  }, [token, studyPlanOpen, studyPlanGradeLevel]);
+
+  // Seçilen derse göre müfredat konularını yükle
+  useEffect(() => {
+    if (
+      !studyPlanOpen ||
+      !studyPlanSubject ||
+      studyPlanSubjects.length === 0
+    ) {
+      setStudyPlanTopics([]);
+      return;
+    }
+
+    const selected = studyPlanSubjects.find(
+      (s) => s.subjectId === studyPlanSubject,
+    );
+    if (!selected) {
+      setStudyPlanTopics([]);
+      return;
+    }
+
+    const topics = selected.topics ?? [];
+    const prettyTopics = topics.map(
+      (t) => `${t.topic} (${t.questionCount})`,
+    );
+    setStudyPlanTopics(prettyTopics);
+
+    if (prettyTopics.length === 0) {
+      setStudyPlanFocusTopic('');
+      return;
+    }
+
+    setStudyPlanFocusTopic((prev) => {
+      if (prev && prettyTopics.includes(prev)) return prev;
+      return prettyTopics[0];
+    });
+  }, [
+    studyPlanOpen,
+    studyPlanSubject,
+    studyPlanSubjects,
+  ]);
 
   useEffect(() => {
     const loadPlans = async () => {
@@ -322,13 +426,22 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
     setStudyPlanLoading(true);
     setStudyPlanResult(null);
     try {
+      const selectedSubject = studyPlanSubjects.find(
+        (s) => s.subjectId === studyPlanSubject,
+      );
+      const subjectFromMeta = selectedSubject?.subjectName;
+      const subjectName =
+        studyPlanSubjectName.trim() || subjectFromMeta || undefined;
+
       const res = await getStudentStudyPlan(token, {
         focusTopic: studyPlanFocusTopic.trim() || undefined,
         weeklyHours: studyPlanWeeklyHours,
         gradeLevel: studyPlanGradeLevel,
-        subject: studyPlanSubject.trim() || undefined,
+        subject: subjectName,
+        subjectId: selectedSubject?.subjectId,
       });
       setStudyPlanResult(res.studyPlan);
+      setStudyPlanModalOpen(true);
       // Yeni planı listeye ekle
       setStudyPlans((prev) => [
         {
@@ -386,23 +499,9 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
             <span className="planner-summary-label">Tamamlanan</span>
             <strong>{summary.completed}</strong>
           </div>
-          <div className="planner-summary-card">
-            <span className="planner-summary-label">Riski Görev</span>
-            <strong>{summary.overdue}</strong>
-          </div>
         </div>
 
         <div className="planner-controls">
-          <div className="planner-search">
-            <Search size={16} />
-            <input
-              type="search"
-              placeholder="Görev ara..."
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-            />
-          </div>
-
           <select
             value={priorityFilter}
             onChange={(event) =>
@@ -418,15 +517,16 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
           {token && (
             <button
               type="button"
-              className="ghost-btn"
+              className="primary-btn"
               onClick={() => {
                 setStudyPlanOpen(true);
                 setStudyPlanResult(null);
               }}
               style={{
-                border: '1px solid rgba(99,102,241,0.6)',
-                color: '#a5b4fc',
-                background: 'rgba(99,102,241,0.1)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                fontSize: '0.85rem',
               }}
             >
               <Sparkles size={16} /> AI Çalışma Planı
@@ -572,6 +672,72 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
           </form>
         )}
 
+        {/* AI Çalışma Planları - Kart listesi */}
+        {token && studyPlans.length > 0 && (
+          <section className="planner-studyplans-section">
+            <h3 className="planner-studyplans-title">AI Çalışma Planları</h3>
+            <p className="planner-studyplans-subtitle">
+              Önceden oluşturduğun çalışma planlarına buradan hızlıca ulaş.
+            </p>
+            <div className="planner-studyplans-grid">
+              {studyPlans.map((plan) => (
+                <div
+                  key={plan.id}
+                  className={`planner-studyplan-card${
+                    selectedStudyPlanId === plan.id ? ' planner-studyplan-card-active' : ''
+                  }`}
+                >
+                  <div className="planner-studyplan-header">
+                    <div>
+                      <div className="planner-studyplan-topic">
+                        {plan.focusTopic && plan.focusTopic.trim()
+                          ? plan.focusTopic
+                          : 'Genel çalışma planı'}
+                      </div>
+                      <div className="planner-studyplan-meta">
+                        Haftalık hedef: {plan.weeklyHours} saat
+                        {plan.gradeLevel && (
+                          <> • {plan.gradeLevel}. Sınıf</>
+                        )}
+                        {plan.subject && (
+                          <> • {plan.subject}</>
+                        )}
+                      </div>
+                    </div>
+                    <div className="planner-studyplan-date">
+                      {new Date(plan.createdAt).toLocaleDateString('tr-TR', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </div>
+                  </div>
+                  <div className="planner-studyplan-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => {
+                        setSelectedStudyPlanId(plan.id);
+                        setStudyPlanResult(plan.content);
+                        setStudyPlanModalOpen(true);
+                      }}
+                    >
+                      İçeriği görüntüle
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={() => handleDownloadStudyPlanPdf(plan.id)}
+                    >
+                      PDF ile indir
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <div className="planner-board">
           {COLUMN_CONFIG.map((column) => {
             const columnTodos = filteredTodos.filter(
@@ -582,19 +748,30 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
                 key={column.status}
                 className={`planner-column${
                   draggingId ? ' planner-column-droppable' : ''
-                }`}
+                }${!expandedColumns[column.status] ? ' planner-column--collapsed' : ''}`}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => handleDrop(event, column.status)}
               >
-                <div className="planner-column-header">
-                  <div>
-                    <h3>{column.title}</h3>
-                    <span>{column.helper}</span>
+                <button
+                  type="button"
+                  className="planner-column-header-btn"
+                  onClick={() =>
+                    setExpandedColumns((prev) => ({
+                      ...prev,
+                      [column.status]: !prev[column.status],
+                    }))
+                  }
+                >
+                  <div className="planner-column-header">
+                    <div>
+                      <h3>{column.title}</h3>
+                      <span>{column.helper}</span>
+                    </div>
+                    {columnTodos.length > 0 && (
+                      <span className="planner-column-count">{columnTodos.length}</span>
+                    )}
                   </div>
-                  {columnTodos.length > 0 && (
-                    <span className="planner-column-count">{columnTodos.length}</span>
-                  )}
-                </div>
+                </button>
                 <div className="planner-column-body">
                   {loading && !todos.length ? (
                     <div className="planner-empty">Görevler yükleniyor...</div>
@@ -653,7 +830,7 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
         </div>
       </div>
 
-      <aside className="planner-detail">
+      <aside className={`planner-detail${detailExpanded ? '' : ' planner-detail--collapsed'}`}>
         <header className="planner-detail-header">
           <h3>Görev Detayları</h3>
           {selectedTodo && (
@@ -668,6 +845,13 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
               {COLUMN_CONFIG.find((col) => col.status === selectedTodo.status)?.title}
             </span>
           )}
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={() => setDetailExpanded((prev) => !prev)}
+          >
+            {detailExpanded ? 'Daralt' : 'Genişlet'}
+          </button>
         </header>
 
         {selectedTodo ? (
@@ -805,72 +989,6 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
 
         {feedback && <div className="planner-feedback">{feedback}</div>}
       </aside>
-
-      {/* AI Çalışma Planları - Kart listesi */}
-      {token && studyPlans.length > 0 && (
-        <section className="planner-studyplans-section">
-          <h3 className="planner-studyplans-title">AI Çalışma Planları</h3>
-          <p className="planner-studyplans-subtitle">
-            Önceden oluşturduğun çalışma planlarına buradan ulaşabilirsin.
-          </p>
-          <div className="planner-studyplans-grid">
-            {studyPlans.map((plan) => (
-              <div
-                key={plan.id}
-                className={`planner-studyplan-card${
-                  selectedStudyPlanId === plan.id ? ' planner-studyplan-card-active' : ''
-                }`}
-              >
-                <div className="planner-studyplan-header">
-                  <div>
-                    <div className="planner-studyplan-topic">
-                      {plan.focusTopic && plan.focusTopic.trim()
-                        ? plan.focusTopic
-                        : 'Genel çalışma planı'}
-                    </div>
-                    <div className="planner-studyplan-meta">
-                      Haftalık hedef: {plan.weeklyHours} saat
-                      {plan.gradeLevel && (
-                        <> • {plan.gradeLevel}. Sınıf</>
-                      )}
-                      {plan.subject && (
-                        <> • {plan.subject}</>
-                      )}
-                    </div>
-                  </div>
-                  <div className="planner-studyplan-date">
-                    {new Date(plan.createdAt).toLocaleDateString('tr-TR', {
-                      day: '2-digit',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </div>
-                </div>
-                <div className="planner-studyplan-actions">
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => {
-                      setSelectedStudyPlanId(plan.id);
-                      setStudyPlanResult(plan.content);
-                    }}
-                  >
-                    İçeriği görüntüle
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-btn"
-                    onClick={() => handleDownloadStudyPlanPdf(plan.id)}
-                  >
-                    PDF ile indir
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {studyPlanOpen && (
         <div
           style={{
@@ -889,7 +1007,7 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
             style={{
               width: 'min(560px, 100%)',
               maxHeight: '85vh',
-              background: '#0f172a',
+              background: 'var(--color-surface-strong)',
               borderRadius: 18,
               border: '1px solid rgba(99,102,241,0.5)',
               boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
@@ -908,7 +1026,16 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
                 justifyContent: 'space-between',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a5b4fc' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  color: 'var(--color-text-main)',
+                  fontSize: '0.95rem',
+                  fontWeight: 600,
+                }}
+              >
                 <Sparkles size={18} />
                 <strong>AI Çalışma Planı Önerisi</strong>
               </div>
@@ -924,42 +1051,39 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
             <div style={{ padding: '1rem 1.2rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <label style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
                 Sınıf
-                <select
-                  value={studyPlanGradeLevel}
-                  onChange={(e) => setStudyPlanGradeLevel(e.target.value)}
-                  style={{
-                    display: 'block',
-                    marginTop: '0.25rem',
-                    padding: '0.5rem 0.75rem',
-                    borderRadius: 10,
-                    border: '1px solid rgba(51,65,85,0.9)',
-                    background: 'rgba(15,23,42,0.9)',
-                    color: '#e2e8f0',
-                  }}
-                >
-                  {['4', '5', '6', '7', '8', '9', '10', '11', '12'].map((g) => (
-                    <option key={g} value={g}>
-                      {g}. Sınıf
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
-                Ders
                 <input
                   type="text"
-                  value={studyPlanSubject}
-                  onChange={(e) => setStudyPlanSubject(e.target.value)}
-                  placeholder="Örn: Matematik"
+                  value={studyPlanGradeLevel ? `${studyPlanGradeLevel}. Sınıf` : ''}
+                  readOnly
                   style={{
                     display: 'block',
                     marginTop: '0.25rem',
                     width: '100%',
                     padding: '0.5rem 0.75rem',
                     borderRadius: 10,
-                    border: '1px solid rgba(51,65,85,0.9)',
-                    background: 'rgba(15,23,42,0.9)',
-                    color: '#e2e8f0',
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-main)',
+                    opacity: 0.8,
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
+                Ders
+                <input
+                  type="text"
+                  value={studyPlanSubjectName}
+                  onChange={(e) => setStudyPlanSubjectName(e.target.value)}
+                  placeholder="Örn. Matematik, Türkçe..."
+                  style={{
+                    display: 'block',
+                    marginTop: '0.25rem',
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: 10,
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-main)',
                   }}
                 />
               </label>
@@ -969,16 +1093,20 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
                   type="text"
                   value={studyPlanFocusTopic}
                   onChange={(e) => setStudyPlanFocusTopic(e.target.value)}
-                  placeholder="Örn: Türev"
+                  placeholder={
+                    studyPlanTopics.length > 0
+                      ? `Örn. ${studyPlanTopics[0]}`
+                      : 'Örn. Problemler, Paragraf, Fonksiyonlar...'
+                  }
                   style={{
                     display: 'block',
                     marginTop: '0.25rem',
                     width: '100%',
                     padding: '0.5rem 0.75rem',
                     borderRadius: 10,
-                    border: '1px solid rgba(51,65,85,0.9)',
-                    background: 'rgba(15,23,42,0.9)',
-                    color: '#e2e8f0',
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-main)',
                   }}
                 />
               </label>
@@ -992,9 +1120,9 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
                     marginTop: '0.25rem',
                     padding: '0.5rem 0.75rem',
                     borderRadius: 10,
-                    border: '1px solid rgba(51,65,85,0.9)',
-                    background: 'rgba(15,23,42,0.9)',
-                    color: '#e2e8f0',
+                    border: '1px solid var(--color-border-subtle)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-main)',
                   }}
                 >
                   {[3, 5, 7, 10, 14].map((h) => (
@@ -1017,41 +1145,72 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
                   )}
                 </button>
                 {studyPlanResult && (
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => {
-                      if (selectedStudyPlanId) handleDownloadStudyPlanPdf(selectedStudyPlanId);
-                    }}
-                    disabled={!selectedStudyPlanId}
-                    style={{
-                      border: '1px solid rgba(148,163,184,0.9)',
-                      background: 'rgba(15,23,42,0.9)',
-                      color: '#e2e8f0',
-                    }}
-                  >
-                    PDF Olarak İndir
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => {
+                        if (selectedStudyPlanId) handleDownloadStudyPlanPdf(selectedStudyPlanId);
+                      }}
+                      disabled={!selectedStudyPlanId}
+                      style={{
+                        border: '1px solid rgba(148,163,184,0.9)',
+                        background: 'rgba(15,23,42,0.9)',
+                        color: '#e2e8f0',
+                      }}
+                    >
+                      PDF Olarak İndir
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => setStudyPlanModalOpen(true)}
+                    >
+                      Ayrı pencerede aç
+                    </button>
+                  </>
                 )}
               </div>
             </div>
-            {studyPlanResult && (
-              <div
-                style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  padding: '1rem 1.2rem',
-                  borderTop: '1px solid rgba(51,65,85,0.9)',
-                  background: 'rgba(2,6,23,0.95)',
-                  whiteSpace: 'pre-wrap',
-                  fontSize: '0.9rem',
-                  lineHeight: 1.6,
-                  color: '#e2e8f0',
-                }}
+          </div>
+        </div>
+      )}
+      {studyPlanResult && studyPlanModalOpen && (
+        <div
+          className="ui-modal-overlay ui-modal-overlay--strong"
+          style={{ zIndex: 96 }}
+          onClick={() => setStudyPlanModalOpen(false)}
+        >
+          <div
+            className="ui-modal ui-modal--xl"
+            style={{ width: 'min(900px, 96vw)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="ui-modal-header">
+              <div className="ui-modal-title">AI Çalışma Planı</div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setStudyPlanModalOpen(false)}
               >
-                {studyPlanResult}
+                Kapat
+              </button>
+            </div>
+            <div
+              className="ui-modal-body"
+              style={{ maxHeight: '72vh', overflowY: 'auto' }}
+            >
+              <div className="planner-studyplan-result">
+                <div className="planner-studyplan-result-card">
+                  <div className="planner-studyplan-result-title">
+                    AI Çalışma Planı
+                  </div>
+                  <div className="planner-studyplan-result-body">
+                    {studyPlanResult}
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}

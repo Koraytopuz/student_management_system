@@ -17,7 +17,16 @@ const PERIOD_LABELS: Record<Period, string> = {
   term: 'Dönemlik',
 };
 
-const WEEKDAYS = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma'] as const;
+const WEEKDAYS = [
+  'Pazartesi',
+  'Salı',
+  'Çarşamba',
+  'Perşembe',
+  'Cuma',
+  'Cumartesi',
+  'Pazar',
+] as const;
+const WEEKDAYS_SHORT = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'] as const;
 const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16];
 
 export interface ScheduleEntry {
@@ -33,11 +42,19 @@ export interface ScheduleEntry {
 interface LessonScheduleTabProps {
   token: string | null;
   students: TeacherStudent[];
-  /** Öğretmenin atanmış sınıfları (örn. ['9','10']) */
+  /** Öğretmenin atanmış sınıfları (örn. ['9','10']) veya öğrencinin sınıfı */
   allowedGrades?: string[];
+  /** Görünüm modu: öğretmen paneli veya öğrenci paneli */
+  mode?: 'teacher' | 'student';
 }
 
-export function LessonScheduleTab({ token, students, allowedGrades = [] }: LessonScheduleTabProps) {
+export function LessonScheduleTab({
+  token,
+  students,
+  allowedGrades = [],
+  mode = 'teacher',
+}: LessonScheduleTabProps) {
+  const isStudentMode = mode === 'student';
   const [scope, setScope] = useState<Scope>('class');
   const [gradeLevel, setGradeLevel] = useState<string>('');
   const [subjectId, setSubjectId] = useState<string>('');
@@ -59,10 +76,36 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
   });
   const [modalSubjects, setModalSubjects] = useState<Array<{ id: string; name: string }>>([]);
 
+  // Tablo üzerinde satır/sütun bazlı hızlı ekleme için inline düzenleme durumu
+  const [inlineAddMode, setInlineAddMode] = useState(false);
+  const [editingSlot, setEditingSlot] = useState<{ hour: number; dayIndex: number } | null>(null);
+  const [editingSubjectName, setEditingSubjectName] = useState('');
+  const [editingTopicSlot, setEditingTopicSlot] = useState<{ hour: number; dayIndex: number } | null>(null);
+  const [editingTopicValue, setEditingTopicValue] = useState('');
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
   const grades = useMemo(() => {
-    const g = allowedGrades.length ? allowedGrades : ['4', '5', '6', '7', '8', '9', '10', '11', '12'];
-    return g;
+    const base = allowedGrades.length ? allowedGrades : ['4', '5', '6', '7', '8', '9', '10', '11', '12'];
+    // Sadece sayısal sınıfları al ve büyükten küçüğe sırala (12, 11, 10, 9, ...)
+    return [...base]
+      .filter((g) => !Number.isNaN(Number(g)))
+      .sort((a, b) => Number(b) - Number(a));
   }, [allowedGrades]);
+
+  // Öğrenci panelinde, sınıf filtresi otomatik olarak öğrencinin sınıfına ayarlanır
+  React.useEffect(() => {
+    if (!isStudentMode) return;
+    if (!gradeLevel && grades.length > 0) {
+      setGradeLevel(grades[0]);
+    }
+  }, [isStudentMode, gradeLevel, grades]);
+
+  // Öğrenci panelinde dönemlik görünümü devre dışı bırak
+  React.useEffect(() => {
+    if (isStudentMode && period === 'term') {
+      setPeriod('weekly');
+    }
+  }, [isStudentMode, period]);
 
   const loadSubjects = () => {
     if (!token || !gradeLevel) return;
@@ -187,6 +230,117 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
     return list;
   }, [entries, gradeLevel, subjectId]);
 
+  const handleInlineSave = () => {
+    if (!editingSlot) return;
+    const name = editingSubjectName.trim();
+    if (!name) {
+      // Boş bırakılırsa kaydetme
+      setEditingSlot(null);
+      return;
+    }
+    const { hour, dayIndex } = editingSlot;
+    const g = gradeLevel || grades[0] || '';
+    setEntries((prev) => {
+      const idx = prev.findIndex(
+        (e) => e.gradeLevel === g && e.hour === hour && e.dayOfWeek === dayIndex,
+      );
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = {
+          ...copy[idx],
+          subjectName: name,
+        };
+        return copy;
+      }
+      const id = `e-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return [
+        ...prev,
+        {
+          id,
+          gradeLevel: g,
+          subjectId: '',
+          subjectName: name,
+          dayOfWeek: dayIndex,
+          hour,
+          topic: undefined,
+        },
+      ];
+    });
+    setEditingSlot(null);
+    setEditingSubjectName('');
+  };
+
+  const handleInlineTopicSave = () => {
+    if (!editingTopicSlot) return;
+    const value = editingTopicValue.trim();
+    const { hour, dayIndex } = editingTopicSlot;
+    const g = gradeLevel || grades[0] || '';
+    setEntries((prev) => {
+      const idx = prev.findIndex(
+        (e) =>
+          e.gradeLevel === g &&
+          e.hour === hour &&
+          e.dayOfWeek === dayIndex,
+      );
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = {
+          ...copy[idx],
+          topic: value || undefined,
+        };
+        return copy;
+      }
+      if (!value) return prev;
+      const id = `e-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return [
+        ...prev,
+        {
+          id,
+          gradeLevel: g,
+          subjectId: '',
+          subjectName: '',
+          dayOfWeek: dayIndex,
+          hour,
+          topic: value,
+        },
+      ];
+    });
+    setEditingTopicSlot(null);
+    setEditingTopicValue('');
+  };
+
+  const moveInlineCursor = (
+    direction: 'up' | 'down' | 'left' | 'right',
+    currentHour: number,
+    currentDayIndex: number,
+  ) => {
+    const hourIndex = HOURS.indexOf(currentHour);
+    if (hourIndex === -1) return;
+    let newHourIndex = hourIndex;
+    let newDayIndex = currentDayIndex;
+
+    if (direction === 'up') {
+      newHourIndex = Math.max(0, hourIndex - 1);
+    } else if (direction === 'down') {
+      newHourIndex = Math.min(HOURS.length - 1, hourIndex + 1);
+    } else if (direction === 'left') {
+      newDayIndex = Math.max(0, currentDayIndex - 1);
+    } else if (direction === 'right') {
+      newDayIndex = Math.min(WEEKDAYS.length - 1, currentDayIndex + 1);
+    }
+
+    const newHour = HOURS[newHourIndex];
+    setEditingSlot({ hour: newHour, dayIndex: newDayIndex });
+    const g = gradeLevel || grades[0] || '';
+    const existing = entries.find(
+      (e) =>
+        e.gradeLevel === g &&
+        e.hour === newHour &&
+        e.dayOfWeek === newDayIndex,
+    );
+    setEditingSubjectName(existing?.subjectName ?? '');
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
@@ -196,90 +350,96 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
 
       <GlassCard className="p-5 schedule-filters-card">
         <div className="schedule-filters">
-          {/* Kapsam: Sınıf / Ders / Öğrenci */}
-          <div className="schedule-filter-block">
-            <label className="schedule-filter-label">Kapsam</label>
-            <div className="schedule-filter-buttons">
-              {[
-                { value: 'class' as Scope, label: 'Sınıfa göre' },
-                { value: 'subject' as Scope, label: 'Derse göre' },
-                { value: 'student' as Scope, label: 'Öğrenciye göre' },
-              ].map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setScope(value)}
-                  className={scope === value ? 'primary-btn' : 'ghost-btn'}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Sınıf / Ders / Öğrenci seçimi */}
-          <div className="schedule-filter-block">
-            {(scope === 'class' || scope === 'subject') && (
-              <div className="schedule-filter-selects">
-                <select
-                  value={gradeLevel}
-                  onChange={(e) => {
-                    setGradeLevel(e.target.value);
-                    setSubjectId('');
-                    setStudentId('');
-                  }}
-                  className="schedule-select"
-                >
-                  <option value="">Sınıf Seçin</option>
-                  {grades.map((g) => (
-                    <option key={g} value={g}>{g}. Sınıf</option>
-                  ))}
-                </select>
-                {scope === 'subject' && (
-                  <select
-                    value={subjectId}
-                    onChange={(e) => setSubjectId(e.target.value)}
-                    disabled={!gradeLevel}
-                    className="schedule-select schedule-select--wide disabled:opacity-60"
+          {/* Kapsam: Sınıf / Ders / Öğrenci (sadece öğretmen modu) */}
+          {!isStudentMode && (
+            <div className="schedule-filter-block">
+              <label className="schedule-filter-label">Kapsam</label>
+              <div className="schedule-filter-buttons">
+                {[
+                  { value: 'class' as Scope, label: 'Sınıfa göre' },
+                  { value: 'subject' as Scope, label: 'Derse göre' },
+                  { value: 'student' as Scope, label: 'Öğrenciye göre' },
+                ].map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setScope(value)}
+                    className={scope === value ? 'primary-btn' : 'ghost-btn'}
                   >
-                    <option value="">Ders Seçin</option>
-                    {subjects.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sınıf / Ders / Öğrenci seçimi (öğretmen modu) */}
+          {!isStudentMode && (
+            <div className="schedule-filter-block">
+              {(scope === 'class' || scope === 'subject') && (
+                <div className="schedule-filter-selects">
+                  <select
+                    value={gradeLevel}
+                    onChange={(e) => {
+                      setGradeLevel(e.target.value);
+                      setSubjectId('');
+                      setStudentId('');
+                    }}
+                    className="schedule-select"
+                  >
+                    <option value="">Sınıf Seçin</option>
+                    {grades.map((g) => (
+                      <option key={g} value={g}>{g}. Sınıf</option>
                     ))}
                   </select>
-                )}
-              </div>
-            )}
-            {scope === 'student' && (
-              <div className="schedule-filter-selects">
-                <select
-                  value={studentId}
-                  onChange={(e) => setStudentId(e.target.value)}
-                  className="schedule-select schedule-select--wide"
-                >
-                  <option value="">Öğrenci Seçin</option>
-                  {students.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} {s.gradeLevel ? `(${s.gradeLevel}. Sınıf)` : ''}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
+                  {scope === 'subject' && (
+                    <select
+                      value={subjectId}
+                      onChange={(e) => setSubjectId(e.target.value)}
+                      disabled={!gradeLevel}
+                      className="schedule-select schedule-select--wide disabled:opacity-60"
+                    >
+                      <option value="">Ders Seçin</option>
+                      {subjects.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+              {scope === 'student' && (
+                <div className="schedule-filter-selects">
+                  <select
+                    value={studentId}
+                    onChange={(e) => setStudentId(e.target.value)}
+                    className="schedule-select schedule-select--wide"
+                  >
+                    <option value="">Öğrenci Seçin</option>
+                    {students.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name} {s.gradeLevel ? `(${s.gradeLevel}. Sınıf)` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
 
-          {/* Dönem: Günlük / Haftalık / Aylık / Dönemlik */}
+          {/* Dönem: Günlük / Haftalık / Aylık / (öğretmen için Dönemlik) */}
           <div className="schedule-filter-block">
             <label className="schedule-filter-label">Program periyodu</label>
             <div className="schedule-filter-buttons">
-              {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPeriod(p)}
-                  className={period === p ? 'primary-btn' : 'ghost-btn'}
-                >
-                  {PERIOD_LABELS[p]}
-                </button>
-              ))}
+              {(Object.keys(PERIOD_LABELS) as Period[])
+                .filter((p) => (isStudentMode ? p !== 'term' : true))
+                .map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPeriod(p)}
+                    className={period === p ? 'primary-btn' : 'ghost-btn'}
+                  >
+                    {PERIOD_LABELS[p]}
+                  </button>
+                ))}
             </div>
           </div>
         </div>
@@ -290,12 +450,39 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
         <div className="absolute top-4 right-4 left-auto" dir="ltr">
           <button
             type="button"
-            onClick={openAddModal}
+            onClick={() => {
+              setInlineAddMode((prev) => {
+                const next = !prev;
+                if (!next) {
+                  setEditingSlot(null);
+                  setEditingSubjectName('');
+                  return next;
+                }
+                // Tablo ekleme modu açılırken ilk hücreyi odakla
+                const baseHour = HOURS[0];
+                const baseDayIndex = period === 'daily' ? selectedDayIndex : 0;
+                setEditingSlot({ hour: baseHour, dayIndex: baseDayIndex });
+                setEditingSubjectName('');
+                return next;
+              });
+            }}
             className="primary-btn inline-flex items-center justify-center shrink-0 w-8 h-8 p-0"
-            title="Ekle"
+            title={inlineAddMode ? 'Tablodan eklemeyi kapat' : 'Tablodan ders ekle'}
           >
             <Plus className="w-4 h-4" />
           </button>
+          {inlineAddMode && (
+            <button
+              type="button"
+              className="ghost-btn ml-2 text-xs px-2 py-1"
+              onClick={() => {
+                handleInlineSave();
+                setInlineAddMode(false);
+              }}
+            >
+              Kaydet
+            </button>
+          )}
         </div>
         <div className="pr-12 mb-3">
           <span className="text-sm font-medium text-gray-700">
@@ -335,21 +522,116 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
                 <tbody>
                   {HOURS.map((hour, rowIndex) => {
                     const entry = entryAt(hour, selectedDayIndex);
+                    const isEditing =
+                      inlineAddMode &&
+                      editingSlot &&
+                      editingSlot.hour === hour &&
+                      editingSlot.dayIndex === selectedDayIndex;
                     return (
                       <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
                         <td className="schedule-table-hour-cell">{hour}:00</td>
                         <td className="schedule-table-cell">
-                          {entry ? (
+                          {isEditing ? (
+                            <input
+                              className="schedule-inline-input"
+                              value={editingSubjectName}
+                              onChange={(e) => setEditingSubjectName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleInlineSave();
+                                if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  handleInlineSave();
+                                  moveInlineCursor('up', hour, selectedDayIndex);
+                                }
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  handleInlineSave();
+                                  moveInlineCursor('down', hour, selectedDayIndex);
+                                }
+                                if (e.key === 'ArrowLeft') {
+                                  e.preventDefault();
+                                  // Günlük görünümde sola/sağa hareket yok
+                                }
+                                if (e.key === 'ArrowRight') {
+                                  e.preventDefault();
+                                  // Aynı satırdaki "Konu / Not" hücresine geç
+                                  handleInlineSave();
+                                  setEditingTopicSlot({
+                                    hour,
+                                    dayIndex: selectedDayIndex,
+                                  });
+                                  setEditingTopicValue(entry?.topic ?? '');
+                                }
+                                if (e.key === 'Escape') {
+                                  setEditingSlot(null);
+                                  setEditingSubjectName('');
+                                }
+                              }}
+                              autoFocus
+                              placeholder="Ders adı"
+                            />
+                          ) : entry ? (
                             <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
                           ) : (
-                            <span className="schedule-table-empty">—</span>
+                            <span
+                              className="schedule-table-empty"
+                              onClick={() => {
+                                if (!inlineAddMode) return;
+                                setEditingSlot({ hour, dayIndex: selectedDayIndex });
+                                setEditingSubjectName('');
+                              }}
+                            >
+                              —
+                            </span>
                           )}
                         </td>
                         <td className="schedule-table-cell">
                           {entry?.topic ? (
-                            <span className="schedule-table-topic-text">{entry.topic}</span>
+                            editingTopicSlot &&
+                            editingTopicSlot.hour === hour &&
+                            editingTopicSlot.dayIndex === selectedDayIndex ? (
+                              <input
+                                className="schedule-inline-input"
+                                value={editingTopicValue}
+                                onChange={(e) => setEditingTopicValue(e.target.value)}
+                                onBlur={handleInlineTopicSave}
+                                autoFocus
+                                placeholder="Konu / not"
+                              />
+                            ) : (
+                              <span
+                                className="schedule-table-topic-text"
+                                onClick={() => {
+                                  setEditingTopicSlot({ hour, dayIndex: selectedDayIndex });
+                                  setEditingTopicValue(entry.topic ?? '');
+                                }}
+                              >
+                                {entry.topic}
+                              </span>
+                            )
                           ) : (
-                            <span className="schedule-table-empty">—</span>
+                            editingTopicSlot &&
+                            editingTopicSlot.hour === hour &&
+                            editingTopicSlot.dayIndex === selectedDayIndex ? (
+                              <input
+                                className="schedule-inline-input"
+                                value={editingTopicValue}
+                                onChange={(e) => setEditingTopicValue(e.target.value)}
+                                onBlur={handleInlineTopicSave}
+                                autoFocus
+                                placeholder="Konu / not"
+                              />
+                            ) : (
+                              <span
+                                className="schedule-table-empty"
+                                onClick={() => {
+                                  setEditingTopicSlot({ hour, dayIndex: selectedDayIndex });
+                                  setEditingTopicValue('');
+                                }}
+                              >
+                                —
+                              </span>
+                            )
                           )}
                         </td>
                       </tr>
@@ -374,23 +656,72 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
                 </tr>
               </thead>
               <tbody>
-                {HOURS.map((hour, rowIndex) => (
-                  <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
-                    <td className="schedule-table-hour-cell">{hour}:00</td>
-                    {WEEKDAYS.map((_, dayIndex) => {
-                      const entry = entryAt(hour, dayIndex);
-                      return (
-                        <td key={dayIndex} className="schedule-table-cell">
-                          {entry ? (
-                            <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
-                          ) : (
-                            <span className="schedule-table-empty">—</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+              {HOURS.map((hour, rowIndex) => (
+                <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
+                  <td className="schedule-table-hour-cell">{hour}:00</td>
+                  {WEEKDAYS.map((_, dayIndex) => {
+                    const entry = entryAt(hour, dayIndex);
+                    const isEditing =
+                      inlineAddMode &&
+                      editingSlot &&
+                      editingSlot.hour === hour &&
+                      editingSlot.dayIndex === dayIndex;
+                    return (
+                      <td key={dayIndex} className="schedule-table-cell">
+                        {isEditing ? (
+                          <input
+                            className="schedule-inline-input"
+                            value={editingSubjectName}
+                            onChange={(e) => setEditingSubjectName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleInlineSave();
+                              if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                handleInlineSave();
+                                moveInlineCursor('up', hour, dayIndex);
+                              }
+                              if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                handleInlineSave();
+                                moveInlineCursor('down', hour, dayIndex);
+                              }
+                              if (e.key === 'ArrowLeft') {
+                                e.preventDefault();
+                                handleInlineSave();
+                                moveInlineCursor('left', hour, dayIndex);
+                              }
+                              if (e.key === 'ArrowRight') {
+                                e.preventDefault();
+                                handleInlineSave();
+                                moveInlineCursor('right', hour, dayIndex);
+                              }
+                              if (e.key === 'Escape') {
+                                setEditingSlot(null);
+                                setEditingSubjectName('');
+                              }
+                            }}
+                            autoFocus
+                            placeholder="Ders adı"
+                          />
+                        ) : entry ? (
+                          <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
+                        ) : (
+                          <span
+                            className="schedule-table-empty"
+                            onClick={() => {
+                              if (!inlineAddMode) return;
+                              setEditingSlot({ hour, dayIndex });
+                              setEditingSubjectName('');
+                            }}
+                          >
+                            —
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
               </tbody>
             </table>
           )}
@@ -405,11 +736,11 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
                     <thead>
                       <tr>
                         <th className="schedule-table-hour-header">Saat</th>
-                        <th className="schedule-table-day-header">Pzt</th>
-                        <th className="schedule-table-day-header">Sal</th>
-                        <th className="schedule-table-day-header">Çar</th>
-                        <th className="schedule-table-day-header">Per</th>
-                        <th className="schedule-table-day-header">Cum</th>
+                        {WEEKDAYS_SHORT.map((name) => (
+                          <th key={name} className="schedule-table-day-header">
+                            {name}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -479,6 +810,16 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
 
       {/* Eklenen programlar – önizleme ve düzenleme */}
       <GlassCard className="p-5 schedule-list-card" title="Eklenen programlar" subtitle="Kayıtlı ders saatlerini önizleyin ve düzenleyin">
+        <div className="schedule-list-header-actions">
+          <button
+            type="button"
+            className="ghost-btn text-xs"
+            onClick={() => setSummaryOpen(true)}
+            disabled={sortedEntriesForList.length === 0}
+          >
+            Programı özet tabloda görüntüle
+          </button>
+        </div>
         <div className="schedule-list">
           {sortedEntriesForList.length === 0 ? (
             <div className="schedule-list-empty">
@@ -508,6 +849,75 @@ export function LessonScheduleTab({ token, students, allowedGrades = [] }: Lesso
           )}
         </div>
       </GlassCard>
+
+      {summaryOpen && (
+        <div className="schedule-modal-overlay" onClick={() => setSummaryOpen(false)}>
+          <div className="schedule-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="schedule-modal-header">
+              <h3 className="schedule-modal-title">Haftalık Program Özeti</h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => window.print()}
+                >
+                  PDF ile indir
+                </button>
+                <button
+                  type="button"
+                  className="schedule-modal-close"
+                  onClick={() => setSummaryOpen(false)}
+                >
+                  Kapat
+                </button>
+              </div>
+            </div>
+            <div className="schedule-modal-body">
+              <table className="w-full text-sm text-left border-collapse schedule-table">
+                <thead>
+                  <tr>
+                    <th className="schedule-table-hour-header">Saat</th>
+                    <th className="schedule-table-day-header">Pazartesi</th>
+                    <th className="schedule-table-day-header">Salı</th>
+                    <th className="schedule-table-day-header">Çarşamba</th>
+                    <th className="schedule-table-day-header">Perşembe</th>
+                    <th className="schedule-table-day-header">Cuma</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {HOURS.map((hour, rowIndex) => (
+                    <tr
+                      key={hour}
+                      className={
+                        rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'
+                      }
+                    >
+                      <td className="schedule-table-hour-cell">{hour}:00</td>
+                      {WEEKDAYS.map((_, dayIndex) => {
+                        const entry = entryAt(hour, dayIndex);
+                        return (
+                          <td key={dayIndex} className="schedule-table-cell">
+                            {entry ? (
+                              <span
+                                className="schedule-table-entry"
+                                title={entry.topic}
+                              >
+                                {entry.subjectName}
+                              </span>
+                            ) : (
+                              <span className="schedule-table-empty">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Program ekleme modal */}
       {addModalOpen && (
