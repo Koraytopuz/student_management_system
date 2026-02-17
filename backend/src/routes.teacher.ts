@@ -677,7 +677,7 @@ router.put(
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
-    const id = req.params.id;
+    const id: string = String((req.params as any).id);
     const { title, message, scheduledDate } = req.body as {
       title?: string;
       message?: string;
@@ -728,7 +728,7 @@ router.delete(
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
-    const id = req.params.id;
+    const id: string = String((req.params as any).id);
 
     const existing = await prisma.teacherAnnouncement.findFirst({
       where: { id, teacherId },
@@ -827,7 +827,7 @@ router.put(
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
-    const id = req.params.id;
+    const id: string = String((req.params as any).id);
     const existing = await prisma.lessonScheduleEntry.findFirst({ where: { id, teacherId } });
     if (!existing) return res.status(404).json({ error: 'Kayıt bulunamadı' });
     const { gradeLevel, subjectId, studentId, dayOfWeek, hour, subjectName, topic } = req.body as {
@@ -868,7 +868,7 @@ router.delete(
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
-    const id = req.params.id;
+    const id: string = String((req.params as any).id);
     const existing = await prisma.lessonScheduleEntry.findFirst({ where: { id, teacherId } });
     if (!existing) return res.status(404).json({ error: 'Kayıt bulunamadı' });
     await prisma.lessonScheduleEntry.delete({ where: { id } });

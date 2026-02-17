@@ -59,6 +59,7 @@ import { StudentQuestionBankTab } from './StudentQuestionBankTab';
 import { StudentBadgesTab } from './StudentBadges';
 import { FocusZone } from './components/FocusZone';
 import { NotificationDetailModal, type NotificationDetailModalData } from './components/NotificationDetailModal';
+import { ExamOpticalFormOverlay, type ExamSimple } from './ExamOpticalFormOverlay';
 import { type ExamSimple } from './api';
 import { StudentExamList } from './pages/student/StudentExamList';
 import { LessonScheduleTab } from './LessonScheduleTab';
@@ -1341,9 +1342,14 @@ export const StudentDashboard: React.FC = () => {
       {activeTab === 'complaints' && (
         <StudentComplaints token={token} />
       )}
-      {activeExamToSolve && activeTab === 'exam-analysis' && (
-        <div className="ui-modal-overlay">Module Missing: ExamOpticalFormOverlay</div>
-        /* <ExamOpticalFormOverlay ... /> commented out due to missing module */
+      {activeExamToSolve && activeTab === 'exam-analysis' && token && (
+        <ExamOpticalFormOverlay
+          exam={activeExamToSolve as unknown as ExamSimple}
+          token={token}
+          onClose={() => setActiveExamToSolve(null)}
+          onSubmit={submitExamAnswers}
+          submitting={examSubmitting}
+        />
       )}
       {activeTest && (
         <TestSolveOverlay
