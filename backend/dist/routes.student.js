@@ -233,6 +233,176 @@ router.get('/dashboard', (0, auth_1.authenticate)('student'), async (req, res) =
     };
     return res.json(summary);
 });
+// Öğretmenin öğrenci/sınıf için oluşturduğu ders programı kayıtları
+router.get('/lesson-schedule-entries', (0, auth_1.authenticate)('student'), async (req, res) => {
+    var _a;
+    const studentId = req.user.id;
+    const user = await db_1.prisma.user.findUnique({
+        where: { id: studentId },
+        select: { gradeLevel: true },
+    });
+    const myGrade = (_a = user === null || user === void 0 ? void 0 : user.gradeLevel) !== null && _a !== void 0 ? _a : '';
+    const entries = await db_1.prisma.lessonScheduleEntry.findMany({
+        where: {
+            OR: [
+                { scope: 'student', studentId },
+                ...(myGrade ? [{ scope: 'class', gradeLevel: myGrade }] : []),
+                ...(myGrade ? [{ scope: 'subject', gradeLevel: myGrade }] : []),
+            ],
+        },
+        orderBy: [{ dayOfWeek: 'asc' }, { hour: 'asc' }],
+    });
+    return res.json(entries.map((e) => {
+        var _a, _b, _c;
+        return ({
+            id: e.id,
+            gradeLevel: (_a = e.gradeLevel) !== null && _a !== void 0 ? _a : '',
+            subjectId: (_b = e.subjectId) !== null && _b !== void 0 ? _b : '',
+            subjectName: e.subjectName,
+            dayOfWeek: e.dayOfWeek,
+            hour: e.hour,
+            topic: (_c = e.topic) !== null && _c !== void 0 ? _c : undefined,
+        });
+    }));
+});
+// Öğrenciye atanan sınavları listele
+router.get('/exams', (0, auth_1.authenticate)('student'), async (req, res) => {
+    try {
+        const studentId = req.user.id;
+        console.log(`[DEBUG][GET /exams] Fetching exams for student: ${studentId}`);
+        // 1. Öğrencinin dahil olduğu sınıf gruplarını bul
+        const studentClasses = await db_1.prisma.classGroupStudent.findMany({
+            where: { studentId },
+            select: { classGroupId: true },
+        });
+        const user = await db_1.prisma.user.findUnique({
+            where: { id: studentId },
+            select: { classId: true },
+        });
+        let classGroupIds = studentClasses.map((sc) => sc.classGroupId);
+        if (user === null || user === void 0 ? void 0 : user.classId) {
+            classGroupIds.push(user.classId);
+        }
+        classGroupIds = [...new Set(classGroupIds)]; // Unique
+        console.log(`[DEBUG][GET /exams] Found classGroupIds:`, classGroupIds);
+        if (classGroupIds.length === 0) {
+            console.log(`[DEBUG][GET /exams] No class groups found.`);
+            return res.json([]);
+        }
+        // 2. Bu sınıflara atanan sınavları bul
+        // ExamAssignment üzerinden Exam'e gidiyoruz
+        const assignments = await db_1.prisma.examAssignment.findMany({
+            where: {
+                classGroupId: { in: classGroupIds },
+            },
+            include: {
+                exam: {
+                    include: {
+                        // Sonuçları da çekelim ki öğrenci çözüp çözmediğini görsün
+                        results: {
+                            where: { studentId },
+                            select: { id: true, score: true, createdAt: true },
+                        },
+                    },
+                },
+            },
+            orderBy: {
+                exam: { date: 'desc' }, // En yakın/yeni sınavlar üstte
+            },
+        });
+        // Aynı sınav birden fazla sınıfa atanmış olabilir (nadiren), unique hale getirelim
+        const uniqueExamsMap = new Map();
+        assignments.forEach((a) => {
+            const exam = a.exam;
+            if (exam && !uniqueExamsMap.has(exam.id)) {
+                uniqueExamsMap.set(exam.id, exam);
+            }
+        });
+        const exams = Array.from(uniqueExamsMap.values());
+        return res.json(exams);
+    }
+    catch (error) {
+        console.error('Error fetching student exams:', error);
+        return res.status(500).json({ error: 'Sınavlar listelenirken hata oluştu' });
+    }
+});
+// Tek bir sınavın detayını getir (çözmek için)
+router.get('/exams/:id', (0, auth_1.authenticate)('student'), async (req, res) => {
+    try {
+        const studentId = req.user.id;
+        const examId = Number(req.params.id);
+        if (isNaN(examId)) {
+            return res.status(400).json({ error: 'Geçersiz sınav ID' });
+        }
+        const exam = await db_1.prisma.exam.findUnique({
+            where: { id: examId },
+            select: {
+                id: true,
+                name: true,
+                questionCount: true,
+                fileUrl: true,
+                type: true,
+                date: true,
+            },
+        });
+        if (!exam) {
+            return res.status(404).json({ error: 'Sınav bulunamadı' });
+        }
+        return res.json(exam);
+    }
+    catch (error) {
+        console.error('Error fetching exam detail:', error);
+        return res.status(500).json({ error: 'Sınav detayı alınamadı' });
+    }
+});
+// Sınav cevaplarını kaydet
+router.post('/exams/:id/submit', (0, auth_1.authenticate)('student'), async (req, res) => {
+    try {
+        const studentId = req.user.id;
+        const examId = Number(req.params.id);
+        const { answers } = req.body;
+        if (isNaN(examId) || !answers) {
+            return res.status(400).json({ error: 'Eksik parametreler' });
+        }
+        // Check if result already exists
+        const existing = await db_1.prisma.examResult.findUnique({
+            where: {
+                studentId_examId: { studentId, examId },
+            },
+        });
+        if (existing) {
+            // Update existing with new answers (allow re-submit if not strictly locked?)
+            // For now, allow update
+            await db_1.prisma.examResult.update({
+                where: { studentId_examId: { studentId, examId } },
+                data: {
+                    answers: answers,
+                    gradingStatus: 'pending_grading', // Mark for teacher review/grading
+                    // We don't change score yet as we don't have key
+                },
+            });
+        }
+        else {
+            // Create new result with 0 score (ungraded)
+            await db_1.prisma.examResult.create({
+                data: {
+                    studentId,
+                    examId,
+                    score: 0,
+                    totalNet: 0,
+                    percentile: 0,
+                    answers: answers,
+                    gradingStatus: 'pending_grading',
+                },
+            });
+        }
+        return res.json({ success: true, message: 'Cevaplarınız kaydedildi.' });
+    }
+    catch (error) {
+        console.error('Error submitting exam answers:', error);
+        return res.status(500).json({ error: 'Cevaplar kaydedilemedi' });
+    }
+});
 // Öğrenci koçluk seansları (sadece kendi seanslarını görür, not içeriği gösterilmez)
 router.get('/coaching', (0, auth_1.authenticate)('student'), async (req, res) => {
     const studentId = req.user.id;
@@ -333,18 +503,47 @@ async (req, res) => {
 });
 // Öğrenciye özel çalışma planı önerisi
 router.post('/ai/study-plan', (0, auth_1.authenticate)('student'), async (req, res) => {
+    var _a;
     const studentId = req.user.id;
-    const { focusTopic, weeklyHours = 5, gradeLevel, subject, } = req.body;
+    const { focusTopic, weeklyHours = 5, gradeLevel, subject, subjectId, } = req.body;
     try {
+        // Eğer gradeLevel gönderilmediyse, öğrencinin profilinden al
+        const student = !gradeLevel
+            ? await db_1.prisma.user.findUnique({
+                where: { id: studentId },
+                select: { gradeLevel: true },
+            })
+            : null;
+        const effectiveGradeLevel = ((_a = gradeLevel !== null && gradeLevel !== void 0 ? gradeLevel : student === null || student === void 0 ? void 0 : student.gradeLevel) !== null && _a !== void 0 ? _a : '').trim();
         const [studentResults, watchRecords] = await Promise.all([
             db_1.prisma.testResult.findMany({
-                where: { studentId },
+                where: {
+                    studentId,
+                    ...(subjectId
+                        ? {
+                            assignment: {
+                                test: {
+                                    subjectId,
+                                },
+                            },
+                        }
+                        : {}),
+                },
                 include: { assignment: { include: { test: true } } },
                 orderBy: { completedAt: 'desc' },
                 take: 20,
             }),
             db_1.prisma.watchRecord.findMany({
-                where: { studentId },
+                where: {
+                    studentId,
+                    ...(subjectId
+                        ? {
+                            content: {
+                                subjectId,
+                            },
+                        }
+                        : {}),
+                },
                 include: { content: true },
                 orderBy: { lastWatchedAt: 'desc' },
                 take: 15,
@@ -359,7 +558,7 @@ router.post('/ai/study-plan', (0, auth_1.authenticate)('student'), async (req, r
             : null;
         const context = `
 Öğrenci verileri:
-- Sınıf: ${gradeLevel || 'belirtilmedi'}
+- Sınıf: ${effectiveGradeLevel || 'belirtilmedi'}
 - Ders: ${subject || 'belirtilmedi'}
 - Son test sayısı: ${studentResults.length}
 - Ortalama puan: ${avgScore != null ? Math.round(avgScore) + '%' : 'veri yok'}
@@ -381,7 +580,7 @@ Planı şu formatta ver:
 
 ÖNEMLİ:
 - Eğer odak konu belirtilmişse, planın en az %70'i bu konu etrafında olsun; diğer konular destekleyici nitelikte kalsın.
-- Sınıf seviyesi (${gradeLevel || 'belirtilmedi'}) ve ders bilgisine (${subject || 'belirtilmedi'}) uygun, gerçekçi ve uygulanabilir öneriler ver.`;
+- Sınıf seviyesi (${effectiveGradeLevel || 'belirtilmedi'}) ve ders bilgisine (${subject || 'belirtilmedi'}) uygun, gerçekçi ve uygulanabilir öneriler ver.`;
         const result = await (0, ai_1.callGemini)(prompt, {
             systemInstruction: 'Sen deneyimli bir rehber öğretmensin. Öğrencilere gerçekçi, uygulanabilir ve motive edici çalışma planları hazırlarsın.',
             temperature: 0.6,
@@ -392,7 +591,7 @@ Planı şu formatta ver:
             data: {
                 studentId,
                 focusTopic: (focusTopic === null || focusTopic === void 0 ? void 0 : focusTopic.trim()) || null,
-                gradeLevel: (gradeLevel === null || gradeLevel === void 0 ? void 0 : gradeLevel.trim()) || null,
+                gradeLevel: effectiveGradeLevel || null,
                 subject: (subject === null || subject === void 0 ? void 0 : subject.trim()) || null,
                 weeklyHours,
                 content: result,
@@ -2004,6 +2203,13 @@ router.post('/meetings/:id/join-live', (0, auth_1.authenticate)('student'), asyn
             .json({ error: 'Bu canlı ders henüz öğretmen tarafından başlatılmadı.' });
     }
     const roomId = meeting.roomId;
+    // Öğretmen odada değilse öğrenci katılamaz (LiveKit odasında katılımcı yoksa)
+    const teacherInRoom = await (0, livekit_1.hasParticipantsInRoom)(roomId);
+    if (!teacherInRoom) {
+        return res
+            .status(409)
+            .json({ error: 'Canlı dersiniz öğretmen tarafından başlatılmamıştır.' });
+    }
     const token = await (0, livekit_1.createLiveKitToken)({
         roomName: roomId,
         identity: studentId,

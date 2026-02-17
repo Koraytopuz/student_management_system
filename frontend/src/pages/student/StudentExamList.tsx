@@ -50,13 +50,13 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
   const fetchAssignedExams = async () => {
     try {
       const response = await fetch(
-        `${API_BASE}/api/student/exams`,
+        // Backend route: /api/student/assigned-exams/:studentId (examRoutes)
+        `${API_BASE}/api/student/assigned-exams/${user.id}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.ok) {
         const data = await response.json();
-        // Backend returns { exams: [...] }
-        const list = data.exams || (Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
         setAssignedExams(list);
       } else {
         console.error('Failed to fetch assigned exams:', response.status, response.statusText);
@@ -136,14 +136,19 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
                       {new Date(exam.date).toLocaleDateString('tr-TR')}
                     </div>
                     <div className="mt-3 flex gap-2">
-                       {onSolveExam && (
-                         <button
-                           onClick={() => onSolveExam(exam.id)}
-                           className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex-1"
-                         >
-                           Sınavı Başlat
-                         </button>
-                       )}
+                      {onSolveExam && (
+                        <button
+                          onClick={() => onSolveExam(exam.id)}
+                          className="primary-btn"
+                          style={{
+                            flex: 1,
+                            fontSize: '0.75rem',
+                            height: '2rem',
+                          }}
+                        >
+                          Sınavı Başlat
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

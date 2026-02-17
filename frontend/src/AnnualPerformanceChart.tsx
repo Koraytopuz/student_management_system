@@ -21,6 +21,17 @@ export const AnnualPerformanceChart: React.FC<AnnualPerformanceChartProps> = ({
 
   const hasData = Array.isArray(radarData) && radarData.length > 0;
 
+  const subjectCount = hasData ? radarData.length : 0;
+  const avgStudent =
+    hasData && radarData.length > 0
+      ? radarData.reduce((acc, r) => acc + (r.student ?? 0), 0) / radarData.length
+      : 0;
+  const avgClass =
+    hasData && radarData.length > 0
+      ? radarData.reduce((acc, r) => acc + (r.classAvg ?? 0), 0) / radarData.length
+      : 0;
+  const avgDelta = avgStudent - avgClass;
+
   return (
     <div className="glass-card annual-report-card annual-report-card--radar">
       <div className="annual-report-card-header">
@@ -43,6 +54,31 @@ export const AnnualPerformanceChart: React.FC<AnnualPerformanceChartProps> = ({
             <span className="annual-report-legend-swatch annual-report-legend-swatch--class" />
             Sınıf Ort.
           </span>
+          {hasData && (
+            <div
+              style={{
+                marginTop: '0.35rem',
+                textAlign: 'right',
+                fontSize: '0.7rem',
+                color: 'rgba(148,163,184,0.9)',
+                lineHeight: 1.3,
+              }}
+            >
+              <div>
+                Ortalama fark:{' '}
+                <span
+                  style={{
+                    fontWeight: 600,
+                    color: avgDelta >= 0 ? '#4ade80' : '#fecaca',
+                  }}
+                >
+                  {avgDelta >= 0 ? '+' : ''}
+                  {avgDelta.toFixed(1)} puan
+                </span>
+              </div>
+              <div>{subjectCount} derste karşılaştırma</div>
+            </div>
+          )}
         </div>
       </div>
       {hasData ? (

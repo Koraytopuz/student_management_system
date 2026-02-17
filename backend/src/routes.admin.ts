@@ -242,10 +242,11 @@ router.post(
   async (_req: AuthenticatedRequest, res) => {
     try {
       // 1) Hedef öğrenciyi bul
+      // Önce 12. sınıf sayısal sınıflardan birinde "Ali" isimli öğrenciyi bulmaya çalış
       let student = await prisma.user.findFirst({
         where: {
           role: 'student',
-          classId: 'c_12_say',
+          gradeLevel: '12',
           name: { contains: 'Ali', mode: 'insensitive' },
         },
       });
@@ -523,6 +524,7 @@ router.get('/class-groups', authenticate('admin'), async (_req, res) => {
       name: true,
       gradeLevel: true,
       stream: true,
+      section: true,
     },
   });
 
@@ -532,8 +534,236 @@ router.get('/class-groups', authenticate('admin'), async (_req, res) => {
       name: g.name,
       gradeLevel: g.gradeLevel,
       stream: g.stream,
+      section: g.section,
     })),
   );
+});
+
+// ========== DEVAMSIZLIK / YOKLAMA (ADMIN) ==========
+
+/**
+ * GET /admin/attendance/classes?days=7
+ * Yönetici için sınıf bazlı yoklama özetleri
+ */
+router.get('/attendance/classes', authenticate('admin'), async (req, res) => {
+  const daysRaw = String(req.query.days ?? '7');
+  const days = Number.isFinite(Number(daysRaw)) ? Math.max(1, Math.min(90, Number(daysRaw))) : 7;
+
+  const since = new Date();
+  since.setDate(since.getDate() - (days - 1));
+  since.setHours(0, 0, 0, 0);
+
+  try {
+    const [classGroups, grouped] = await Promise.all([
+      prisma.classGroup.findMany({
+        orderBy: [{ gradeLevel: 'asc' }, { name: 'asc' }],
+        include: {
+          teacher: { select: { id: true, name: true } },
+          students: { select: { studentId: true } },
+        },
+      }),
+      prisma.classAttendance.groupBy({
+        by: ['classGroupId', 'present'],
+        where: { date: { gte: since } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const countsByClass = new Map<
+      string,
+      { presentCount: number; absentCount: number; totalRecords: number }
+    >();
+    for (const row of grouped) {
+      const prev = countsByClass.get(row.classGroupId) ?? { presentCount: 0, absentCount: 0, totalRecords: 0 };
+      const c = row._count._all;
+      if (row.present) prev.presentCount += c;
+      else prev.absentCount += c;
+      prev.totalRecords += c;
+      countsByClass.set(row.classGroupId, prev);
+    }
+
+    return res.json(
+      classGroups.map((cg) => {
+        const counts = countsByClass.get(cg.id) ?? { presentCount: 0, absentCount: 0, totalRecords: 0 };
+        return {
+          id: cg.id,
+          name: cg.name,
+          gradeLevel: cg.gradeLevel,
+          teacherId: cg.teacherId,
+          teacherName: cg.teacher?.name ?? 'Öğretmen',
+          studentCount: cg.students.length,
+          days,
+          ...counts,
+        };
+      }),
+    );
+  } catch (error) {
+    console.error('[admin/attendance/classes]', error);
+    return res.status(500).json({ error: 'Sınıf devamsızlık özetleri yüklenemedi.' });
+  }
+});
+
+/**
+ * GET /admin/attendance/classes/:classId/students?days=7
+ * Yönetici için seçili sınıftaki öğrencilerin yoklama özeti
+ */
+router.get('/attendance/classes/:classId/students', authenticate('admin'), async (req, res) => {
+  const classId = String(req.params.classId);
+  const daysRaw = String(req.query.days ?? '7');
+  const days = Number.isFinite(Number(daysRaw)) ? Math.max(1, Math.min(90, Number(daysRaw))) : 7;
+
+  const since = new Date();
+  since.setDate(since.getDate() - (days - 1));
+  since.setHours(0, 0, 0, 0);
+
+  try {
+    const classGroup = await prisma.classGroup.findUnique({
+      where: { id: classId },
+      include: {
+        teacher: { select: { id: true, name: true } },
+        students: {
+          include: {
+            student: { select: { id: true, name: true, gradeLevel: true, profilePictureUrl: true } },
+          },
+        },
+      },
+    });
+
+    if (!classGroup) {
+      return res.status(404).json({ error: 'Sınıf bulunamadı.' });
+    }
+
+    const studentIds = classGroup.students.map((s) => s.studentId);
+
+    const [grouped, recent] = await Promise.all([
+      prisma.classAttendance.groupBy({
+        by: ['studentId', 'present'],
+        where: { classGroupId: classId, date: { gte: since }, studentId: { in: studentIds } },
+        _count: { _all: true },
+      }),
+      prisma.classAttendance.findMany({
+        where: { classGroupId: classId, studentId: { in: studentIds } },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        take: 2000, // sınıf küçük; son kayıtları çıkarmak için yeterli
+        select: { studentId: true, date: true, present: true },
+      }),
+    ]);
+
+    const countsByStudent = new Map<string, { presentCount: number; absentCount: number; total: number }>();
+    for (const row of grouped) {
+      const prev = countsByStudent.get(row.studentId) ?? { presentCount: 0, absentCount: 0, total: 0 };
+      const c = row._count._all;
+      if (row.present) prev.presentCount += c;
+      else prev.absentCount += c;
+      prev.total += c;
+      countsByStudent.set(row.studentId, prev);
+    }
+
+    const lastByStudent = new Map<string, { date: string; present: boolean }>();
+    for (const r of recent) {
+      if (!lastByStudent.has(r.studentId)) {
+        lastByStudent.set(r.studentId, { date: r.date.toISOString(), present: r.present });
+      }
+    }
+
+    const students = classGroup.students
+      .map((s) => {
+        const counts = countsByStudent.get(s.studentId) ?? { presentCount: 0, absentCount: 0, total: 0 };
+        const last = lastByStudent.get(s.studentId) ?? null;
+        return {
+          studentId: s.student.id,
+          studentName: s.student.name,
+          gradeLevel: s.student.gradeLevel,
+          profilePictureUrl: s.student.profilePictureUrl,
+          days,
+          ...counts,
+          lastRecord: last,
+        };
+      })
+      .sort((a, b) => b.absentCount - a.absentCount || a.studentName.localeCompare(b.studentName, 'tr'));
+
+    return res.json({
+      classGroup: {
+        id: classGroup.id,
+        name: classGroup.name,
+        gradeLevel: classGroup.gradeLevel,
+        teacherId: classGroup.teacherId,
+        teacherName: classGroup.teacher?.name ?? 'Öğretmen',
+      },
+      students,
+    });
+  } catch (error) {
+    console.error('[admin/attendance/classes/:classId/students]', error);
+    return res.status(500).json({ error: 'Sınıf öğrenci devamsızlık özeti yüklenemedi.' });
+  }
+});
+
+/**
+ * GET /admin/attendance/students/:studentId/history?days=30
+ * Yönetici için öğrencinin yoklama geçmişi ve istatistikleri
+ */
+router.get('/attendance/students/:studentId/history', authenticate('admin'), async (req, res) => {
+  const studentId = String(req.params.studentId);
+  const daysRaw = String(req.query.days ?? '30');
+  const days = Number.isFinite(Number(daysRaw)) ? Math.max(1, Math.min(180, Number(daysRaw))) : 30;
+
+  const since = new Date();
+  since.setDate(since.getDate() - (days - 1));
+  since.setHours(0, 0, 0, 0);
+
+  try {
+    const student = await prisma.user.findFirst({
+      where: { id: studentId, role: 'student' },
+      select: { id: true, name: true, gradeLevel: true, classId: true },
+    });
+    if (!student) {
+      return res.status(404).json({ error: 'Öğrenci bulunamadı.' });
+    }
+
+    const records = await prisma.classAttendance.findMany({
+      where: { studentId, date: { gte: since } },
+      include: {
+        classGroup: { select: { id: true, name: true, gradeLevel: true } },
+        teacher: { select: { id: true, name: true } },
+      },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      take: 500,
+    });
+
+    const absentCount = records.filter((r) => !r.present).length;
+    const presentCount = records.filter((r) => r.present).length;
+    const total = records.length;
+    const absenceRate = total > 0 ? Math.round((absentCount / total) * 100) : 0;
+
+    const summaryText =
+      total === 0
+        ? `Son ${days} gün içinde yoklama kaydı bulunamadı.`
+        : `Son ${days} gün içinde ${absentCount} kez derse katılmadı. (Devamsızlık oranı %${absenceRate})`;
+
+    return res.json({
+      student: {
+        id: student.id,
+        name: student.name,
+        gradeLevel: student.gradeLevel,
+        classId: student.classId,
+      },
+      stats: { days, absentCount, presentCount, total, absenceRate, summaryText },
+      records: records.map((r) => ({
+        id: r.id,
+        date: r.date.toISOString(),
+        present: r.present,
+        notes: r.notes,
+        createdAt: r.createdAt.toISOString(),
+        classGroupId: r.classGroupId,
+        classGroupName: r.classGroup.name,
+        teacherId: r.teacherId,
+        teacherName: r.teacher?.name ?? 'Öğretmen',
+      })),
+    });
+  } catch (error) {
+    console.error('[admin/attendance/students/:studentId/history]', error);
+    return res.status(500).json({ error: 'Öğrenci devamsızlık geçmişi yüklenemedi.' });
+  }
 });
 
 router.post('/teachers', authenticate('admin'), async (req: AuthenticatedRequest, res: express.Response) => {

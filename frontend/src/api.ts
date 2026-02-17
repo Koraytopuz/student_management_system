@@ -97,6 +97,8 @@ export interface Conversation {
   userId: string;
   userName: string;
   userRole: string;
+  /** Öğretmen için branş/alan bilgisi (opsiyonel) */
+  subjectAreas?: string[];
   studentId?: string;
   studentName?: string;
   lastMessage?: Message;
@@ -237,6 +239,7 @@ export interface Question {
   id: string;
   testId: string;
   text: string;
+  imageUrl?: string | null;
   type: QuestionType;
   choices?: string[];
   correctAnswer?: string;
@@ -768,6 +771,18 @@ export function getParentNotifications(token: string, limit = 5) {
   return apiRequest<ParentNotification[]>(`/parent/notifications?limit=${limit}`, {}, token);
 }
 
+export function getParentUnreadNotificationCount(token: string) {
+  return apiRequest<{ count: number }>('/parent/notifications/unread-count', {}, token);
+}
+
+export function markParentNotificationRead(token: string, notificationId: string) {
+  return apiRequest(`/parent/notifications/${notificationId}/read`, { method: 'PUT' }, token);
+}
+
+export function markAllParentNotificationsRead(token: string) {
+  return apiRequest('/parent/notifications/read-all', { method: 'PUT' }, token);
+}
+
 export function getTeacherNotifications(token: string, limit = 5) {
   return apiRequest<TeacherNotification[]>(`/teacher/notifications?limit=${limit}`, {}, token);
 }
@@ -1005,8 +1020,9 @@ export function getStudentTeachers(token: string) {
   return apiRequest<TeacherListItem[]>('/student/teachers', {}, token);
 }
 
-export function getParentTeachers(token: string) {
-  return apiRequest<TeacherListItem[]>('/parent/teachers', {}, token);
+export function getParentTeachers(token: string, studentId?: string | null) {
+  const qs = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
+  return apiRequest<TeacherListItem[]>(`/parent/teachers${qs}`, {}, token);
 }
 
 export function sendStudentAiMessage(
@@ -1615,8 +1631,209 @@ export function joinStudentLiveMeeting(token: string, meetingId: string) {
   );
 }
 
+// ========== SINIF BAZLI DEVRAMSIZLIK API'LERİ ==========
+
+export interface ClassGroupForAttendance {
+  id: string;
+  name: string;
+  gradeLevel: string;
+  studentCount: number;
+}
+
+export interface StudentForAttendance {
+  id: string;
+  name: string;
+  gradeLevel: string | null;
+  profilePictureUrl: string | null;
+}
+
+export interface AttendanceClassGroupData {
+  classGroup: {
+    id: string;
+    name: string;
+    gradeLevel: string;
+  };
+  students: StudentForAttendance[];
+}
+
+export interface AttendanceRecord {
+  id: string;
+  classGroupId: string;
+  classGroupName: string;
+  studentId: string;
+  studentName: string;
+  date: string;
+  present: boolean;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface ParentAttendanceRecord {
+  id: string;
+  studentId: string;
+  studentName: string;
+  teacherId: string;
+  teacherName: string;
+  classGroupId: string;
+  classGroupName: string;
+  date: string;
+  present: boolean;
+  notes: string | null;
+  createdAt: string;
+}
+
+// ========== DEVAMSIZLIK / YOKLAMA (ADMIN) ==========
+
+export interface AdminAttendanceClassSummary {
+  id: string;
+  name: string;
+  gradeLevel: string;
+  teacherId: string;
+  teacherName: string;
+  studentCount: number;
+  days: number;
+  presentCount: number;
+  absentCount: number;
+  totalRecords: number;
+}
+
+export interface AdminAttendanceClassStudentsResponse {
+  classGroup: {
+    id: string;
+    name: string;
+    gradeLevel: string;
+    teacherId: string;
+    teacherName: string;
+  };
+  students: Array<{
+    studentId: string;
+    studentName: string;
+    gradeLevel: string | null;
+    profilePictureUrl: string | null;
+    days: number;
+    presentCount: number;
+    absentCount: number;
+    total: number;
+    lastRecord: { date: string; present: boolean } | null;
+  }>;
+}
+
+export interface AdminAttendanceStudentHistoryResponse {
+  student: {
+    id: string;
+    name: string;
+    gradeLevel: string | null;
+    classId: string | null;
+  };
+  stats: {
+    days: number;
+    absentCount: number;
+    presentCount: number;
+    total: number;
+    absenceRate: number;
+    summaryText: string;
+  };
+  records: Array<{
+    id: string;
+    date: string;
+    present: boolean;
+    notes: string | null;
+    createdAt: string;
+    classGroupId: string;
+    classGroupName: string;
+    teacherId: string;
+    teacherName: string;
+  }>;
+}
+
+/** Öğretmenin yoklama alabileceği sınıfları listele */
+export function getAttendanceClasses(token: string) {
+  return apiRequest<ClassGroupForAttendance[]>('/teacher/attendance/classes', {}, token);
+}
+
+/** Belirli bir sınıftaki öğrencileri listele (yoklama için) */
+export function getAttendanceClassStudents(token: string, classId: string) {
+  return apiRequest<AttendanceClassGroupData>(`/teacher/attendance/classes/${classId}/students`, {}, token);
+}
+
+/** Sınıf bazlı yoklama kaydet */
+export function submitClassAttendance(
+  token: string,
+  classGroupId: string,
+  date: string,
+  attendance: Array<{ studentId: string; present: boolean; notes?: string }>,
+) {
+  return apiRequest<{ success: boolean; saved: number; attendance: Array<{ studentId: string; present: boolean }> }>(
+    '/teacher/attendance/submit',
+    {
+      method: 'POST',
+      body: JSON.stringify({ classGroupId, date, attendance }),
+    },
+    token,
+  );
+}
+
+/** Yoklama kayıtlarını listele */
+export function getAttendanceRecords(
+  token: string,
+  filters?: {
+    classGroupId?: string;
+    studentId?: string;
+    startDate?: string;
+    endDate?: string;
+  },
+) {
+  const params = new URLSearchParams();
+  if (filters?.classGroupId) params.append('classGroupId', filters.classGroupId);
+  if (filters?.studentId) params.append('studentId', filters.studentId);
+  if (filters?.startDate) params.append('startDate', filters.startDate);
+  if (filters?.endDate) params.append('endDate', filters.endDate);
+  const query = params.toString();
+  return apiRequest<AttendanceRecord[]>(`/teacher/attendance/records${query ? `?${query}` : ''}`, {}, token);
+}
+
 export function getTeacherAnnouncements(token: string) {
   return apiRequest<TeacherAnnouncement[]>('/teacher/announcements', {}, token);
+}
+
+/** Veli: Öğrencinin devamsızlık kayıtlarını getir */
+export function getParentStudentAttendance(
+  token: string,
+  studentId: string,
+  filters?: {
+    startDate?: string;
+    endDate?: string;
+  },
+) {
+  const params = new URLSearchParams();
+  if (filters?.startDate) params.append('startDate', filters.startDate);
+  if (filters?.endDate) params.append('endDate', filters.endDate);
+  const query = params.toString();
+  return apiRequest<ParentAttendanceRecord[]>(
+    `/parent/attendance/${studentId}${query ? `?${query}` : ''}`,
+    {},
+    token,
+  );
+}
+
+export function getAdminAttendanceClasses(token: string, days = 7) {
+  return apiRequest<AdminAttendanceClassSummary[]>(`/admin/attendance/classes?days=${days}`, {}, token);
+}
+
+export function getAdminAttendanceClassStudents(token: string, classId: string, days = 7) {
+  return apiRequest<AdminAttendanceClassStudentsResponse>(
+    `/admin/attendance/classes/${classId}/students?days=${days}`,
+    {},
+    token,
+  );
+}
+
+export function getAdminAttendanceStudentHistory(token: string, studentId: string, days = 30) {
+  return apiRequest<AdminAttendanceStudentHistoryResponse>(
+    `/admin/attendance/students/${studentId}/history?days=${days}`,
+    {},
+    token,
+  );
 }
 
 export function getTeacherHelpRequests(token: string, status?: string) {
@@ -1753,6 +1970,99 @@ export function createTeacherAnnouncement(
     },
     token,
   );
+}
+
+export function updateTeacherAnnouncement(
+  token: string,
+  id: string,
+  payload: { title: string; message: string; scheduledDate?: string | null },
+) {
+  return apiRequest<TeacherAnnouncement>(
+    `/teacher/announcements/${id}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        title: payload.title,
+        message: payload.message,
+        scheduledDate: payload.scheduledDate ?? undefined,
+      }),
+    },
+    token,
+  );
+}
+
+export function deleteTeacherAnnouncement(token: string, id: string) {
+  return apiRequest<void>(`/teacher/announcements/${id}`, { method: 'DELETE' }, token);
+}
+
+export interface LessonScheduleEntryDto {
+  id: string;
+  gradeLevel: string;
+  subjectId: string;
+  subjectName: string;
+  dayOfWeek: number;
+  hour: number;
+  topic?: string;
+}
+
+export function getTeacherLessonScheduleEntries(
+  token: string,
+  params: { scope: string; gradeLevel?: string; subjectId?: string; studentId?: string },
+) {
+  const q = new URLSearchParams();
+  q.set('scope', params.scope);
+  if (params.gradeLevel) q.set('gradeLevel', params.gradeLevel);
+  if (params.subjectId) q.set('subjectId', params.subjectId);
+  if (params.studentId) q.set('studentId', params.studentId);
+  return apiRequest<LessonScheduleEntryDto[]>(`/teacher/lesson-schedule-entries?${q}`, {}, token);
+}
+
+export function createTeacherLessonScheduleEntry(
+  token: string,
+  payload: {
+    scope: string;
+    gradeLevel?: string;
+    subjectId?: string;
+    studentId?: string;
+    dayOfWeek: number;
+    hour: number;
+    subjectName: string;
+    topic?: string;
+  },
+) {
+  return apiRequest<LessonScheduleEntryDto>(
+    '/teacher/lesson-schedule-entries',
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+export function updateTeacherLessonScheduleEntry(
+  token: string,
+  id: string,
+  payload: Partial<{
+    gradeLevel: string;
+    subjectId: string;
+    studentId: string;
+    dayOfWeek: number;
+    hour: number;
+    subjectName: string;
+    topic: string;
+  }>,
+) {
+  return apiRequest<LessonScheduleEntryDto>(
+    `/teacher/lesson-schedule-entries/${id}`,
+    { method: 'PUT', body: JSON.stringify(payload) },
+    token,
+  );
+}
+
+export function deleteTeacherLessonScheduleEntry(token: string, id: string) {
+  return apiRequest<void>(`/teacher/lesson-schedule-entries/${id}`, { method: 'DELETE' }, token);
+}
+
+export function getStudentLessonScheduleEntries(token: string) {
+  return apiRequest<LessonScheduleEntryDto[]>('/student/lesson-schedule-entries', {}, token);
 }
 
 export function sendTeacherAiMessage(
@@ -2311,7 +2621,7 @@ export async function getAnalysisPdfObjectUrl(
  */
 export function resolveContentUrl(url?: string | null): string {
   if (!url) return '';
-  if (url.startsWith('/uploads')) {
+  if (url.startsWith('/uploads') || url.startsWith('/tests')) {
     return `${getApiBaseUrl()}${url}`;
   }
   return url;
@@ -2330,8 +2640,17 @@ export interface ExamSimple {
   answers?: Record<string, string>; // Add answers for backend compatibility if needed
 }
 
+type ExamSimpleRaw = Omit<ExamSimple, 'fileUrl'> & { fileUrl?: string | null };
+
 export async function getStudentExamDetail(token: string, examId: number) {
-  return apiRequest<ExamSimple>(`/api/student/exams/${examId}`, { method: 'GET' }, token);
+  // Backend route: /student/exams/:id (studentRoutes)
+  const raw = await apiRequest<ExamSimpleRaw>(`/student/exams/${examId}`, { method: 'GET' }, token);
+  // PDF / kitapçık yolu backend'den relatif gelirse backend base URL ile birleştir
+  const resolvedFileUrl = resolveContentUrl(raw.fileUrl ?? undefined);
+  return {
+    ...raw,
+    fileUrl: resolvedFileUrl,
+  } as ExamSimple;
 }
 
 export async function submitStudentExamAnswers(
@@ -2339,8 +2658,9 @@ export async function submitStudentExamAnswers(
   examId: number,
   answers: Record<string, string>
 ) {
+  // Backend route: /student/exams/:id/submit (studentRoutes)
   return apiRequest<void>(
-    `/api/student/exams/${examId}/submit`,
+    `/student/exams/${examId}/submit`,
     {
       method: 'POST',
       body: JSON.stringify({ answers }),

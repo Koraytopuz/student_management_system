@@ -35,6 +35,7 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
   const [selectedParentId, setSelectedParentId] = useState<string>('');
   const [parentMessageText, setParentMessageText] = useState('');
   const [sendingParentMessage, setSendingParentMessage] = useState(false);
+  const [parentMessageError, setParentMessageError] = useState<string | null>(null);
   const [parentMessageSuccess, setParentMessageSuccess] = useState(false);
 
   // Velileri, sınıf seçildiğinde yükle (öğrenci seçildiğinde veli listesi için)
@@ -101,10 +102,11 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
       setParentMessageText('');
       setSelectedParentId('');
       setParentMessageSuccess(true);
+      setParentMessageError(null);
       window.setTimeout(() => setParentMessageSuccess(false), 5000);
     } catch (e) {
-      // eslint-disable-next-line no-alert
-      alert(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
+      setParentMessageError(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
+      window.setTimeout(() => setParentMessageError(null), 5000);
     } finally {
       setSendingParentMessage(false);
     }
@@ -117,13 +119,12 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
   const selectedStudent = students.find((s) => s.id === selectedStudentId);
 
   const uniqueAllowedGrades = useMemo(() => {
+    // Sadece öğretmenin yetkili olduğu sınıf seviyelerini göster
     const raw = Array.from(
-      new Set(
-        (allowedGrades.length > 0 ? allowedGrades : students.map((s) => s.gradeLevel).filter(Boolean)) as string[],
-      ),
+      new Set(allowedGrades.filter(Boolean) as string[]),
     );
     return sortGradeLevelsDescending(raw);
-  }, [allowedGrades, students]);
+  }, [allowedGrades]);
 
   return (
     <div className="page-grid">
@@ -382,7 +383,16 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
               />
               {parentMessageSuccess && (
                 <div className="parent-message-success" role="status">
-                  Mesajınız başarıyla iletilmiştir.
+                  Mesaj iletildi.
+                </div>
+              )}
+              {parentMessageError && (
+                <div
+                  className="error"
+                  role="alert"
+                  style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', borderRadius: 8 }}
+                >
+                  {parentMessageError}
                 </div>
               )}
               <div className="parent-message-actions">

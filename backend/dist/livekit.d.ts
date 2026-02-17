@@ -6,6 +6,8 @@ export declare function createLiveKitToken(params: {
     isTeacher: boolean;
 }): Promise<string>;
 export declare function getLiveKitUrl(): string;
+/** Odada en az bir katılımcı (öğretmen) var mı kontrol et */
+export declare function hasParticipantsInRoom(roomName: string): Promise<boolean>;
 /** Tüm katılımcıların mikrofonlarını kapat (öğretmen için). TrackType.AUDIO = 0 */
 export declare function muteAllParticipantsInRoom(roomName: string): Promise<{
     muted: number;

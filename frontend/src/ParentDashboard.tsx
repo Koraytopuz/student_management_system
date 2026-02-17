@@ -1,12 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Bell, BookOpen, CalendarCheck, ClipboardList, MessageSquare, PhoneCall, BarChart3, Video } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Bell, BookOpen, CalendarCheck, ClipboardList, MessageSquare, BarChart3, Video, Maximize2, Minimize2, Send } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import {
   apiRequest,
   downloadAnalysisPdf,
   getParentCalendar,
   getParentChildSummary,
-  getParentChildFeedback,
   getParentTeachers,
   createParentComplaint,
   getParentConversations,
@@ -14,9 +13,11 @@ import {
   getParentMeetings,
   getParentNotifications,
   getParentConversation,
-  joinParentMeeting,
   markParentMessageRead,
   sendParentMessage,
+  getParentStudentAttendance,
+  markParentNotificationRead,
+  markAllParentNotificationsRead,
   resolveContentUrl,
   type CalendarEvent,
   type Conversation,
@@ -25,16 +26,17 @@ import {
   type ParentMeeting,
   type ParentNotification,
   type StudentDetailSummary,
-  type TeacherFeedbackItem,
   type TeacherListItem,
+  type ParentAttendanceRecord,
 } from './api';
 import { ParentReports } from './ParentReports';
-import { DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
+import { DashboardLayout, GlassCard, TagChip } from './components/DashboardPrimitives';
 import type { BreadcrumbItem, SidebarItem } from './components/DashboardPrimitives';
 import { useApiState } from './hooks/useApiState';
 import { useSearchParams } from 'react-router-dom';
+import { NotificationDetailModal, type NotificationDetailModalData } from './components/NotificationDetailModal';
 
-type ParentTab = 'overview' | 'calendar' | 'messages' | 'notifications' | 'feedback' | 'complaints' | 'reports';
+type ParentTab = 'overview' | 'calendar' | 'messages' | 'notifications' | 'complaints' | 'reports';
 
 const getWeekRange = () => {
   const now = new Date();
@@ -79,6 +81,7 @@ export const ParentDashboard: React.FC = () => {
   }, [searchParams, setSearchParams]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
+  const [messageFeedback, setMessageFeedback] = useState<string | null>(null);
 
   const dashboardState = useApiState<ParentDashboardSummary>(null);
   const summaryState = useApiState<StudentDetailSummary>(null);
@@ -87,7 +90,14 @@ export const ParentDashboard: React.FC = () => {
   const meetingsState = useApiState<ParentMeeting[]>([]);
   const conversationsState = useApiState<Conversation[]>([]);
   const messagesState = useApiState<Message[]>([]);
-  const feedbackState = useApiState<TeacherFeedbackItem[]>([]);
+  const attendanceState = useApiState<ParentAttendanceRecord[]>([]);
+
+  const unreadNotificationsCount =
+    notificationsState.data?.filter((n) => !n.read).length ?? 0;
+
+  const [notificationDetailOpen, setNotificationDetailOpen] = useState(false);
+  const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
+  const activeNotification = (notificationsState.data ?? []).find((n) => n.id === activeNotificationId) ?? null;
 
   useEffect(() => {
     if (!token) return;
@@ -108,8 +118,11 @@ export const ParentDashboard: React.FC = () => {
 
   useEffect(() => {
     if (!token || !selectedStudentId) return;
-    if (activeTab !== 'feedback') return;
-    feedbackState.run(() => getParentChildFeedback(token, selectedStudentId)).catch(() => {});
+    if (activeTab !== 'calendar') return;
+    const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    attendanceState
+      .run(() => getParentStudentAttendance(token, selectedStudentId, { startDate }))
+      .catch(() => {});
   }, [token, selectedStudentId, activeTab]);
 
   useEffect(() => {
@@ -151,36 +164,31 @@ export const ParentDashboard: React.FC = () => {
   const handleReply = async () => {
     if (!token || !activeConversation) return;
 
-    // Eğer yanıt metni boşsa, bu çağrı "Ara" isteği olarak yorumlanır
     const text = replyText.trim() || 'Veli sizinle canlı görüşme talep ediyor.';
-    const subject = replyText.trim()
-      ? undefined
-      : 'Canlı görüşme talebi';
+    const subject = replyText.trim() ? undefined : 'Canlı görüşme talebi';
 
-    const message = await sendParentMessage(token, {
-      toUserId: activeConversation.userId,
-      studentId: activeConversation.studentId,
-      text,
-      // Öğretmene anlamlı bir başlık iletilsin
-      subject,
-    });
-    messagesState.setData([...(messagesState.data ?? []), message]);
-    setReplyText('');
-  };
-
-  const handleJoinMeeting = async () => {
-    if (!token) return;
-    const meeting = meetingsState.data?.[0];
-    if (!meeting) return;
-    const res = await joinParentMeeting(token, meeting.id);
-    window.open(res.meetingUrl, '_blank', 'noopener,noreferrer');
+    try {
+      const message = await sendParentMessage(token, {
+        toUserId: activeConversation.userId,
+        studentId: activeConversation.studentId,
+        text,
+        subject,
+      });
+      messagesState.setData([...(messagesState.data ?? []), message]);
+      setReplyText('');
+      setMessageFeedback('Mesaj iletildi.');
+      window.setTimeout(() => setMessageFeedback(null), 4000);
+    } catch (e) {
+      setMessageFeedback(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
+      window.setTimeout(() => setMessageFeedback(null), 5000);
+    }
   };
 
   const sidebarItems = useMemo<SidebarItem[]>(
     () => [
       {
         id: 'overview',
-        label: 'Akademik Durum',
+        label: 'Genel Bakış',
         icon: <BarChart3 size={18} />,
         description: 'Özet',
         active: activeTab === 'overview',
@@ -212,12 +220,12 @@ export const ParentDashboard: React.FC = () => {
         onClick: () => setActiveTab('messages'),
       },
       {
-        id: 'feedback',
-        label: 'Değerlendirme',
-        icon: <BookOpen size={18} />,
-        description: 'Öğretmen notu',
-        active: activeTab === 'feedback',
-        onClick: () => setActiveTab('feedback'),
+        id: 'notifications',
+        label: 'Bildirimler',
+        icon: <Bell size={18} />,
+        description: 'Kurum & öğretmen',
+        active: activeTab === 'notifications',
+        onClick: () => setActiveTab('notifications'),
       },
       {
         id: 'complaints',
@@ -228,17 +236,16 @@ export const ParentDashboard: React.FC = () => {
         onClick: () => setActiveTab('complaints'),
       },
     ],
-    [activeTab, conversationsState.data],
+    [activeTab, conversationsState.data, unreadNotificationsCount],
   );
 
   const parentBreadcrumbs = useMemo<BreadcrumbItem[]>(() => {
     const tabLabels: Record<string, string> = {
-      overview: 'Akademik Durum',
+      overview: 'Genel Bakış',
       calendar: 'Devamsızlık',
       reports: 'Gelişim Raporu',
       messages: 'İletişim',
       notifications: 'Bildirimler',
-      feedback: 'Değerlendirme',
       complaints: 'Şikayet/Öneri',
     };
     const items: BreadcrumbItem[] = [
@@ -256,10 +263,6 @@ export const ParentDashboard: React.FC = () => {
       tagline={selectedChild?.studentName ?? 'Veli Yönetim Paneli'}
       title="Veli Yönetim Paneli"
       subtitle="Akademik performans, takvim ve mesajları gerçek zamanlı takip edin."
-      status={{
-        label: selectedChild?.status === 'active' ? 'Aktif - Okulda' : 'Pasif',
-        tone: selectedChild?.status === 'active' ? 'success' : 'warning',
-      }}
       breadcrumbs={parentBreadcrumbs}
       sidebarItems={sidebarItems}
       user={{
@@ -268,35 +271,49 @@ export const ParentDashboard: React.FC = () => {
         subtitle: 'Veli',
         profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
       }}
-      headerActions={
-        <button
-          type="button"
-          className="ghost-btn"
-          aria-label="Bildirimler"
-          onClick={() => setActiveTab('notifications')}
-        >
-          <Bell size={16} />
-        </button>
-      }
       onLogout={logout}
     >
       {activeTab === 'overview' && (
         <ParentOverview
           summary={summaryState.data}
-          notifications={notificationsState.data ?? []}
-          meetings={meetingsState.data ?? []}
-          onJoinMeeting={handleJoinMeeting}
-          loading={summaryState.loading}
-          token={token}
-          onMarkNotificationRead={() => notificationsState.run(() => getParentNotifications(token!, 50)).catch(() => {})}
+          onNavigate={(tab: ParentTab) => setActiveTab(tab)}
         />
       )}
       {activeTab === 'calendar' && (
-        <ParentCalendar events={calendarState.data ?? []} loading={calendarState.loading} />
+        <ParentCalendar
+          events={calendarState.data ?? []}
+          attendance={attendanceState.data ?? []}
+          loading={calendarState.loading}
+          attendanceLoading={attendanceState.loading}
+        />
       )}
       {activeTab === 'reports' && <ParentReports />}
       {activeTab === 'notifications' && (
-        <GlassCard title="Bildirimler" subtitle="Kurum ve öğretmen bildirimleri">
+        <GlassCard
+          title="Bildirimler"
+          subtitle="Kurum ve öğretmen bildirimleri"
+          actions={
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={!token || unreadNotificationsCount === 0}
+              onClick={async () => {
+                if (!token) return;
+                try {
+                  await markAllParentNotificationsRead(token);
+                  // local state update for instant badge drop
+                  notificationsState.setData((notificationsState.data ?? []).map((n) => ({ ...n, read: true })));
+                  window.dispatchEvent(new Event('notifications-updated'));
+                } catch {
+                  // ignore
+                }
+              }}
+              title="Tüm bildirimleri okundu yap"
+            >
+              Tümünü Okundu Yap
+            </button>
+          }
+        >
           <div className="list-stack">
             {notificationsState.loading && (notificationsState.data ?? []).length === 0 && (
               <div className="empty-state">Yükleniyor...</div>
@@ -305,7 +322,16 @@ export const ParentDashboard: React.FC = () => {
               <div className="empty-state">Henüz bildirim yok.</div>
             )}
             {(notificationsState.data ?? []).map((item) => (
-              <div className="list-row" key={item.id} style={{ alignItems: 'flex-start' }}>
+              <button
+                type="button"
+                className="list-row"
+                key={item.id}
+                style={{ alignItems: 'flex-start', textAlign: 'left', cursor: 'pointer' }}
+                onClick={() => {
+                  setActiveNotificationId(item.id);
+                  setNotificationDetailOpen(true);
+                }}
+              >
                 <div style={{ flex: 1 }}>
                   <strong>{item.title}</strong>
                   <small>{item.body}</small>
@@ -320,7 +346,8 @@ export const ParentDashboard: React.FC = () => {
                         <button
                           type="button"
                           className="primary-btn"
-                          onClick={async () => {
+                          onClick={async (e) => {
+                            e.stopPropagation();
                             if (!token) return;
                             try {
                               const payload = JSON.parse(item.relatedEntityId!) as { studentId: string; examId: number };
@@ -339,12 +366,81 @@ export const ParentDashboard: React.FC = () => {
                       </div>
                     )}
                 </div>
-                <TagChip label={item.read ? 'Okundu' : 'Yeni'} tone={item.read ? 'success' : 'warning'} />
-              </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <TagChip label={item.read ? 'Okundu' : 'Yeni'} tone={item.read ? 'success' : 'warning'} />
+                  {!item.read && token && (
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          await markParentNotificationRead(token, item.id);
+                          notificationsState.setData(
+                            (notificationsState.data ?? []).map((n) =>
+                              n.id === item.id ? { ...n, read: true } : n,
+                            ),
+                          );
+                          window.dispatchEvent(new Event('notifications-updated'));
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                      title="Okundu olarak işaretle"
+                    >
+                      Okundu
+                    </button>
+                  )}
+                </div>
+              </button>
             ))}
           </div>
         </GlassCard>
       )}
+
+      <NotificationDetailModal
+        open={notificationDetailOpen}
+        notification={
+          activeNotification
+            ? ({
+                id: activeNotification.id,
+                title: activeNotification.title,
+                body: activeNotification.body,
+                createdAt: activeNotification.createdAt,
+                read: activeNotification.read,
+                type: activeNotification.type,
+                relatedEntityType: activeNotification.relatedEntityType,
+                relatedEntityId: activeNotification.relatedEntityId,
+              } satisfies NotificationDetailModalData)
+            : null
+        }
+        onClose={() => setNotificationDetailOpen(false)}
+        actions={
+          activeNotification && !activeNotification.read && token ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={async () => {
+                if (!token) return;
+                try {
+                  await markParentNotificationRead(token, activeNotification.id);
+                  notificationsState.setData(
+                    (notificationsState.data ?? []).map((n) =>
+                      n.id === activeNotification.id ? { ...n, read: true } : n,
+                    ),
+                  );
+                  window.dispatchEvent(new Event('notifications-updated'));
+                } catch {
+                  // ignore
+                }
+              }}
+            >
+              Okundu
+            </button>
+          ) : null
+        }
+      />
       {activeTab === 'messages' && (
         <ParentMessages
           conversations={conversationsState.data ?? []}
@@ -356,17 +452,20 @@ export const ParentDashboard: React.FC = () => {
           onReply={handleReply}
           loading={messagesState.loading}
           error={messagesState.error}
+          messageFeedback={messageFeedback}
         />
       )}
-      {activeTab === 'feedback' && (
-        <ParentFeedback items={feedbackState.data ?? []} loading={feedbackState.loading} error={feedbackState.error} />
+      {activeTab === 'complaints' && (
+        <ParentComplaints token={token} studentId={selectedStudentId} />
       )}
-      {activeTab === 'complaints' && <ParentComplaints token={token} />}
     </DashboardLayout>
   );
 };
 
-const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
+const ParentComplaints: React.FC<{ token: string | null; studentId: string | null }> = ({
+  token,
+  studentId,
+}) => {
   const [teachers, setTeachers] = useState<TeacherListItem[]>([]);
   const [loadingTeachers, setLoadingTeachers] = useState(false);
   const [form, setForm] = useState<{ aboutTeacherId: string; subject: string; body: string }>({
@@ -381,11 +480,17 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
   useEffect(() => {
     if (!token) return;
     setLoadingTeachers(true);
-    getParentTeachers(token)
+    getParentTeachers(token, studentId)
       .then(setTeachers)
       .catch(() => {})
       .finally(() => setLoadingTeachers(false));
-  }, [token]);
+  }, [token, studentId]);
+
+  useEffect(() => {
+    if (!form.aboutTeacherId) return;
+    if (teachers.some((t) => t.id === form.aboutTeacherId)) return;
+    setForm((p) => ({ ...p, aboutTeacherId: '' }));
+  }, [teachers, form.aboutTeacherId]);
 
   const handleSubmit = async () => {
     if (!token) return;
@@ -529,45 +634,16 @@ const ParentComplaints: React.FC<{ token: string | null }> = ({ token }) => {
   );
 };
 
-const ParentFeedback: React.FC<{
-  items: TeacherFeedbackItem[];
-  loading: boolean;
-  error: string | null;
-}> = ({ items, loading, error }) => (
-  <GlassCard title="Öğretmen Değerlendirmeleri" subtitle="Sadece veli görebilir">
-    {loading && <div className="empty-state">Yükleniyor...</div>}
-    {error && <div className="error">{error}</div>}
-    {!loading && items.length === 0 && <div className="empty-state">Henüz değerlendirme yok.</div>}
-    <div className="list-stack">
-      {items.map((f) => (
-        <div key={f.id} className="list-row" style={{ alignItems: 'flex-start' }}>
-          <div style={{ flex: 1 }}>
-            <strong style={{ display: 'block' }}>{f.title}</strong>
-            <small style={{ display: 'block', marginTop: '0.15rem' }}>
-              {f.teacherName} · {new Date(f.createdAt).toLocaleString('tr-TR')}
-            </small>
-            <div style={{ marginTop: '0.45rem', whiteSpace: 'pre-wrap', fontSize: '0.9rem', lineHeight: 1.5 }}>
-              {f.content}
-            </div>
-          </div>
-          <TagChip label={f.type} tone="info" />
-        </div>
-      ))}
-    </div>
-  </GlassCard>
-);
-
 const ParentOverview: React.FC<{
   summary: StudentDetailSummary | null;
-  notifications: ParentNotification[];
-  meetings: ParentMeeting[];
-  onJoinMeeting: () => void;
-  loading: boolean;
-  token: string | null;
-  onMarkNotificationRead: () => void;
-}> = ({ summary, notifications, meetings, onJoinMeeting, loading, token, onMarkNotificationRead }) => {
-  const quick = summary?.quickStats;
-
+  notifications?: ParentNotification[];
+  meetings?: ParentMeeting[];
+  onJoinMeeting?: () => void;
+  loading?: boolean;
+  token?: string | null;
+  onMarkNotificationRead?: () => void;
+  onNavigate?: (tab: ParentTab) => void;
+}> = ({ summary, onNavigate }) => {
   return (
     <>
       <div
@@ -623,117 +699,34 @@ const ParentOverview: React.FC<{
         </div>
       </div>
 
-      <div className="metric-grid">
-        <MetricCard
-          label="Ortalama Skor"
-          value={`${quick?.averageScorePercent ?? 0}%`}
-          helper="Son 7 gün"
-          trendLabel={`${quick?.testsSolvedLast7Days ?? 0} test`}
-          trendTone="positive"
-        >
-          <div className="sparkline-bar" />
-        </MetricCard>
-        <MetricCard
-          label="Çalışma Süresi"
-          value={`${quick?.totalStudyMinutes ?? 0} dk`}
-          helper="Toplam izleme"
-          trendLabel="Günlük hedef"
-        >
-          <div className="sparkline-bar" />
-        </MetricCard>
-        <MetricCard
-          label="Bekleyen Ödev"
-          value={`${quick?.pendingAssignmentsCount ?? 0}`}
-          helper={`Geciken: ${quick?.overdueAssignmentsCount ?? 0}`}
-          trendLabel="Haftalık görev"
-          trendTone="neutral"
-        >
-          <div className="sparkline-bar" />
-        </MetricCard>
-        <MetricCard
-          label="Aktiviteler"
-          value={`${summary?.recentActivities?.length ?? 0}`}
-          helper="Son kayıtlar"
-          trendLabel="Güncel"
-          trendTone="positive"
-        >
-          <div className="sparkline-bar" />
-        </MetricCard>
-      </div>
-
-      <div className="dual-grid">
-        <GlassCard title="Kurum Bildirimleri" subtitle="Son güncellemeler">
-          <div className="list-stack">
-            {loading && <div className="empty-state">Bildirimler yükleniyor...</div>}
-            {!loading && notifications.length === 0 && <div className="empty-state">Bildirim bulunamadı.</div>}
-            {notifications.map((item) => (
-              <div className="list-row" key={item.id} style={{ alignItems: 'flex-start' }}>
-                <div style={{ flex: 1 }}>
-                  <strong>{item.title}</strong>
-                  <small>{item.body}</small>
-                  {item.type === 'analysis_report_ready' &&
-                    item.relatedEntityType === 'analysis_report' &&
-                    item.relatedEntityId &&
-                    token && (
-                      <div style={{ marginTop: '0.5rem' }}>
-                        <button
-                          type="button"
-                          className="primary-btn"
-                          onClick={async () => {
-                            if (!token) return;
-                            try {
-                              const payload = JSON.parse(item.relatedEntityId!) as { studentId: string; examId: number };
-                              await downloadAnalysisPdf(token, payload.studentId, payload.examId);
-                              if (!item.read) onMarkNotificationRead();
-                            } catch (e) {
-                              alert(e instanceof Error ? e.message : 'PDF indirilemedi.');
-                            }
-                          }}
-                        >
-                          PDF İndir / Görüntüle
-                        </button>
-                      </div>
-                    )}
-                </div>
-                <TagChip label={item.read ? 'Okundu' : 'Yeni'} tone={item.read ? 'success' : 'warning'} />
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-
+      {/* Kısayollar */}
+      {onNavigate && (
         <GlassCard
-          title="Toplantılar ve Canlı Dersler"
-          subtitle="Planlanan rehberlik ve canlı oturumlar"
-          actions={
-            <>
-              <button type="button" className="ghost-btn" onClick={onJoinMeeting}>
-                Görüşmeye Katıl
-              </button>
-              <button type="button" className="primary-btn" onClick={onJoinMeeting}>
-                Randevu Seç
-              </button>
-            </>
-          }
+          title="Kısayollar"
+          subtitle="Sık kullanılan sayfalara hızlı erişim"
+          className="overview-shortcuts-card"
         >
-          <div className="list-stack">
-            {meetings.length === 0 && <div className="empty-state">Planlı görüşme yok.</div>}
-            {meetings.map((meeting) => (
-              <div className="list-row" key={meeting.id}>
-                <div>
-                  <strong>{meeting.title}</strong>
-                  <small>
-                    {formatShortDate(meeting.scheduledAt)} · {formatTime(meeting.scheduledAt)}
-                  </small>
-                </div>
-                <TagChip
-                  label={meeting.durationMinutes ? `${meeting.durationMinutes} dk` : 'Toplantı'}
-                  tone="success"
-                />
-              </div>
+          <div className="overview-shortcuts-grid">
+            {[
+              { id: 'reports' as ParentTab, label: 'Gelişim Raporu', icon: <BarChart3 size={20} /> },
+              { id: 'calendar' as ParentTab, label: 'Devamsızlık', icon: <CalendarCheck size={20} /> },
+              { id: 'messages' as ParentTab, label: 'İletişim', icon: <MessageSquare size={20} /> },
+              { id: 'notifications' as ParentTab, label: 'Bildirimler', icon: <Bell size={20} /> },
+              { id: 'complaints' as ParentTab, label: 'Şikayet/Öneri', icon: <ClipboardList size={20} /> },
+            ].map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="overview-shortcut-btn"
+                onClick={() => onNavigate(s.id)}
+              >
+                <span className="overview-shortcut-icon">{s.icon}</span>
+                <span className="overview-shortcut-label">{s.label}</span>
+              </button>
             ))}
           </div>
         </GlassCard>
-      </div>
+      )}
     </>
   );
 };
@@ -747,7 +740,12 @@ const getEventIcon = (event: CalendarEvent) => {
   return <CalendarCheck size={14} />;
 };
 
-const ParentCalendar: React.FC<{ events: CalendarEvent[]; loading: boolean }> = ({ events, loading }) => {
+const ParentCalendar: React.FC<{
+  events: CalendarEvent[];
+  attendance: ParentAttendanceRecord[];
+  loading: boolean;
+  attendanceLoading: boolean;
+}> = ({ events, attendance, loading, attendanceLoading }) => {
   const byDay = events.reduce<Record<string, CalendarEvent[]>>((acc, event) => {
     const day = formatShortDate(event.startDate);
     if (!acc[day]) acc[day] = [];
@@ -762,8 +760,78 @@ const ParentCalendar: React.FC<{ events: CalendarEvent[]; loading: boolean }> = 
     return (months[ma] ?? 0) * 100 + parseInt(da, 10) - ((months[mb] ?? 0) * 100 + parseInt(db, 10));
   });
 
+  const absentCount = attendance.filter((r) => !r.present).length;
+  const presentCount = attendance.filter((r) => r.present).length;
+
   return (
     <>
+      <GlassCard title="Devamsızlık Kayıtları" subtitle="Son 30 günün yoklama kayıtları">
+        {attendanceLoading && <div className="empty-state">Devamsızlık kayıtları yükleniyor...</div>}
+        {!attendanceLoading && attendance.length === 0 && (
+          <div className="empty-state">Devamsızlık kaydı bulunamadı.</div>
+        )}
+        {!attendanceLoading && attendance.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+                marginBottom: '0.25rem',
+              }}
+            >
+              <TagChip label={`Devamsızlık: ${absentCount}`} tone={absentCount > 0 ? 'warning' : 'success'} />
+              <TagChip label={`Katılım: ${presentCount}`} tone="success" />
+            </div>
+            {attendance.map((record) => (
+              <div
+                key={record.id}
+                style={{
+                  padding: '0.75rem',
+                  borderRadius: '0.5rem',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${!record.present ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.1)'}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: '0.95rem' }}>
+                    {new Date(record.date).toLocaleDateString('tr-TR', {
+                      day: '2-digit',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
+                    <span style={{ fontWeight: 600 }}>{record.classGroupName}</span>
+                    {' · '}
+                    <span>Yoklamayı alan: {record.teacherName}</span>
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>
+                    Kaydedilme: {new Date(record.createdAt).toLocaleString('tr-TR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}
+                  </div>
+                  {record.notes && (
+                    <div
+                      style={{
+                        fontSize: '0.8rem',
+                        color: 'var(--color-text-muted)',
+                        marginTop: '0.25rem',
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      Not: {record.notes}
+                    </div>
+                  )}
+                </div>
+                <TagChip label={record.present ? 'Geldi' : 'Gelmedi'} tone={record.present ? 'success' : 'error'} />
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+
       <GlassCard title="Haftalık Takvim" subtitle="Etüt ve toplantılar">
         {loading && <div className="empty-state">Takvim yükleniyor...</div>}
         {!loading && events.length === 0 && <div className="empty-state">Takvimde kayıt bulunamadı.</div>}
@@ -800,6 +868,7 @@ const ParentMessages: React.FC<{
   onReply: () => void;
   loading: boolean;
   error: string | null;
+  messageFeedback?: string | null;
 }> = ({
   conversations,
   messages,
@@ -810,13 +879,33 @@ const ParentMessages: React.FC<{
   onReply,
   loading,
   error,
+  messageFeedback,
 }) => {
   const activeConversation = conversations.find((conv) => conv.userId === selectedConversationId);
-  const latestMessage = messages[messages.length - 1];
+  const [detailExpanded, setDetailExpanded] = useState(false);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const replyInputRef = useRef<HTMLInputElement | null>(null);
+
+  const roleLabel = (role?: string) => {
+    if (!role) return 'Kullanıcı';
+    if (role === 'teacher') return 'Öğretmen';
+    if (role === 'admin') return 'Yönetici';
+    if (role === 'student') return 'Öğrenci';
+    if (role === 'parent') return 'Veli';
+    return role;
+  };
+
+  useEffect(() => {
+    // konuşma değişince ve yeni mesaj gelince aşağı kaydır
+    const el = messageListRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [selectedConversationId, messages.length]);
 
   return (
-    <div className="dual-grid">
-      <GlassCard title="İletişim Kutusu" subtitle="Rehberlik ve öğretmen mesajları">
+    <div className="dual-grid" style={detailExpanded ? { gridTemplateColumns: '1fr' } : undefined}>
+      {!detailExpanded && (
+        <GlassCard title="İletişim Kutusu" subtitle="Rehberlik ve öğretmen mesajları">
         <div className="list-stack">
           {conversations.length === 0 && <div className="empty-state">Konuşma bulunamadı.</div>}
           {conversations.map((thread) => (
@@ -859,7 +948,15 @@ const ParentMessages: React.FC<{
               )}
               <div style={{ flex: 1 }}>
                 <strong>{thread.userName}</strong>
-                <small>{thread.lastMessage?.text ?? 'Mesaj yok'}</small>
+                <small style={{ display: 'block', marginTop: '0.1rem' }}>
+                  {roleLabel(thread.userRole)}
+                  {thread.userRole === 'teacher' && (thread.subjectAreas?.[0] || thread.subjectAreas?.length)
+                    ? ` • ${(thread.subjectAreas ?? []).filter(Boolean).join(', ')}`
+                    : ''}
+                </small>
+                <small style={{ display: 'block', marginTop: '0.15rem' }}>
+                  {thread.lastMessage?.text ?? 'Mesaj yok'}
+                </small>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.3rem' }}>
                 <span>{formatShortDate(thread.lastMessage?.createdAt)}</span>
@@ -868,7 +965,8 @@ const ParentMessages: React.FC<{
             </button>
           ))}
         </div>
-      </GlassCard>
+        </GlassCard>
+      )}
 
       <GlassCard
         title={activeConversation?.userName ?? 'Mesaj Detayı'}
@@ -882,11 +980,18 @@ const ParentMessages: React.FC<{
             <button
               type="button"
               className="ghost-btn"
-              onClick={onReply}
+              onClick={() => setDetailExpanded((v) => !v)}
             >
-              <PhoneCall size={16} /> Ara
+              {detailExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}{' '}
+              {detailExpanded ? 'Küçült' : 'Genişlet'}
             </button>
-            <button type="button" className="primary-btn" onClick={onReply}>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => {
+                replyInputRef.current?.focus();
+              }}
+            >
               Yanıtla
             </button>
           </>
@@ -894,47 +999,114 @@ const ParentMessages: React.FC<{
       >
         {loading && <div className="empty-state">Mesajlar yükleniyor...</div>}
         {error && <div className="error">{error}</div>}
-        {!loading && messages.length === 0 && <div className="empty-state">Mesaj bulunamadı.</div>}
-        {latestMessage && (
+        {!loading && !activeConversation && (
+          <div className="empty-state">Soldan bir öğretmen seçin.</div>
+        )}
+
+        {!loading && activeConversation && (
           <div
-            className="list-row"
+            ref={messageListRef}
             style={{
-              marginBottom: '0.75rem',
-              border: '1px solid var(--color-border-subtle)',
-              background: 'var(--color-surface)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.6rem',
+              maxHeight: detailExpanded ? 520 : 380,
+              overflowY: 'auto',
+              paddingRight: 4,
             }}
           >
-            <div>
-              <strong style={{ display: 'block' }}>
-                {latestMessage.subject || 'Son mesaj'}
-              </strong>
-              <small style={{ display: 'block', marginTop: '0.25rem' }}>
-                {latestMessage.text}
-              </small>
-            </div>
-            <span>{formatTime(latestMessage.createdAt)}</span>
+            {messages.length === 0 && <div className="empty-state">Mesaj bulunamadı.</div>}
+            {messages.map((message) => {
+              const fromTeacher = message.fromUserId === activeConversation.userId;
+              const senderLabel = fromTeacher ? activeConversation.userName : 'Siz';
+              return (
+                <div
+                  key={message.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: fromTeacher ? 'flex-start' : 'flex-end',
+                  }}
+                >
+                  <div
+                    style={{
+                      maxWidth: detailExpanded ? '78%' : '92%',
+                      padding: '0.65rem 0.75rem',
+                      borderRadius: 14,
+                      border: `1px solid ${
+                        fromTeacher ? 'rgba(59,130,246,0.25)' : 'rgba(34,197,94,0.25)'
+                      }`,
+                      background: fromTeacher
+                        ? 'rgba(59,130,246,0.08)'
+                        : 'rgba(34,197,94,0.08)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        justifyContent: 'space-between',
+                        gap: '0.75rem',
+                        marginBottom: message.subject ? 6 : 2,
+                      }}
+                    >
+                      <strong style={{ fontSize: '0.9rem' }}>{senderLabel}</strong>
+                      <small style={{ opacity: 0.75, whiteSpace: 'nowrap' }}>
+                        {new Date(message.createdAt).toLocaleString('tr-TR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </small>
+                    </div>
+                    {message.subject && (
+                      <div style={{ fontWeight: 700, marginBottom: 6, fontSize: '0.9rem' }}>
+                        {message.subject}
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        fontSize: '0.92rem',
+                        lineHeight: 1.45,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {message.text}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
-        <div className="list-stack">
-          {messages.map((message) => (
-            <div className="list-row" key={message.id}>
-              <div>
-                <strong>{message.fromUserId === activeConversation?.userId ? activeConversation?.userName : 'Siz'}</strong>
-                <small>{message.text}</small>
-              </div>
-              <span>{formatTime(message.createdAt)}</span>
-            </div>
-          ))}
-        </div>
+
         <div style={{ marginTop: '1rem', display: 'grid', gap: '0.6rem' }}>
+          {messageFeedback && (
+            <div
+              role="status"
+              style={{
+                padding: '0.5rem 0.75rem',
+                borderRadius: 8,
+                fontSize: '0.875rem',
+                background: 'var(--color-surface-soft)',
+                color: 'var(--color-text-main)',
+                border: '1px solid var(--color-border-subtle)',
+              }}
+            >
+              {messageFeedback}
+            </div>
+          )}
           <input
             type="text"
             value={replyText}
             onChange={(event) => onReplyTextChange(event.target.value)}
             placeholder="Yanıtınızı yazın..."
+            ref={replyInputRef}
           />
-          <button type="button" className="ghost-btn" onClick={onReply}>
-            Hızlı Gönder
+          <button type="button" className="primary-btn" onClick={onReply} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
+            <Send size={16} /> Gönder
           </button>
         </div>
       </GlassCard>

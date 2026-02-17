@@ -232,35 +232,87 @@ const OpticalScanningPage: React.FC = () => {
     }, 1000);
   };
 
-  const scoreClass = (score: number): string => {
-    if (score >= 400) return 'text-green-600 font-semibold';
-    if (score >= 300) return 'text-yellow-600 font-semibold';
-    return 'text-red-600 font-semibold';
-  };
-
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', color: '#e2e8f0' }}>
       {/* Bölüm A: Dosya Yükleme ve Analiz */}
-      <div className="bg-white shadow-md rounded-lg p-6">
-        <h1 className="text-xl font-semibold text-gray-900 mb-2">
-          Optik Form Yükleme ve Analiz
-        </h1>
-        <p className="text-sm text-gray-600 mb-6">
-          Cevap anahtarını ve öğrenci optik dosyalarını yükleyerek toplu sınav analizini
-          başlatın.
-        </p>
+      <div
+        style={{
+          borderRadius: 16,
+          border: '1px solid rgba(71, 85, 105, 0.7)',
+          background: 'linear-gradient(135deg, #0f172a 0%, #020617 50%, #0f172a 100%)',
+          padding: '1.5rem',
+          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#f8fafc', margin: 0 }}>
+              Optik Form Yükleme ve Analiz
+            </h1>
+            <p style={{ fontSize: '0.875rem', color: '#94a3b8', margin: '0.375rem 0 0' }}>
+              Cevap anahtarını ve öğrenci optik dosyalarını yükleyerek toplu sınav analizini başlatın.
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, textAlign: 'right' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                borderRadius: 9999,
+                background: 'rgba(16, 185, 129, 0.1)',
+                padding: '4px 12px',
+                fontSize: 11,
+                fontWeight: 500,
+                color: '#6ee7b7',
+                border: '1px solid rgba(16, 185, 129, 0.4)',
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: '#34d399',
+                  marginRight: 6,
+                }}
+              />
+              Otomatik puanlama aktif
+            </span>
+            <span style={{ fontSize: 11, color: '#64748b' }}>.txt / .dat formatında dosya yükleyin</span>
+          </div>
+        </div>
+
         {error && (
-          <div className="mb-4 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+          <div
+            style={{
+              marginBottom: '1rem',
+              borderRadius: 8,
+              background: 'rgba(127, 29, 29, 0.4)',
+              border: '1px solid rgba(239, 68, 68, 0.6)',
+              padding: '8px 12px',
+              fontSize: '0.875rem',
+              color: '#fecaca',
+            }}
+          >
             {error}
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
           {/* Cevap Anahtarı */}
           <div
-            className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition ${
-              isAnswerKeyDragging ? 'border-blue-400 bg-blue-50' : 'border-gray-300 hover:bg-gray-50'
-            }`}
+            style={{
+              border: `2px dashed ${isAnswerKeyDragging ? 'rgba(56, 189, 248, 0.8)' : 'rgba(71, 85, 105, 0.8)'}`,
+              borderRadius: 12,
+              padding: '1rem',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              background: isAnswerKeyDragging ? 'rgba(2, 6, 23, 0.3)' : 'rgba(15, 23, 42, 0.4)',
+              boxShadow: isAnswerKeyDragging ? '0 10px 40px rgba(14, 165, 233, 0.2)' : 'none',
+            }}
             onDragOver={(e) => handleDragOver(e, 'answerKey')}
             onDragEnter={(e) => handleDragOver(e, 'answerKey')}
             onDragLeave={(e) => handleDragLeave(e, 'answerKey')}
@@ -281,18 +333,18 @@ const OpticalScanningPage: React.FC = () => {
                 handleFileSelect(e.target.files?.[0] ?? null, 'answerKey')
               }
             />
-            <div className="flex flex-col items-center gap-2 text-center">
-              <Upload className="h-8 w-8 text-gray-400" />
-              <p className="text-sm font-medium text-gray-800">
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}>
+              <Upload size={32} style={{ color: '#38bdf8' }} />
+              <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#f8fafc', margin: 0 }}>
                 Cevap Anahtarı (.txt, .dat)
               </p>
-              <p className="text-xs text-gray-500">
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
                 Dosyayı buraya bırakın veya tıklayın
               </p>
               {answerKeyFile && (
-                <p className="mt-1 text-xs text-gray-600 flex items-center gap-1">
-                  <FileText className="h-4 w-4" />
-                  <span className="truncate max-w-[200px]">
+                <p style={{ marginTop: 4, fontSize: '0.75rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: 4, margin: '4px 0 0' }}>
+                  <FileText size={16} style={{ color: '#94a3b8' }} />
+                  <span style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {answerKeyFile.name}
                   </span>
                 </p>
@@ -302,11 +354,18 @@ const OpticalScanningPage: React.FC = () => {
 
           {/* Öğrenci Optikleri */}
           <div
-            className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition ${
-              isStudentOpticsDragging
-                ? 'border-blue-400 bg-blue-50'
-                : 'border-gray-300 hover:bg-gray-50'
-            }`}
+            style={{
+              border: `2px dashed ${isStudentOpticsDragging ? 'rgba(56, 189, 248, 0.8)' : 'rgba(71, 85, 105, 0.8)'}`,
+              borderRadius: 12,
+              padding: '1rem',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              background: isStudentOpticsDragging ? 'rgba(2, 6, 23, 0.3)' : 'rgba(15, 23, 42, 0.4)',
+              boxShadow: isStudentOpticsDragging ? '0 10px 40px rgba(14, 165, 233, 0.2)' : 'none',
+            }}
             onDragOver={(e) => handleDragOver(e, 'studentOptics')}
             onDragEnter={(e) => handleDragOver(e, 'studentOptics')}
             onDragLeave={(e) => handleDragLeave(e, 'studentOptics')}
@@ -327,18 +386,18 @@ const OpticalScanningPage: React.FC = () => {
                 handleFileSelect(e.target.files?.[0] ?? null, 'studentOptics')
               }
             />
-            <div className="flex flex-col items-center gap-2 text-center">
-              <Upload className="h-8 w-8 text-gray-400" />
-              <p className="text-sm font-medium text-gray-800">
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}>
+              <Upload size={32} style={{ color: '#38bdf8' }} />
+              <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#f8fafc', margin: 0 }}>
                 Öğrenci Optikleri (.dat, .txt)
               </p>
-              <p className="text-xs text-gray-500">
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
                 Dosyayı buraya bırakın veya tıklayın
               </p>
               {studentOpticsFile && (
-                <p className="mt-1 text-xs text-gray-600 flex items-center gap-1">
-                  <FileText className="h-4 w-4" />
-                  <span className="truncate max-w-[200px]">
+                <p style={{ marginTop: 4, fontSize: '0.75rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: 4, margin: '4px 0 0' }}>
+                  <FileText size={16} style={{ color: '#94a3b8' }} />
+                  <span style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {studentOpticsFile.name}
                   </span>
                 </p>
@@ -351,12 +410,27 @@ const OpticalScanningPage: React.FC = () => {
           type="button"
           onClick={handleAnalyze}
           disabled={isAnalyzing}
-          className="w-full bg-blue-600 text-white font-semibold py-3 rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{
+            width: '100%',
+            borderRadius: 9999,
+            background: 'linear-gradient(90deg, #0ea5e9, #6366f1, #2563eb)',
+            color: '#fff',
+            fontWeight: 600,
+            padding: '0.75rem 1rem',
+            boxShadow: '0 10px 40px rgba(14, 165, 233, 0.35)',
+            border: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            cursor: isAnalyzing ? 'not-allowed' : 'pointer',
+            opacity: isAnalyzing ? 0.6 : 1,
+          }}
         >
           {isAnalyzing ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
-              <span>Yükleniyor...</span>
+              <span>Analiz yapılıyor...</span>
             </>
           ) : (
             <>
@@ -368,86 +442,138 @@ const OpticalScanningPage: React.FC = () => {
       </div>
 
       {/* Bölüm B: Sonuç Tablosu */}
-      <div className="bg-white shadow-md rounded-lg overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Analiz Sonuçları</h2>
-          <span className="text-xs text-gray-500">
+      <div
+        style={{
+          background: 'rgba(2, 6, 23, 0.8)',
+          border: '1px solid rgba(30, 41, 59, 1)',
+          borderRadius: 16,
+          overflow: 'hidden',
+          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div
+          style={{
+            padding: '1rem 1.5rem',
+            borderBottom: '1px solid rgba(30, 41, 59, 1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'rgba(2, 6, 23, 0.95)',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc', margin: 0 }}>
+              Analiz Sonuçları
+            </h2>
+            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+              Öğrenci bazlı doğru / yanlış / net ve puan dağılımlarını inceleyin.
+            </span>
+          </div>
+          <span
+            style={{
+              fontSize: 11,
+              padding: '4px 12px',
+              borderRadius: 9999,
+              border: '1px solid rgba(51, 65, 85, 1)',
+              color: '#cbd5e1',
+              background: 'rgba(15, 23, 42, 0.6)',
+            }}
+          >
             {results.length > 0
               ? `${results.length} öğrenci sonucu`
               : 'Henüz analiz yapılmadı'}
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-100">
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
+            <thead style={{ background: '#020617' }}>
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Öğrenci Adı
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Sınıf
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Doğru
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Yanlış
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Boş
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  Puan
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                  İşlemler
-                </th>
+                {['Öğrenci Adı', 'Sınıf', 'Doğru', 'Yanlış', 'Boş', 'Puan', 'İşlemler'].map((h, i) => (
+                  <th
+                    key={h}
+                    style={{
+                      padding: '0.75rem 1rem',
+                      textAlign: i === 0 || i === 1 ? 'left' : i === 6 ? 'right' : 'center',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#cbd5e1',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid rgba(30, 41, 59, 1)',
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody style={{ background: 'rgba(2, 6, 23, 0.8)' }}>
               {results.map((result) => (
                 <tr
                   key={result.id}
-                  className="hover:bg-gray-50 transition border-b border-gray-200"
+                  style={{
+                    borderBottom: '1px solid rgba(30, 41, 59, 1)',
+                  }}
                 >
-                  <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                    <div className="flex flex-col">
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', fontWeight: 500, color: '#f8fafc' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span>{result.studentName}</span>
-                      <span className="text-xs text-gray-500">
-                        No: {result.studentNo}
-                      </span>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>No: {result.studentNo}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-sm">
-                    <span className="inline-flex items-center bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs">
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem' }}>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        background: 'rgba(15, 23, 42, 0.6)',
+                        color: '#e2e8f0',
+                        padding: '4px 8px',
+                        borderRadius: 9999,
+                        fontSize: 11,
+                        border: '1px solid rgba(51, 65, 85, 1)',
+                      }}
+                    >
                       {result.className}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-sm text-center text-green-700">
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: '#34d399' }}>
                     {result.correct}
                   </td>
-                  <td className="px-4 py-3 text-sm text-center text-red-700">
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: '#fb7185' }}>
                     {result.incorrect}
                   </td>
-                  <td className="px-4 py-3 text-sm text-center text-gray-700">
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: '#cbd5e1' }}>
                     {result.blank}
                   </td>
-                  <td className="px-4 py-3 text-sm text-center">
-                    <span className={scoreClass(result.score)}>
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center' }}>
+                    <span style={{ fontWeight: 600, color: result.score >= 400 ? '#16a34a' : result.score >= 300 ? '#ca8a04' : '#dc2626' }}>
                       {result.score}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-sm text-right">
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'right' }}>
                     <button
                       type="button"
                       disabled={result.status !== 'idle'}
                       onClick={() => handleSendResult(result.id)}
-                      className={`inline-flex items-center gap-1 px-3 py-1 rounded text-sm text-white transition ${
-                        result.status === 'idle'
-                          ? 'bg-green-500 hover:bg-green-600'
-                          : 'bg-gray-400 cursor-not-allowed'
-                      }`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '4px 12px',
+                        borderRadius: 9999,
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                        color: '#fff',
+                        border: 'none',
+                        cursor: result.status !== 'idle' ? 'not-allowed' : 'pointer',
+                        background:
+                          result.status === 'idle'
+                            ? 'linear-gradient(90deg, #10b981, #16a34a)'
+                            : 'rgba(51, 65, 85, 0.8)',
+                        boxShadow: result.status === 'idle' ? '0 4px 14px rgba(16, 185, 129, 0.35)' : 'none',
+                      }}
                     >
                       {result.status === 'idle' && (
                         <>
@@ -465,7 +591,12 @@ const OpticalScanningPage: React.FC = () => {
                 <tr>
                   <td
                     colSpan={7}
-                    className="px-4 py-6 text-center text-sm text-gray-500"
+                    style={{
+                      padding: '1.5rem 1rem',
+                      textAlign: 'center',
+                      fontSize: '0.875rem',
+                      color: '#94a3b8',
+                    }}
                   >
                     Henüz analiz sonucu yok. Önce üst kısımdan optik dosyaları
                     yükleyip analizi başlatın.

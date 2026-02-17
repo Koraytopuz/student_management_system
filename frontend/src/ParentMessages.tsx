@@ -43,6 +43,7 @@ export const ParentMessages: React.FC = () => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [messageFeedback, setMessageFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -104,7 +105,8 @@ export const ParentMessages: React.FC = () => {
       );
       setMessages((prev) => [...prev, created]);
       setNewMessage({ toUserId: '', text: '', studentId: '', subject: '' });
-      // Konuşmaları yenile
+      setMessageFeedback('Mesaj iletildi.');
+      window.setTimeout(() => setMessageFeedback(null), 4000);
       apiRequest<Conversation[]>('/parent/messages/conversations', {}, token)
         .then(setConversations)
         .catch(() => {});
@@ -322,6 +324,22 @@ export const ParentMessages: React.FC = () => {
                 }}
               >
                 {error && <div className="error" style={{ marginBottom: '0.5rem' }}>{error}</div>}
+                {messageFeedback && (
+                  <div
+                    role="status"
+                    style={{
+                      marginBottom: '0.5rem',
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: 8,
+                      fontSize: '0.875rem',
+                      background: 'var(--color-surface-soft)',
+                      color: 'var(--color-text-main)',
+                      border: '1px solid var(--color-border-subtle)',
+                    }}
+                  >
+                    {messageFeedback}
+                  </div>
+                )}
                 <form onSubmit={handleSendMessage}>
                   {students.length > 0 && (
                     <div style={{ marginBottom: '0.5rem' }}>

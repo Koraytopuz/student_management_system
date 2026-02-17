@@ -62,6 +62,8 @@ import {
   type AIQuestionGeneratePayload,
   type TeacherAnnouncement,
   createTeacherAnnouncement,
+  updateTeacherAnnouncement,
+  deleteTeacherAnnouncement,
   updateTeacherAssignment,
   type TeacherTest,
   type TeacherTestAsset,
@@ -75,7 +77,6 @@ import {
   type CurriculumTopic,
   getCurriculumTopics,
   getCurriculumSubjects,
-
   resolveContentUrl,
   getApiBaseUrl,
 } from './api';
@@ -94,6 +95,7 @@ import { CoachingTab } from './CoachingTab';
 import { ParentOperationsTab } from './ParentOperationsTab';
 import { QuestionBankTab } from './QuestionBankTab';
 import { LessonScheduleTab } from './LessonScheduleTab';
+import { AttendanceTab } from './AttendanceTab';
 
 type TeacherTab =
   | 'overview'
@@ -107,7 +109,8 @@ type TeacherTab =
   | 'questionbank'
   | 'schedule'
   | 'notifications'
-  | 'coaching';
+  | 'coaching'
+  | 'attendance';
 
 type ParsedPdfQuestion = {
   question_text: string;
@@ -115,6 +118,18 @@ type ParsedPdfQuestion = {
   correct_option?: string | null;
   difficulty: string;
   topic: string;
+};
+
+/** Görsel olarak çıkarılan soru (bounding box + crop) */
+type ExtractedPdfQuestion = {
+  questionNumber: number;
+  imageUrl: string;
+  originalPage: number;
+  question_text?: string;
+  options?: string[];
+  correct_option?: string | null;
+  difficulty?: string;
+  topic?: string;
 };
 
 type AiMessage = {
@@ -146,7 +161,15 @@ type TeacherMeetingDraft = {
   subjectName?: string;
 };
 
-const ALL_GRADES: string[] = ['12', '11', '10', '9', '8', '7', '6', '5', '4', 'Mezun'];
+const ALL_GRADES: string[] = ['12', '11', '10', '9', '8', '7', '6', '5', '4', 'Mezun', 'TYT', 'AYT'];
+
+/** 9–12. sınıf öğretmenleri TYT ve AYT'yi de görsün */
+const HIGH_SCHOOL_GRADES = ['9', '10', '11', '12'];
+function addTyAytIfHighSchool(grades: string[]): string[] {
+  const hasHighSchool = grades.some((g) => HIGH_SCHOOL_GRADES.includes(g));
+  if (!hasHighSchool) return grades;
+  return Array.from(new Set([...grades, 'TYT', 'AYT']));
+}
 
 type AiGeneratedQuestion = {
   index: number;
@@ -290,6 +313,7 @@ export const TeacherDashboard: React.FC = () => {
     scheduledDate: '',
   });
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
   const [announcementCreating, setAnnouncementCreating] = useState(false);
   const [announcementError, setAnnouncementError] = useState<string | null>(null);
 
@@ -350,7 +374,8 @@ export const TeacherDashboard: React.FC = () => {
       ),
     );
 
-    const combined = [...(fromUser ?? []), ...fromStudents];
+    let combined = [...(fromUser ?? []), ...fromStudents];
+    combined = addTyAytIfHighSchool(combined);
     const normalized = Array.from(
       new Set(
         combined.filter((g) => ALL_GRADES.includes(g)),
@@ -372,6 +397,7 @@ export const TeacherDashboard: React.FC = () => {
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
+  const [notificationMessageFeedback, setNotificationMessageFeedback] = useState<string | null>(null);
   const [focusHelpRequestId, setFocusHelpRequestId] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -910,7 +936,7 @@ export const TeacherDashboard: React.FC = () => {
     const { gradeLevel, title, message } = announcementDraft;
     const titleTrim = title.trim();
     const messageTrim = message.trim();
-    if (!gradeLevel) {
+    if (!editingAnnouncementId && !gradeLevel) {
       setAnnouncementError('Lütfen sınıf seçin.');
       return;
     }
@@ -921,18 +947,57 @@ export const TeacherDashboard: React.FC = () => {
     setAnnouncementCreating(true);
     setAnnouncementError(null);
     try {
-      const created = await createTeacherAnnouncement(token, {
-        title: titleTrim,
-        message: messageTrim,
-        scheduledDate: announcementDraft.scheduledDate || undefined,
-      });
-      setAnnouncements((prev) => [created, ...prev]);
-      setAnnouncementDraft({ gradeLevel: '', studentId: '', title: '', message: '', scheduledDate: '' });
-      setAnnouncementOpen(false);
+      if (editingAnnouncementId) {
+        const updated = await updateTeacherAnnouncement(token, editingAnnouncementId, {
+          title: titleTrim,
+          message: messageTrim,
+          scheduledDate: announcementDraft.scheduledDate || undefined,
+        });
+        setAnnouncements((prev) =>
+          prev.map((a) => (a.id === editingAnnouncementId ? updated : a)),
+        );
+        setEditingAnnouncementId(null);
+        setAnnouncementDraft({ gradeLevel: '', studentId: '', title: '', message: '', scheduledDate: '' });
+        setAnnouncementOpen(false);
+      } else {
+        const created = await createTeacherAnnouncement(token, {
+          title: titleTrim,
+          message: messageTrim,
+          scheduledDate: announcementDraft.scheduledDate || undefined,
+        });
+        setAnnouncements((prev) => [created, ...prev]);
+        setAnnouncementDraft({ gradeLevel: '', studentId: '', title: '', message: '', scheduledDate: '' });
+        setAnnouncementOpen(false);
+      }
     } catch (error) {
       setAnnouncementError(error instanceof Error ? error.message : 'Duyuru kaydedilemedi.');
     } finally {
       setAnnouncementCreating(false);
+    }
+  };
+
+  const handleEditAnnouncement = (announcement: TeacherAnnouncement) => {
+    setAnnouncementDraft((prev) => ({
+      ...prev,
+      title: announcement.title,
+      message: announcement.message,
+      scheduledDate: announcement.scheduledDate
+        ? new Date(announcement.scheduledDate).toISOString().slice(0, 16)
+        : '',
+    }));
+    setEditingAnnouncementId(announcement.id);
+    setAnnouncementError(null);
+    setAnnouncementOpen(true);
+  };
+
+  const handleDeleteAnnouncement = async (id: string) => {
+    if (!token) return;
+    if (!window.confirm('Bu duyuruyu silmek istediğinize emin misiniz?')) return;
+    try {
+      await deleteTeacherAnnouncement(token, id);
+      setAnnouncements((prev) => prev.filter((a) => a.id !== id));
+    } catch (e) {
+      setAnnouncementError(e instanceof Error ? e.message : 'Duyuru silinemedi.');
     }
   };
 
@@ -963,7 +1028,7 @@ export const TeacherDashboard: React.FC = () => {
     }
   };
 
-  // Koçluk panelinden gelen özel event ile canlı koçluk başlatma
+  // Kişisel Gelişim panelinden gelen özel event ile canlı oturum başlatma
   useEffect(() => {
     const handler = (event: Event) => {
       const custom = event as CustomEvent<{ meetingId: string; title?: string }>;
@@ -1110,6 +1175,14 @@ export const TeacherDashboard: React.FC = () => {
         active: activeTab === 'parents',
         onClick: () => setActiveTab('parents'),
       },
+      {
+        id: 'attendance',
+        label: 'Devamsızlık',
+        icon: <CalendarCheck size={18} />,
+        description: 'Yoklama',
+        active: activeTab === 'attendance',
+        onClick: () => setActiveTab('attendance'),
+      },
 
     ],
     [activeTab, derslerSubItems],
@@ -1174,6 +1247,22 @@ export const TeacherDashboard: React.FC = () => {
           {notificationsError && (
             <div className="error" style={{ marginBottom: '0.75rem' }}>
               {notificationsError}
+            </div>
+          )}
+          {notificationMessageFeedback && (
+            <div
+              role="status"
+              style={{
+                marginBottom: '0.75rem',
+                padding: '0.6rem 0.9rem',
+                borderRadius: 8,
+                fontSize: '0.875rem',
+                background: 'var(--color-surface-soft)',
+                color: 'var(--color-text-main)',
+                border: '1px solid var(--color-border-subtle)',
+              }}
+            >
+              {notificationMessageFeedback}
             </div>
           )}
           {!notificationsLoading && notifications.length === 0 && (
@@ -1385,15 +1474,13 @@ export const TeacherDashboard: React.FC = () => {
                                   subject: 'Canlı görüşme talebi – Kabul',
                                 });
                                 await handleMarkNotificationRead(current.id);
-                                // eslint-disable-next-line no-alert
-                                alert('Görüşme talebi kabul edildi ve veliye bilgi verildi.');
+                                setNotificationMessageFeedback('Mesaj iletildi. Görüşme talebi kabul edildi ve veliye bilgi verildi.');
+                                window.setTimeout(() => setNotificationMessageFeedback(null), 5000);
                               } catch (e) {
-                                // eslint-disable-next-line no-alert
-                                alert(
-                                  e instanceof Error
-                                    ? e.message
-                                    : 'Talep yanıtı gönderilemedi.',
+                                setNotificationMessageFeedback(
+                                  e instanceof Error ? e.message : 'Talep yanıtı gönderilemedi.',
                                 );
+                                window.setTimeout(() => setNotificationMessageFeedback(null), 5000);
                               }
                             }}
                           >
@@ -1413,15 +1500,13 @@ export const TeacherDashboard: React.FC = () => {
                                   subject: 'Canlı görüşme talebi – Reddedildi',
                                 });
                                 await handleMarkNotificationRead(current.id);
-                                // eslint-disable-next-line no-alert
-                                alert('Görüşme talebi reddedildi ve veliye bilgi verildi.');
+                                setNotificationMessageFeedback('Mesaj iletildi. Görüşme talebi reddedildi ve veliye bilgi verildi.');
+                                window.setTimeout(() => setNotificationMessageFeedback(null), 5000);
                               } catch (e) {
-                                // eslint-disable-next-line no-alert
-                                alert(
-                                  e instanceof Error
-                                    ? e.message
-                                    : 'Talep yanıtı gönderilemedi.',
+                                setNotificationMessageFeedback(
+                                  e instanceof Error ? e.message : 'Talep yanıtı gönderilemedi.',
                                 );
+                                window.setTimeout(() => setNotificationMessageFeedback(null), 5000);
                               }
                             }}
                           >
@@ -1549,9 +1634,15 @@ export const TeacherDashboard: React.FC = () => {
           onAnnouncementDraftChange={setAnnouncementDraft}
           onCreateAnnouncement={handleCreateAnnouncement}
           announcementOpen={announcementOpen}
-          onToggleAnnouncement={setAnnouncementOpen}
+          onToggleAnnouncement={(open) => {
+            setAnnouncementOpen(open);
+            if (!open) setEditingAnnouncementId(null);
+          }}
           creatingAnnouncement={announcementCreating}
           announcementError={announcementError}
+          editingAnnouncementId={editingAnnouncementId}
+          onEditAnnouncement={handleEditAnnouncement}
+          onDeleteAnnouncement={handleDeleteAnnouncement}
         />
       )}
       {activeTab === 'tests' && (
@@ -1603,6 +1694,7 @@ export const TeacherDashboard: React.FC = () => {
           tests={tests}
         />
       )}
+      {activeTab === 'attendance' && <AttendanceTab token={token ?? ''} />}
       {activeTab === 'parents' && (
         <ParentOperationsTab
           token={token}
@@ -1816,8 +1908,8 @@ const TeacherSupport: React.FC<{
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
-  const [mode, setMode] = useState<'audio_only' | 'audio_video'>('audio_only');
-  const [useScreenShare, setUseScreenShare] = useState(false);
+  type SolutionMode = 'audio_only' | 'audio_video' | 'screen_share';
+  const [mode, setMode] = useState<SolutionMode>('audio_only');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1854,7 +1946,6 @@ const TeacherSupport: React.FC<{
     if (items.some((x) => x.id === focusHelpRequestId)) {
       setActiveRequestId(focusHelpRequestId);
       setMode('audio_only');
-      setUseScreenShare(false);
       clearRecording();
       onFocusHandled();
     }
@@ -1955,18 +2046,15 @@ const TeacherSupport: React.FC<{
     stopStream();
 
     let stream: MediaStream;
-    if (mode === 'audio_video' && useScreenShare) {
+    if (mode === 'screen_share') {
       try {
+        const nav = navigator as any;
         let displayStream: MediaStream | null = null;
-
-        if ((navigator.mediaDevices as any)?.getDisplayMedia) {
-          displayStream = await (navigator.mediaDevices as any).getDisplayMedia({
-            video: true,
-          });
-        } else if ((navigator as any).getDisplayMedia) {
-          displayStream = await (navigator as any).getDisplayMedia({ video: true });
+        if (nav.mediaDevices?.getDisplayMedia) {
+          displayStream = await nav.mediaDevices.getDisplayMedia({ video: true });
+        } else if (nav.getDisplayMedia) {
+          displayStream = await nav.getDisplayMedia({ video: true });
         }
-
         if (!displayStream) {
           setError('Tarayıcı ekran paylaşımını desteklemiyor.');
           return;
@@ -1977,11 +2065,10 @@ const TeacherSupport: React.FC<{
         } catch {
           // Mikrofon alınamazsa sadece ekran paylaşımıyla devam et.
         }
-        const tracks = [
+        stream = new MediaStream([
           ...displayStream.getVideoTracks(),
           ...(audioStream ? audioStream.getAudioTracks() : []),
-        ];
-        stream = new MediaStream(tracks);
+        ]);
       } catch (e) {
         setError(
           e instanceof Error
@@ -1990,10 +2077,10 @@ const TeacherSupport: React.FC<{
         );
         return;
       }
+    } else if (mode === 'audio_video') {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
     } else {
-      const constraints: MediaStreamConstraints =
-        mode === 'audio_video' ? { audio: true, video: true } : { audio: true, video: false };
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     }
 
     streamRef.current = stream;
@@ -2003,9 +2090,7 @@ const TeacherSupport: React.FC<{
       liveVideoRef.current.srcObject = stream;
       liveVideoRef.current
         .play()
-        .catch(() => {
-          // autoplay engellenirse sessizce geç
-        });
+        .catch(() => {});
     }
 
     const recorder = new MediaRecorder(stream);
@@ -2015,7 +2100,7 @@ const TeacherSupport: React.FC<{
     };
     recorder.onstop = () => {
       const blob = new Blob(chunksRef.current, {
-        type: recorder.mimeType || (mode === 'audio_video' ? 'video/webm' : 'audio/webm'),
+        type: recorder.mimeType || (stream.getVideoTracks().length > 0 ? 'video/webm' : 'audio/webm'),
       });
       setRecordedBlob(blob);
       const url = URL.createObjectURL(blob);
@@ -2075,9 +2160,12 @@ const TeacherSupport: React.FC<{
     setError(null);
     try {
       const file = new File([recordedBlob], `solution-${activeRequestId}.webm`, {
-        type: recordedBlob.type || (mode === 'audio_video' ? 'video/webm' : 'audio/webm'),
+        type: recordedBlob.type || (mode !== 'audio_only' ? 'video/webm' : 'audio/webm'),
       });
-      await respondTeacherHelpRequest(token, activeRequestId, { mode, file });
+      await respondTeacherHelpRequest(token, activeRequestId, {
+        mode: mode === 'screen_share' ? 'audio_video' : mode,
+        file,
+      });
       clearRecording();
       setActiveRequestId(null);
       await refresh();
@@ -2138,7 +2226,6 @@ const TeacherSupport: React.FC<{
                   onClick={() => {
                     setActiveRequestId(r.id);
                     setMode('audio_only');
-                    setUseScreenShare(false);
                     clearRecording();
                   }}
                 >
@@ -2237,13 +2324,13 @@ const TeacherSupport: React.FC<{
                 )}
               </div>
             )}
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ marginRight: '0.25rem', opacity: 0.9 }}>Mod:</span>
               <button
                 type="button"
                 className={mode === 'audio_only' ? 'primary-btn' : 'ghost-btn'}
                 onClick={() => {
                   setMode('audio_only');
-                  setUseScreenShare(false);
                   clearRecording();
                 }}
               >
@@ -2258,6 +2345,16 @@ const TeacherSupport: React.FC<{
                 }}
               >
                 Ses + video
+              </button>
+              <button
+                type="button"
+                className={mode === 'screen_share' ? 'primary-btn' : 'ghost-btn'}
+                onClick={() => {
+                  setMode('screen_share');
+                  clearRecording();
+                }}
+              >
+                Ekran paylaş
               </button>
             </div>
 
@@ -2304,22 +2401,6 @@ const TeacherSupport: React.FC<{
               </button>
               <button
                 type="button"
-                className="ghost-btn"
-                onClick={() => setUseScreenShare((prev) => !prev)}
-                disabled={recording}
-                style={
-                  useScreenShare
-                    ? {
-                        background: 'rgba(37,99,235,0.12)',
-                        borderColor: 'rgba(37,99,235,0.6)',
-                      }
-                    : undefined
-                }
-              >
-                {useScreenShare ? 'Ekran paylaş: Açık' : 'Ekran paylaş: Kapalı'}
-              </button>
-              <button
-                type="button"
                 className="primary-btn"
                 onClick={() => sendRecording().catch(() => {})}
                 disabled={!recordedBlob || sending || recording}
@@ -2328,11 +2409,7 @@ const TeacherSupport: React.FC<{
               </button>
             </div>
 
-            <div style={{ opacity: 0.85 }}>
-              Mod: <strong>{mode === 'audio_only' ? 'Sadece ses' : 'Ses + video'}</strong>
-            </div>
-
-            {mode === 'audio_video' && (
+            {(mode === 'audio_video' || mode === 'screen_share') && (
               <div>
                 <div
                   style={{
@@ -2384,11 +2461,24 @@ const TeacherTests: React.FC<{
 }> = ({ aiTestCardRef, token, students, tests, testAssets, allowedGrades = [], allowedSubjectNames = [], onTestsChanged: _onTestsChanged, onTestAssetsChanged, onAssignmentCreated }) => {
   // Yapılandırılmış test oluşturma UI'ı geçici olarak devre dışı (sadece dosya tabanlı testler kullanılıyor)
 
+  // Başlangıç sınıf seviyesi: öğretmenin yetkili olduğu ilk sınıf veya varsayılan
+  const initialGradeLevel = useMemo(() => {
+    if (allowedGrades.length > 0) {
+      const hasLise = allowedGrades.some((g: string) => ['9', '10', '11', '12'].includes(g));
+      const gradeOptions = GRADE_OPTIONS.filter((opt) => {
+        if (opt.isLgsOrYks) return hasLise;
+        return allowedGrades.includes(opt.value);
+      });
+      return gradeOptions.length > 0 ? gradeOptions[0].value : '9';
+    }
+    return '9';
+  }, [allowedGrades]);
+
   const [assetDraft, setAssetDraft] = useState({
     title: '',
-    subjectId: 'sub1',
+    subjectId: '',
     topic: '',
-    gradeLevel: '9',
+    gradeLevel: initialGradeLevel,
   });
   const [assetFile, setAssetFile] = useState<File | null>(null);
   const [assetUploading, setAssetUploading] = useState(false);
@@ -2511,7 +2601,7 @@ const TeacherTests: React.FC<{
   const [assetCurriculumTopics, setAssetCurriculumTopics] = useState<CurriculumTopic[]>([]);
   const [assetCurriculumTopicsLoading, setAssetCurriculumTopicsLoading] = useState(false);
 
-  // Sınıf değişince Dersleri getir (Asset)
+  // Sınıf değişince Dersleri getir (Asset) - öğretmenin branşına göre filtrele
   useEffect(() => {
     if (!token || !assetDraft.gradeLevel) {
       setAssetCurriculumSubjects([]);
@@ -2520,12 +2610,22 @@ const TeacherTests: React.FC<{
     setAssetCurriculumSubjectsLoading(true);
     getCurriculumSubjects(token, assetDraft.gradeLevel)
       .then((subjects) => {
-        setAssetCurriculumSubjects(subjects);
+        // Öğretmenin branşına göre filtrele
+        const filtered =
+          allowedSubjectNames.length === 0
+            ? subjects
+            : subjects.filter((sub) =>
+                allowedSubjectNames.some(
+                  (n: string) => n.trim().toLowerCase() === sub.name.trim().toLowerCase(),
+                ),
+              );
+        const finalSubjects = filtered.length > 0 ? filtered : subjects;
+        setAssetCurriculumSubjects(finalSubjects);
         // Eğer mevcut seçili ders yeni listede yoksa ilk derse geç veya boşalt
-        if (subjects.length > 0) {
-           const exists = subjects.some(s => s.id === assetDraft.subjectId);
-           if (!exists) {
-             setAssetDraft(p => ({ ...p, subjectId: subjects[0].id }));
+        if (finalSubjects.length > 0) {
+           const exists = finalSubjects.some(s => s.id === assetDraft.subjectId);
+           if (!exists || !assetDraft.subjectId) {
+             setAssetDraft(p => ({ ...p, subjectId: finalSubjects[0].id }));
            }
         } else {
              setAssetDraft(p => ({ ...p, subjectId: '' }));
@@ -2533,7 +2633,7 @@ const TeacherTests: React.FC<{
       })
       .catch(() => setAssetCurriculumSubjects([]))
       .finally(() => setAssetCurriculumSubjectsLoading(false));
-  }, [token, assetDraft.gradeLevel]);
+  }, [token, assetDraft.gradeLevel, allowedSubjectNames, assetDraft.subjectId]);
 
   // Sınıf veya Ders değişince Konuları getir (Asset)
   useEffect(() => {
@@ -2563,6 +2663,10 @@ const TeacherTests: React.FC<{
   const [pdfSaving, setPdfSaving] = useState(false);
   const [pdfSaveMessage, setPdfSaveMessage] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
+  // Görsel olarak çıkarılan sorular (extract-questions API)
+  const [pdfExtracting, setPdfExtracting] = useState(false);
+  const [pdfExtractError, setPdfExtractError] = useState<string | null>(null);
+  const [extractedQuestions, setExtractedQuestions] = useState<ExtractedPdfQuestion[]>([]);
 
   // Collapsible kartlar için state'ler
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
@@ -2582,6 +2686,8 @@ const TeacherTests: React.FC<{
   const handlePdfFileChange = (file: File | null) => {
     if (!file) {
       setPdfFile(null);
+      setExtractedQuestions([]);
+      setPdfExtractError(null);
       return;
     }
     if (file.type !== 'application/pdf') {
@@ -2593,6 +2699,50 @@ const TeacherTests: React.FC<{
     setPdfSaveMessage(null);
     setShowPdfPreview(false);
     setPdfFile(file);
+    setExtractedQuestions([]);
+    setPdfExtractError(null);
+  };
+
+  const handlePdfExtract = async () => {
+    if (!token) {
+      setPdfExtractError('Bu özelliği kullanmak için giriş yapmalısınız.');
+      return;
+    }
+    if (!pdfFile) {
+      setPdfExtractError('Lütfen önce bir PDF dosyası seçin.');
+      return;
+    }
+    setPdfExtracting(true);
+    setPdfExtractError(null);
+    setExtractedQuestions([]);
+    try {
+      const baseUrl = getApiBaseUrl();
+      const formData = new FormData();
+      formData.append('file', pdfFile);
+      const response = await axios.post<{
+        success: boolean;
+        questions?: ExtractedPdfQuestion[];
+        count?: number;
+        error?: string;
+      }>(`${baseUrl}/api/ai/extract-questions`, formData, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 300000, // 5 dakika zaman aşımı (büyük/resimli PDF'ler için)
+      });
+      if (!response.data.success || !Array.isArray(response.data.questions)) {
+        setPdfExtractError(response.data.error ?? 'Görsel çıkarma başarısız.');
+        setExtractedQuestions([]);
+        return;
+      }
+      setExtractedQuestions(response.data.questions);
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data as { error?: string } | undefined)?.error ?? err.message
+        : err instanceof Error ? err.message : 'Görsel çıkarma sırasında hata oluştu.';
+      setPdfExtractError(String(msg));
+      setExtractedQuestions([]);
+    } finally {
+      setPdfExtracting(false);
+    }
   };
 
   const handlePdfAnalyze = async () => {
@@ -2636,6 +2786,7 @@ const TeacherTests: React.FC<{
       }
 
       setPdfQuestions(response.data.data);
+      setShowPdfPreview(true);
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const serverMessage =
@@ -2661,7 +2812,7 @@ const TeacherTests: React.FC<{
       setPdfError('Lütfen üstte sınıf ve ders bilgisini seçin.');
       return;
     }
-    if (pdfQuestions.length === 0) {
+    if (pdfQuestions.length === 0 && extractedQuestions.length === 0) {
       setPdfError('Önce bir PDF analiz ederek soru çıkarın.');
       return;
     }
@@ -2672,10 +2823,31 @@ const TeacherTests: React.FC<{
 
     try {
       const baseUrl = getApiBaseUrl();
+      
+      // Metin tabanlı sorular
+      const textQuestions = pdfQuestions.map(q => ({
+        question_text: q.question_text,
+        options: q.options,
+        correct_option: q.correct_option,
+        difficulty: q.difficulty,
+        topic: q.topic,
+        imageUrl: undefined,
+      }));
+
+      // Görsel tabanlı sorular
+      const visualQuestions = extractedQuestions.map(q => ({
+        question_text: q.question_text || `Görsel Soru ${q.questionNumber}`,
+        options: q.options && q.options.length > 0 ? q.options : ['A', 'B', 'C', 'D', 'E'],
+        correct_option: q.correct_option || null,
+        difficulty: q.difficulty || 'Orta',
+        topic: q.topic || 'Genel',
+        imageUrl: q.imageUrl,
+      }));
+
       const payload = {
         subjectId: aiGenSubject,
         gradeLevel: aiGenGrade,
-        questions: pdfQuestions,
+        questions: [...textQuestions, ...visualQuestions],
       };
 
       const response = await axios.post<{
@@ -2693,9 +2865,11 @@ const TeacherTests: React.FC<{
         return;
       }
 
-      const savedCount = response.data.saved ?? pdfQuestions.length;
-      setPdfSaveMessage(`${savedCount} soru başarıyla soru bankasına kaydedildi.`);
+      const savedCount = response.data.saved ?? (pdfQuestions.length + extractedQuestions.length);
+      setPdfSaveMessage(`${savedCount} soru başarıyla soru bankasına kaydedildi. Soru Bankası sekmesinde görüntüleyebilirsiniz. (Dikkat: Görsel sorularda cevap anahtarı tespit edilemediyse varsayılan olarak 'A' işaretlenmiş olabilir.)`);
       setShowPdfPreview(true);
+      // Soru bankasını yenilemek için bir event dispatch edelim (eğer QuestionBankTab açıksa yenilenecek)
+      window.dispatchEvent(new CustomEvent('questionBankRefresh'));
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const serverMessage =
@@ -3148,9 +3322,18 @@ const TeacherTests: React.FC<{
                 type="button"
                 className="ghost-btn"
                 onClick={handlePdfAnalyze}
-                disabled={pdfParsing || !pdfFile}
+                disabled={pdfParsing || pdfExtracting || !pdfFile}
               >
-                {pdfParsing ? 'Analiz Ediliyor...' : 'PDF’ten Soruları Çıkar'}
+                {pdfParsing ? 'Analiz Ediliyor...' : 'PDF’ten Metin Olarak Çıkar'}
+              </button>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={handlePdfExtract}
+                disabled={pdfParsing || pdfExtracting || !pdfFile}
+                title="Her sayfayı görsele çevirip soru bölgelerini tespit eder ve her soruyu ayrı görsel olarak kaydeder"
+              >
+                {pdfExtracting ? 'Görsel Çıkarılıyor...' : 'Soruları Görsel Olarak Çıkar'}
               </button>
               <button
                 type="button"
@@ -3158,7 +3341,7 @@ const TeacherTests: React.FC<{
                 onClick={handlePdfSaveAll}
                 disabled={
                   pdfSaving ||
-                  pdfQuestions.length === 0 ||
+                  (pdfQuestions.length === 0 && extractedQuestions.length === 0) ||
                   !aiGenSubject ||
                   !aiGenGrade
                 }
@@ -3170,7 +3353,23 @@ const TeacherTests: React.FC<{
                   Ayrıştırılan soru sayısı: <strong>{pdfQuestions.length}</strong>
                 </span>
               )}
+              {extractedQuestions.length > 0 && (
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Görsel soru: <strong>{extractedQuestions.length}</strong>
+                </span>
+              )}
             </div>
+
+            <div style={{ fontSize: '0.75rem', color: '#94a3b8', lineHeight: 1.4, marginTop: '0.5rem', paddingLeft: '0.25rem' }}>
+              • İşaretli cevaplar (varsa) metin analizinde otomatik temizlenir.<br/>
+              • <strong>Geometri ve şekilli sorular</strong> için "Görsel Olarak Çıkar" butonunu kullanın.
+            </div>
+
+            {pdfExtractError && (
+              <div style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: '#fecaca' }}>
+                {pdfExtractError}
+              </div>
+            )}
 
             {pdfError && (
               <div
@@ -3181,6 +3380,127 @@ const TeacherTests: React.FC<{
                 }}
               >
                 {pdfError}
+              </div>
+            )}
+
+            {extractedQuestions.length > 0 && (
+              <div
+                style={{
+                  marginTop: '0.75rem',
+                  padding: '0.75rem',
+                  borderRadius: 10,
+                  background: 'rgba(15,23,42,0.7)',
+                  border: '1px solid rgba(51,65,85,0.9)',
+                }}
+              >
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#93c5fd', marginBottom: '0.5rem' }}>
+                  Görsel olarak çıkarılan sorular ({extractedQuestions.length} adet)
+                </div>
+                {/* Check if results have images (canvas-based) or text (fallback) */}
+                {extractedQuestions.some(q => q.imageUrl && q.imageUrl.length > 0) ? (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                      gap: '0.5rem',
+                      maxHeight: 280,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {extractedQuestions.map((q) => {
+                      const imageSrc = q.imageUrl.startsWith('http') ? q.imageUrl : `${getApiBaseUrl()}${q.imageUrl}`;
+                      return (
+                        <div
+                          key={`${q.questionNumber}-${q.originalPage}-${q.imageUrl}`}
+                          style={{
+                            padding: '0.35rem',
+                            borderRadius: 8,
+                            background: 'rgba(15,23,42,0.85)',
+                            border: '1px solid rgba(71,85,105,0.8)',
+                            textAlign: 'center',
+                          }}
+                        >
+                          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a5b4fc', marginBottom: '0.25rem' }}>
+                            Soru {q.questionNumber} (Sayfa {q.originalPage})
+                          </div>
+                          <img
+                            src={imageSrc}
+                            alt={`Soru ${q.questionNumber}`}
+                            style={{
+                              width: '100%',
+                              height: 120,
+                              objectFit: 'contain',
+                              borderRadius: 6,
+                              background: 'rgba(30,41,59,0.8)',
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* Fallback: text-based results */
+                  <div style={{ maxHeight: 500, overflowY: 'auto' }}>
+                    {extractedQuestions.map((q, idx) => (
+                      <div
+                        key={`ext-${idx}-${q.questionNumber}`}
+                        style={{
+                          padding: '0.6rem',
+                          borderTop: idx === 0 ? 'none' : '1px solid rgba(51,65,85,0.8)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                          <div style={{ fontWeight: 600, color: '#a5b4fc' }}>
+                            Soru {q.questionNumber} (Sayfa {q.originalPage})
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                            {q.topic && (
+                              <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: 999, background: 'rgba(99,102,241,0.2)', color: '#a5b4fc' }}>
+                                {q.topic}
+                              </span>
+                            )}
+                            {q.difficulty && (
+                              <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: 999, background: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}>
+                                {q.difficulty}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {q.question_text && (
+                          <div style={{ whiteSpace: 'pre-wrap', marginBottom: '0.4rem', lineHeight: 1.5, fontSize: '0.8rem' }}>
+                            {q.question_text}
+                          </div>
+                        )}
+                        {Array.isArray(q.options) && q.options.length > 0 && (
+                          <div style={{ paddingLeft: '0.75rem' }}>
+                            {q.options.map((opt, optIdx) => {
+                              const letter = String.fromCharCode(65 + optIdx);
+                              const isCorrect = q.correct_option?.toUpperCase() === letter;
+                              return (
+                                <div
+                                  key={`eopt-${idx}-${optIdx}`}
+                                  style={{
+                                    padding: '0.2rem 0',
+                                    fontSize: '0.8rem',
+                                    color: isCorrect ? '#4ade80' : 'inherit',
+                                    fontWeight: isCorrect ? 600 : 400,
+                                  }}
+                                >
+                                  {isCorrect ? '✓ ' : ''}{opt}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {q.correct_option && (
+                          <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#4ade80' }}>
+                            Doğru Cevap: {q.correct_option}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -3228,54 +3548,64 @@ const TeacherTests: React.FC<{
                   background: 'rgba(15,23,42,0.7)',
                   border: '1px solid rgba(51,65,85,0.9)',
                   fontSize: '0.8rem',
-                  maxHeight: 260,
+                  maxHeight: 500,
                   overflowY: 'auto',
                 }}
               >
-                {Object.entries(
-                  pdfQuestions.reduce<Record<string, ParsedPdfQuestion[]>>((acc, q) => {
-                    const key = (q.topic ?? 'Genel').toString().trim() || 'Genel';
-                    if (!acc[key]) acc[key] = [];
-                    acc[key].push(q);
-                    return acc;
-                  }, {}),
-                ).map(([topic, questions]) => (
+                <div style={{ fontWeight: 600, color: '#93c5fd', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                  Çıkarılan Sorular ({pdfQuestions.length} adet)
+                </div>
+                {pdfQuestions.map((q, idx) => (
                   <div
-                    key={topic}
+                    key={`pdfq-${idx}-${q.question_text.slice(0, 20)}`}
                     style={{
-                      padding: '0.5rem 0',
-                      borderTop: '1px solid rgba(51,65,85,0.8)',
+                      padding: '0.6rem',
+                      borderTop: idx === 0 ? 'none' : '1px solid rgba(51,65,85,0.8)',
                     }}
                   >
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        marginBottom: '0.25rem',
-                        color: '#a5b4fc',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: '0.5rem',
-                      }}
-                    >
-                      <span>{topic}</span>
-                      <span style={{ fontSize: '0.75rem', color: '#e5e7eb' }}>
-                        {questions.length} soru
-                      </span>
-                    </div>
-                    {questions.slice(0, 3).map((q, idx) => (
-                      <div
-                        key={`${topic}-${idx}-${q.question_text.slice(0, 20)}`}
-                        style={{
-                          padding: '0.35rem 0',
-                          borderTop: idx === 0 ? 'none' : '1px dashed rgba(71,85,105,0.8)',
-                        }}
-                      >
-                        <div style={{ fontWeight: 500, marginBottom: '0.1rem' }}>
-                          {idx + 1}. Soru
-                        </div>
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{q.question_text}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                      <div style={{ fontWeight: 600, color: '#a5b4fc' }}>
+                        {idx + 1}. Soru
                       </div>
-                    ))}
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                        {q.topic && (
+                          <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: 999, background: 'rgba(99,102,241,0.2)', color: '#a5b4fc' }}>
+                            {q.topic}
+                          </span>
+                        )}
+                        {q.difficulty && (
+                          <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: 999, background: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}>
+                            {q.difficulty}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ whiteSpace: 'pre-wrap', marginBottom: '0.4rem', lineHeight: 1.5 }}>{q.question_text}</div>
+                    {Array.isArray(q.options) && q.options.length > 0 && (
+                      <div style={{ paddingLeft: '0.75rem' }}>
+                        {q.options.map((opt, optIdx) => {
+                          const letter = String.fromCharCode(65 + optIdx);
+                          const isCorrect = q.correct_option?.toUpperCase() === letter;
+                          return (
+                            <div
+                              key={`opt-${idx}-${optIdx}`}
+                              style={{
+                                padding: '0.2rem 0',
+                                color: isCorrect ? '#4ade80' : 'inherit',
+                                fontWeight: isCorrect ? 600 : 400,
+                              }}
+                            >
+                              {isCorrect ? '✓ ' : ''}{opt}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {q.correct_option && (
+                      <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#4ade80' }}>
+                        Doğru Cevap: {q.correct_option}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -3319,17 +3649,22 @@ const TeacherTests: React.FC<{
               value={assetDraft.gradeLevel}
               onChange={(e) => setAssetDraft((p) => ({ ...p, gradeLevel: e.target.value }))}
             >
-              <option value="12">12. Sınıf</option>
-              <option value="11">11. Sınıf</option>
-              <option value="10">10. Sınıf</option>
-              <option value="9">9. Sınıf</option>
-              <option value="8">8. Sınıf</option>
-              <option value="7">7. Sınıf</option>
-              <option value="6">6. Sınıf</option>
-              <option value="5">5. Sınıf</option>
-              <option value="4">4. Sınıf</option>
-              <option value="TYT">TYT</option>
-              <option value="AYT">AYT</option>
+              {(() => {
+                // Öğretmenin yetkili olduğu sınıflara göre filtrele
+                const hasLise =
+                  allowedGrades.length === 0 ||
+                  allowedGrades.some((g: string) => ['9', '10', '11', '12'].includes(g));
+                const gradeOptions = GRADE_OPTIONS.filter((opt) => {
+                  if (opt.isLgsOrYks) return hasLise; // TYT/AYT sadece 9–12 öğretmenleri
+                  if (allowedGrades.length === 0) return true;
+                  return allowedGrades.includes(opt.value);
+                });
+                return gradeOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ));
+              })()}
             </select>
 
             <select
@@ -3697,6 +4032,26 @@ const TeacherOverview: React.FC<{
   );
 };
 
+/** Sınıf filtresi sıralaması: büyükten küçüğe, sonra TYT, AYT */
+const GRADE_DISPLAY_ORDER = ['12', '11', '10', '9', '8', '7', '6', '5', '4', 'TYT', 'AYT', 'Mezun'];
+
+function sortGradesByDisplayOrder(grades: string[]): string[] {
+  return [...grades].sort((a, b) => {
+    const i = GRADE_DISPLAY_ORDER.indexOf(a);
+    const j = GRADE_DISPLAY_ORDER.indexOf(b);
+    if (i === -1 && j === -1) return a.localeCompare(b);
+    if (i === -1) return 1;
+    if (j === -1) return -1;
+    return i - j;
+  });
+}
+
+function gradeOptionLabel(g: string): string {
+  if (g === 'Mezun') return 'Mezun Sınıfı';
+  if (g === 'TYT' || g === 'AYT') return g;
+  return `${g}. Sınıf`;
+}
+
 const GRADE_OPTIONS: { value: string; label: string; isLgsOrYks?: boolean }[] = [
   { value: '12', label: '12. Sınıf' },
   { value: '11', label: '11. Sınıf' },
@@ -3868,12 +4223,14 @@ const TeacherContent: React.FC<{
             
           <input
             type="text"
+            className="teacher-content-input"
             placeholder="İçerik başlığı"
             value={draft.title}
             onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
           />
           <input
             type="text"
+            className="teacher-content-input"
             placeholder="Konu detayı / açıklama"
             value={draft.description}
             onChange={(event) => onDraftChange({ ...draft, description: event.target.value })}
@@ -3961,6 +4318,7 @@ const TeacherContent: React.FC<{
           )}
           <input
             type="text"
+            className="teacher-content-input"
             placeholder="İçerik URL (YouTube vb.)"
             value={draft.url}
             onChange={(event) => onDraftChange({ ...draft, url: event.target.value })}
@@ -4008,6 +4366,9 @@ const TeacherCalendar: React.FC<{
   onToggleAnnouncement: (value: boolean) => void;
   creatingAnnouncement: boolean;
   announcementError: string | null;
+  editingAnnouncementId?: string | null;
+  onEditAnnouncement?: (announcement: TeacherAnnouncement) => void;
+  onDeleteAnnouncement?: (id: string) => void;
 }> = ({
   events,
   students,
@@ -4023,9 +4384,20 @@ const TeacherCalendar: React.FC<{
   onToggleAnnouncement,
   creatingAnnouncement,
   announcementError,
+  editingAnnouncementId,
+  onEditAnnouncement,
+  onDeleteAnnouncement,
 }) => {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedAnnouncementId, setSelectedAnnouncementId] = useState<string | null>(null);
+  const [calendarEventFeedback, setCalendarEventFeedback] = useState<string | null>(null);
+  const announcementFormRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (announcementOpen && editingAnnouncementId && announcementFormRef.current) {
+      announcementFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [announcementOpen, editingAnnouncementId]);
 
   const announcementGradeLevels = useMemo(() => {
     const set = new Set<string>();
@@ -4064,8 +4436,25 @@ const TeacherCalendar: React.FC<{
         </button>
       }
     >
+      {calendarEventFeedback && (
+        <div
+          role="status"
+          style={{
+            marginBottom: '0.75rem',
+            padding: '0.5rem 0.75rem',
+            borderRadius: 8,
+            fontSize: '0.875rem',
+            background: 'var(--color-surface-soft)',
+            color: 'var(--color-text-main)',
+            border: '1px solid var(--color-border-subtle)',
+          }}
+        >
+          {calendarEventFeedback}
+        </div>
+      )}
       {announcementOpen && (
         <div
+          ref={announcementFormRef}
           className="calendar-announcement-form"
           style={{
             border: '1px solid rgba(148,163,184,0.35)',
@@ -4195,7 +4584,13 @@ const TeacherCalendar: React.FC<{
               onClick={onCreateAnnouncement}
               disabled={creatingAnnouncement}
             >
-              {creatingAnnouncement ? 'Kaydediliyor...' : 'Duyuruyu Kaydet'}
+              {creatingAnnouncement
+                ? editingAnnouncementId
+                  ? 'Güncelleniyor...'
+                  : 'Kaydediliyor...'
+                : editingAnnouncementId
+                  ? 'Güncelle'
+                  : 'Duyuruyu Kaydet'}
             </button>
           </div>
         </div>
@@ -4262,7 +4657,8 @@ const TeacherCalendar: React.FC<{
                               } else if (event.relatedId && onEditAssignment) {
                                 onEditAssignment(event.relatedId, event);
                               } else {
-                                alert('Bu etkinlik türü için düzenleme şu an desteklenmiyor.');
+                                setCalendarEventFeedback('Bu etkinlik türü için düzenleme desteklenmiyor.');
+                                window.setTimeout(() => setCalendarEventFeedback(null), 4000);
                               }
                             }}
                           >
@@ -4273,7 +4669,10 @@ const TeacherCalendar: React.FC<{
                             className="ghost-btn calendar-event-delete"
                             onClick={() => {
                               if (isMeeting && meetingId) onDeleteMeeting(meetingId);
-                              else alert('Bu etkinlik türü için silme şu an desteklenmiyor.');
+                              else {
+                                setCalendarEventFeedback('Bu etkinlik türü için silme desteklenmiyor.');
+                                window.setTimeout(() => setCalendarEventFeedback(null), 4000);
+                              }
                             }}
                           >
                             Sil
@@ -4322,10 +4721,7 @@ const TeacherCalendar: React.FC<{
                         type="button"
                         className="ghost-btn"
                         onClick={() => {
-                          // Gelecekte backend desteği geldğinde gerçek düzenleme burada yapılabilir
-                          // Şimdilik kullanıcıya bilgi verelim.
-                          // eslint-disable-next-line no-alert
-                          alert('Duyurular için düzenleme şu an desteklenmiyor.');
+                          if (onEditAnnouncement) onEditAnnouncement(announcement);
                         }}
                       >
                         Düzenle
@@ -4334,8 +4730,10 @@ const TeacherCalendar: React.FC<{
                         type="button"
                         className="ghost-btn calendar-event-delete"
                         onClick={() => {
-                          // eslint-disable-next-line no-alert
-                          alert('Duyurular için silme şu an desteklenmiyor.');
+                          if (onDeleteAnnouncement) {
+                            setSelectedAnnouncementId(null);
+                            onDeleteAnnouncement(announcement.id);
+                          }
                         }}
                       >
                         Sil
@@ -5054,6 +5452,7 @@ const TeacherStudents: React.FC<{
 
   const [messageMode, setMessageMode] = useState<MessageMode>('none');
   const [studentMessageText, setStudentMessageText] = useState('');
+  const [messageFeedback, setMessageFeedback] = useState<string | null>(null);
   const [showAllMessages, setShowAllMessages] = useState(true);
 
   const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('');
@@ -5069,7 +5468,14 @@ const TeacherStudents: React.FC<{
     return { ...s, isOnline };
   });
 
-  const teacherAssignedGrades = (user?.assignedGrades ?? []).filter(Boolean);
+  const teacherAssignedGrades = useMemo(() => {
+    const base = (user?.assignedGrades ?? []).filter(Boolean);
+    return addTyAytIfHighSchool(base);
+  }, [user?.assignedGrades]);
+  const teacherAssignedGradesSorted = useMemo(
+    () => sortGradesByDisplayOrder(teacherAssignedGrades),
+    [teacherAssignedGrades.join(',')],
+  );
   const teacherSubjectNames = (user?.subjectAreas ?? []).filter(Boolean);
 
   const isFilterReady = selectedGradeLevel !== '' && selectedSubjectId !== '';
@@ -5096,35 +5502,24 @@ const TeacherStudents: React.FC<{
     }
   }, [teacherAssignedGrades.join(',')]);
 
-  // Sınıf değişince dersleri getir (sadece öğretmenin girdiği dersler)
+  // Öğretmenin branşlarına göre ders listesini hazırla (tüm sınıflar için aynı set)
   useEffect(() => {
-    if (!token || !selectedGradeLevel) {
-      setAvailableSubjects([]);
-      setSubjectsError(null);
-      return;
-    }
-    setSubjectsLoading(true);
+    // Kullanıcının subjectAreas listesini, her yerde aynı görünecek sabit bir ders listesine çevir
+    const subjectsFromTeacher = teacherSubjectNames.map((name) => ({
+      // ID'yi isimden türetiyoruz; bu ID sadece filtre/localStorage için kullanılıyor
+      id: name.toLocaleLowerCase('tr-TR').replace(/\s+/g, '_'),
+      name,
+    }));
+
+    setSubjectsLoading(false);
     setSubjectsError(null);
-    getCurriculumSubjects(token, selectedGradeLevel)
-      .then((subjects) => {
-        const filtered = subjects.filter((s) =>
-          teacherSubjectNames.some(
-            (name) => name.toLocaleLowerCase('tr-TR') === s.name.toLocaleLowerCase('tr-TR'),
-          ),
-        );
-        setAvailableSubjects(filtered);
-        if (!filtered.some((s) => s.id === selectedSubjectId)) {
-          setSelectedSubjectId('');
-        }
-      })
-      .catch((e) => {
-        setAvailableSubjects([]);
-        setSubjectsError(e instanceof Error ? e.message : 'Dersler yüklenemedi.');
-      })
-      .finally(() => {
-        setSubjectsLoading(false);
-      });
-  }, [token, selectedGradeLevel, teacherSubjectNames.join(','), selectedSubjectId]);
+    setAvailableSubjects(subjectsFromTeacher);
+
+    // Mevcut seçim yeni listede yoksa temizle
+    if (!subjectsFromTeacher.some((s) => s.id === selectedSubjectId)) {
+      setSelectedSubjectId('');
+    }
+  }, [teacherSubjectNames.join(','), selectedSubjectId]);
 
   // Filtreyi localStorage'a yaz
   useEffect(() => {
@@ -5202,9 +5597,9 @@ const TeacherStudents: React.FC<{
             <option value="">
               {teacherAssignedGrades.length === 0 ? 'Yetkili sınıf yok' : 'Sınıf seçiniz'}
             </option>
-            {teacherAssignedGrades.map((g) => (
+            {teacherAssignedGradesSorted.map((g) => (
               <option key={g} value={g}>
-                {g === 'Mezun' ? 'Mezun Sınıfı' : `${g}. Sınıf`}
+                {gradeOptionLabel(g)}
               </option>
             ))}
           </select>
@@ -5399,24 +5794,6 @@ const TeacherStudents: React.FC<{
                     <div className="sparkline-bar" />
                   </MetricCard>
                   <MetricCard
-                    label="Ortalama Skor"
-                    value={
-                      studentProfile.results.length
-                        ? `${Math.round(
-                            studentProfile.results.reduce(
-                              (sum, item) => sum + item.scorePercent,
-                              0,
-                            ) / studentProfile.results.length,
-                          )}%`
-                        : '%0'
-                    }
-                    helper="Tüm testler"
-                    trendLabel="Ölçüm"
-                    trendTone="neutral"
-                  >
-                    <div className="sparkline-bar" />
-                  </MetricCard>
-                  <MetricCard
                     label="Doğru / Yanlış"
                     value={`${studentProfile.results.reduce((sum, r) => sum + r.correctCount, 0)} / ${studentProfile.results.reduce((sum, r) => sum + r.incorrectCount, 0)}`}
                     helper="Toplam sorular"
@@ -5592,11 +5969,11 @@ const TeacherStudents: React.FC<{
                                 });
                                 setStudentMessageText('');
                                 setMessageMode('none');
-                                // eslint-disable-next-line no-alert
-                                alert('Mesaj gönderildi.');
+                                setMessageFeedback('Mesaj iletildi.');
+                                window.setTimeout(() => setMessageFeedback(null), 4000);
                               } catch (e) {
-                                // eslint-disable-next-line no-alert
-                                alert(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
+                                setMessageFeedback(e instanceof Error ? e.message : 'Mesaj gönderilemedi.');
+                                window.setTimeout(() => setMessageFeedback(null), 5000);
                               }
                             }}
                             style={{
@@ -5609,6 +5986,22 @@ const TeacherStudents: React.FC<{
                           >
                             <Send size={16} /> Gönder
                           </button>
+                          {messageFeedback && (
+                            <div
+                              role="status"
+                              style={{
+                                marginTop: '0.75rem',
+                                padding: '0.5rem 0.75rem',
+                                borderRadius: 8,
+                                fontSize: '0.875rem',
+                                background: 'var(--color-surface-soft)',
+                                color: 'var(--color-text-main)',
+                                border: '1px solid var(--color-border-subtle)',
+                              }}
+                            >
+                              {messageFeedback}
+                            </div>
+                          )}
                         </>
                       )}
                     </div>

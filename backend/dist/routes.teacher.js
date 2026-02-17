@@ -559,6 +559,161 @@ router.post('/announcements', (0, auth_1.authenticate)('teacher'), async (req, r
         scheduledDate: (_a = announcement.scheduledDate) === null || _a === void 0 ? void 0 : _a.toISOString(),
     });
 });
+router.put('/announcements/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    var _a;
+    const teacherId = req.user.id;
+    const id = req.params.id;
+    const { title, message, scheduledDate } = req.body;
+    const existing = await db_1.prisma.teacherAnnouncement.findFirst({
+        where: { id, teacherId },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Duyuru bulunamadı' });
+    }
+    if (title !== undefined && !String(title).trim()) {
+        return res.status(400).json({ error: 'Başlık boş olamaz' });
+    }
+    if (message !== undefined && !String(message).trim()) {
+        return res.status(400).json({ error: 'Mesaj boş olamaz' });
+    }
+    const updated = await db_1.prisma.teacherAnnouncement.update({
+        where: { id },
+        data: {
+            ...(title !== undefined && { title: String(title).trim() }),
+            ...(message !== undefined && { message: String(message).trim() }),
+            ...(scheduledDate !== undefined && {
+                scheduledDate: scheduledDate ? new Date(scheduledDate) : null,
+            }),
+            ...(scheduledDate !== undefined && {
+                status: scheduledDate ? 'planned' : 'draft',
+            }),
+        },
+    });
+    return res.json({
+        id: updated.id,
+        teacherId: updated.teacherId,
+        title: updated.title,
+        message: updated.message,
+        status: updated.status,
+        createdAt: updated.createdAt.toISOString(),
+        scheduledDate: (_a = updated.scheduledDate) === null || _a === void 0 ? void 0 : _a.toISOString(),
+    });
+});
+router.delete('/announcements/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const id = req.params.id;
+    const existing = await db_1.prisma.teacherAnnouncement.findFirst({
+        where: { id, teacherId },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Duyuru bulunamadı' });
+    }
+    await db_1.prisma.teacherAnnouncement.delete({ where: { id } });
+    return res.json({ success: true });
+});
+// --- Ders programı (lesson schedule) entries ---
+router.get('/lesson-schedule-entries', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const scope = req.query.scope || 'class';
+    const gradeLevel = req.query.gradeLevel;
+    const subjectId = req.query.subjectId;
+    const studentId = req.query.studentId;
+    const where = {
+        teacherId,
+        scope,
+    };
+    if (gradeLevel)
+        where.gradeLevel = gradeLevel;
+    if (subjectId)
+        where.subjectId = subjectId;
+    if (studentId)
+        where.studentId = studentId;
+    const entries = await db_1.prisma.lessonScheduleEntry.findMany({
+        where,
+        orderBy: [{ dayOfWeek: 'asc' }, { hour: 'asc' }],
+    });
+    return res.json(entries.map((e) => {
+        var _a, _b, _c;
+        return ({
+            id: e.id,
+            gradeLevel: (_a = e.gradeLevel) !== null && _a !== void 0 ? _a : '',
+            subjectId: (_b = e.subjectId) !== null && _b !== void 0 ? _b : '',
+            subjectName: e.subjectName,
+            dayOfWeek: e.dayOfWeek,
+            hour: e.hour,
+            topic: (_c = e.topic) !== null && _c !== void 0 ? _c : undefined,
+        });
+    }));
+});
+router.post('/lesson-schedule-entries', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    var _a, _b, _c;
+    const teacherId = req.user.id;
+    const { scope, gradeLevel, subjectId, studentId, dayOfWeek, hour, subjectName, topic } = req.body;
+    if (!scope || subjectName == null || typeof dayOfWeek !== 'number' || typeof hour !== 'number') {
+        return res.status(400).json({ error: 'scope, subjectName, dayOfWeek, hour zorunludur' });
+    }
+    const entry = await db_1.prisma.lessonScheduleEntry.create({
+        data: {
+            teacherId,
+            scope,
+            gradeLevel: gradeLevel || null,
+            subjectId: subjectId || null,
+            studentId: studentId || null,
+            dayOfWeek,
+            hour,
+            subjectName: String(subjectName),
+            topic: topic != null ? String(topic) : null,
+        },
+    });
+    return res.status(201).json({
+        id: entry.id,
+        gradeLevel: (_a = entry.gradeLevel) !== null && _a !== void 0 ? _a : '',
+        subjectId: (_b = entry.subjectId) !== null && _b !== void 0 ? _b : '',
+        subjectName: entry.subjectName,
+        dayOfWeek: entry.dayOfWeek,
+        hour: entry.hour,
+        topic: (_c = entry.topic) !== null && _c !== void 0 ? _c : undefined,
+    });
+});
+router.put('/lesson-schedule-entries/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    var _a, _b, _c;
+    const teacherId = req.user.id;
+    const id = req.params.id;
+    const existing = await db_1.prisma.lessonScheduleEntry.findFirst({ where: { id, teacherId } });
+    if (!existing)
+        return res.status(404).json({ error: 'Kayıt bulunamadı' });
+    const { gradeLevel, subjectId, studentId, dayOfWeek, hour, subjectName, topic } = req.body;
+    const updated = await db_1.prisma.lessonScheduleEntry.update({
+        where: { id },
+        data: {
+            ...(gradeLevel !== undefined && { gradeLevel: gradeLevel || null }),
+            ...(subjectId !== undefined && { subjectId: subjectId || null }),
+            ...(studentId !== undefined && { studentId: studentId || null }),
+            ...(typeof dayOfWeek === 'number' && { dayOfWeek }),
+            ...(typeof hour === 'number' && { hour }),
+            ...(subjectName !== undefined && { subjectName: String(subjectName) }),
+            ...(topic !== undefined && { topic: topic != null ? String(topic) : null }),
+        },
+    });
+    return res.json({
+        id: updated.id,
+        gradeLevel: (_a = updated.gradeLevel) !== null && _a !== void 0 ? _a : '',
+        subjectId: (_b = updated.subjectId) !== null && _b !== void 0 ? _b : '',
+        subjectName: updated.subjectName,
+        dayOfWeek: updated.dayOfWeek,
+        hour: updated.hour,
+        topic: (_c = updated.topic) !== null && _c !== void 0 ? _c : undefined,
+    });
+});
+router.delete('/lesson-schedule-entries/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const id = req.params.id;
+    const existing = await db_1.prisma.lessonScheduleEntry.findFirst({ where: { id, teacherId } });
+    if (!existing)
+        return res.status(404).json({ error: 'Kayıt bulunamadı' });
+    await db_1.prisma.lessonScheduleEntry.delete({ where: { id } });
+    return res.json({ success: true });
+});
 // Öğrenci listesi
 router.get('/students', (0, auth_1.authenticate)('teacher'), async (req, res) => {
     const teacherId = req.user.id;
@@ -573,10 +728,20 @@ router.get('/students', (0, auth_1.authenticate)('teacher'), async (req, res) =>
         : { role: 'student' };
     const teacherStudents = await db_1.prisma.user.findMany({
         where: whereClause,
-        select: { id: true, name: true, email: true, gradeLevel: true, classId: true, lastSeenAt: true, profilePictureUrl: true },
+        // Veli işlemleri ekranında da kullanılmak üzere parentPhone bilgisini de seçiyoruz
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            gradeLevel: true,
+            classId: true,
+            lastSeenAt: true,
+            profilePictureUrl: true,
+            parentPhone: true,
+        },
     });
     return res.json(teacherStudents.map((s) => {
-        var _a, _b, _c;
+        var _a, _b, _c, _d;
         return ({
             id: s.id,
             name: s.name,
@@ -586,8 +751,282 @@ router.get('/students', (0, auth_1.authenticate)('teacher'), async (req, res) =>
             classId: (_b = s.classId) !== null && _b !== void 0 ? _b : '',
             lastSeenAt: s.lastSeenAt ? new Date(s.lastSeenAt).toISOString() : undefined,
             profilePictureUrl: (_c = s.profilePictureUrl) !== null && _c !== void 0 ? _c : undefined,
+            parentPhone: (_d = s.parentPhone) !== null && _d !== void 0 ? _d : undefined,
         });
     }));
+});
+// ========== SINIF BAZLI DEVRAMSIZLIK YÖNETİMİ ==========
+/**
+ * GET /teacher/attendance/classes
+ * Öğretmenin yoklama alabileceği sınıfları listeler
+ */
+router.get('/attendance/classes', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    try {
+        const classGroups = await db_1.prisma.classGroup.findMany({
+            where: { teacherId },
+            include: {
+                students: {
+                    include: {
+                        student: {
+                            select: {
+                                id: true,
+                                name: true,
+                                gradeLevel: true,
+                            },
+                        },
+                    },
+                },
+            },
+            orderBy: [{ gradeLevel: 'asc' }, { name: 'asc' }],
+        });
+        return res.json(classGroups.map((cg) => ({
+            id: cg.id,
+            name: cg.name,
+            gradeLevel: cg.gradeLevel,
+            studentCount: cg.students.length,
+        })));
+    }
+    catch (error) {
+        console.error('[attendance/classes]', error);
+        return res.status(500).json({ error: 'Sınıflar yüklenemedi.' });
+    }
+});
+/**
+ * GET /teacher/attendance/classes/:classId/students
+ * Belirli bir sınıftaki öğrencileri listeler (yoklama için)
+ */
+router.get('/attendance/classes/:classId/students', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const classId = String(req.params.classId);
+    try {
+        const classGroup = await db_1.prisma.classGroup.findUnique({
+            where: { id: classId },
+            include: {
+                students: {
+                    include: {
+                        student: {
+                            select: {
+                                id: true,
+                                name: true,
+                                gradeLevel: true,
+                                profilePictureUrl: true,
+                            },
+                        },
+                    },
+                    orderBy: {
+                        student: {
+                            name: 'asc',
+                        },
+                    },
+                },
+            },
+        });
+        if (!classGroup) {
+            return res.status(404).json({ error: 'Sınıf bulunamadı.' });
+        }
+        if (classGroup.teacherId !== teacherId) {
+            return res.status(403).json({ error: 'Bu sınıf için yetkiniz yok.' });
+        }
+        return res.json({
+            classGroup: {
+                id: classGroup.id,
+                name: classGroup.name,
+                gradeLevel: classGroup.gradeLevel,
+            },
+            students: classGroup.students.map((s) => ({
+                id: s.student.id,
+                name: s.student.name,
+                gradeLevel: s.student.gradeLevel,
+                profilePictureUrl: s.student.profilePictureUrl,
+            })),
+        });
+    }
+    catch (error) {
+        console.error('[attendance/classes/:classId/students]', error);
+        return res.status(500).json({ error: 'Öğrenciler yüklenemedi.' });
+    }
+});
+/**
+ * POST /teacher/attendance/submit
+ * Sınıf bazlı yoklama kaydet
+ * Body: { classGroupId, date, attendance: [{ studentId, present }] }
+ */
+router.post('/attendance/submit', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const { classGroupId, date, attendance } = req.body;
+    if (!classGroupId || !date) {
+        return res.status(400).json({ error: 'classGroupId ve date zorunludur.' });
+    }
+    if (!Array.isArray(attendance) || attendance.length === 0) {
+        return res.status(400).json({ error: 'attendance dizisi zorunludur (en az bir öğrenci).' });
+    }
+    try {
+        // Prisma Client eski kaldıysa (generate/restart yapılmadıysa) burada undefined olur.
+        // Bu durumda daha anlaşılır hata döndürelim.
+        if (!db_1.prisma.classAttendance) {
+            return res.status(500).json({
+                error: 'Yoklama kaydedilirken bir hata oluştu.',
+                details: 'Prisma Client güncel değil: prisma.classAttendance tanımsız. `npx prisma generate` çalıştırıp backend’i yeniden başlatın.',
+            });
+        }
+        const classGroup = await db_1.prisma.classGroup.findUnique({
+            where: { id: classGroupId },
+            include: {
+                students: { select: { studentId: true } },
+            },
+        });
+        if (!classGroup) {
+            return res.status(404).json({ error: 'Sınıf bulunamadı.' });
+        }
+        if (classGroup.teacherId !== teacherId) {
+            return res.status(403).json({ error: 'Bu sınıf için yetkiniz yok.' });
+        }
+        const enrolledStudentIds = new Set(classGroup.students.map((s) => s.studentId));
+        const attendanceDate = new Date(date);
+        attendanceDate.setHours(0, 0, 0, 0);
+        const savedAttendance = [];
+        for (const item of attendance) {
+            const { studentId, present, notes } = item;
+            if (!studentId || typeof present !== 'boolean')
+                continue;
+            if (!enrolledStudentIds.has(studentId))
+                continue;
+            await db_1.prisma.classAttendance.upsert({
+                where: {
+                    classGroupId_studentId_date: {
+                        classGroupId,
+                        studentId,
+                        date: attendanceDate,
+                    },
+                },
+                create: {
+                    teacherId,
+                    classGroupId,
+                    studentId,
+                    date: attendanceDate,
+                    present,
+                    notes: (notes === null || notes === void 0 ? void 0 : notes.trim()) || null,
+                },
+                update: {
+                    present,
+                    notes: (notes === null || notes === void 0 ? void 0 : notes.trim()) || null,
+                },
+            });
+            savedAttendance.push({ studentId, present });
+            // Velilere bildirim gönder (gelmediyse)
+            if (!present) {
+                try {
+                    const student = await db_1.prisma.user.findUnique({
+                        where: { id: studentId },
+                        select: { name: true },
+                    });
+                    const parentLinks = await db_1.prisma.parentStudent.findMany({
+                        where: { studentId },
+                        select: { parentId: true },
+                    });
+                    if (parentLinks.length > 0) {
+                        const dateLabel = attendanceDate.toLocaleDateString('tr-TR');
+                        await db_1.prisma.notification.createMany({
+                            data: parentLinks.map((ps) => ({
+                                userId: ps.parentId,
+                                type: 'live_class_attendance',
+                                title: 'Devamsızlık Bildirimi',
+                                body: `${(student === null || student === void 0 ? void 0 : student.name) || 'Öğrenci'} ${dateLabel} tarihinde ${classGroup.name} sınıfına gelmedi.`,
+                                relatedEntityType: 'attendance',
+                                relatedEntityId: JSON.stringify({ classGroupId, studentId, date: attendanceDate.toISOString() }),
+                            })),
+                        });
+                    }
+                }
+                catch (notifErr) {
+                    console.error('[attendance] Bildirim gönderimi hatası:', notifErr);
+                }
+            }
+        }
+        return res.json({
+            success: true,
+            saved: savedAttendance.length,
+            attendance: savedAttendance,
+        });
+    }
+    catch (error) {
+        const details = error instanceof Error ? error.message : String(error);
+        console.error('[attendance/submit]', error);
+        return res.status(500).json({
+            error: 'Yoklama kaydedilirken bir hata oluştu.',
+            details,
+        });
+    }
+});
+/**
+ * GET /teacher/attendance/records
+ * Yoklama kayıtlarını listele (filtreleme: classGroupId, studentId, startDate, endDate)
+ */
+router.get('/attendance/records', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    const teacherId = req.user.id;
+    const classGroupId = req.query.classGroupId;
+    const studentId = req.query.studentId;
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
+    try {
+        const where = {
+            teacherId,
+        };
+        if (classGroupId) {
+            where.classGroupId = classGroupId;
+        }
+        if (studentId) {
+            where.studentId = studentId;
+        }
+        if (startDate || endDate) {
+            where.date = {};
+            if (startDate) {
+                where.date.gte = new Date(startDate);
+            }
+            if (endDate) {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                where.date.lte = end;
+            }
+        }
+        const records = await db_1.prisma.classAttendance.findMany({
+            where,
+            include: {
+                classGroup: {
+                    select: {
+                        id: true,
+                        name: true,
+                        gradeLevel: true,
+                    },
+                },
+                student: {
+                    select: {
+                        id: true,
+                        name: true,
+                        gradeLevel: true,
+                    },
+                },
+            },
+            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+            take: 500, // Son 500 kayıt
+        });
+        return res.json(records.map((r) => ({
+            id: r.id,
+            classGroupId: r.classGroupId,
+            classGroupName: r.classGroup.name,
+            studentId: r.studentId,
+            studentName: r.student.name,
+            date: r.date.toISOString(),
+            present: r.present,
+            notes: r.notes,
+            createdAt: r.createdAt.toISOString(),
+        })));
+    }
+    catch (error) {
+        console.error('[attendance/records]', error);
+        return res.status(500).json({ error: 'Yoklama kayıtları yüklenemedi.' });
+    }
 });
 // Veli listesi (öğretmenin sınıflarındaki öğrencilerin velileri)
 router.get('/parents', (0, auth_1.authenticate)('teacher'), async (req, res) => {
@@ -625,13 +1064,17 @@ router.get('/students/:id', (0, auth_1.authenticate)('teacher'), async (req, res
     if (!student) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
-    const [assignmentsData, studentResults, studentWatch] = await Promise.all([
+    const [assignmentsData, studentResults, studentWatch, studentExamResults] = await Promise.all([
         db_1.prisma.assignment.findMany({
             where: { students: { some: { studentId: id } } },
             include: { students: { select: { studentId: true } } },
         }),
         db_1.prisma.testResult.findMany({ where: { studentId: id } }),
         db_1.prisma.watchRecord.findMany({ where: { studentId: id } }),
+        db_1.prisma.examResult.findMany({
+            where: { studentId: id },
+            include: { exam: { select: { id: true, name: true, type: true, date: true } } },
+        }),
     ]);
     const assignmentsForApi = assignmentsData.map((a) => {
         var _a, _b, _c, _d;
@@ -660,6 +1103,17 @@ router.get('/students/:id', (0, auth_1.authenticate)('teacher'), async (req, res
         completedAt: r.completedAt.toISOString(),
         answers: [],
     }));
+    const examResultsSorted = [...studentExamResults].sort((a, b) => new Date(b.exam.date).getTime() - new Date(a.exam.date).getTime());
+    const examResultsForApi = examResultsSorted.map((er) => ({
+        id: er.id,
+        examId: er.examId,
+        examName: er.exam.name,
+        examType: er.exam.type,
+        examDate: er.exam.date.toISOString(),
+        totalNet: er.totalNet,
+        score: er.score,
+        percentile: er.percentile,
+    }));
     return res.json({
         student: {
             id: student.id,
@@ -671,6 +1125,7 @@ router.get('/students/:id', (0, auth_1.authenticate)('teacher'), async (req, res
         },
         assignments: assignmentsForApi,
         results: resultsForApi,
+        examResults: examResultsForApi,
         watchRecords: studentWatch.map((w) => ({
             id: w.id,
             contentId: w.contentId,
@@ -1359,6 +1814,43 @@ router.get('/assignments', (0, auth_1.authenticate)('teacher'), async (_req, res
             timeLimitMinutes: (_f = a.timeLimitMinutes) !== null && _f !== void 0 ? _f : undefined,
         });
     }));
+});
+// Görev güncelleme (başlık, açıklama, son teslim tarihi/saati)
+router.put('/assignments/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
+    var _a, _b, _c, _d, _e, _f;
+    const assignmentId = String(req.params.id);
+    const { title, description, dueDate } = req.body;
+    const existing = await db_1.prisma.assignment.findUnique({
+        where: { id: assignmentId },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Görev bulunamadı' });
+    }
+    const updateData = {};
+    if (typeof title === 'string' && title.trim())
+        updateData.title = title.trim();
+    if (description !== undefined)
+        updateData.description = description === '' ? null : String(description);
+    if (typeof dueDate === 'string' && dueDate)
+        updateData.dueDate = new Date(dueDate);
+    const assignment = await db_1.prisma.assignment.update({
+        where: { id: assignmentId },
+        data: updateData,
+        include: { students: { select: { studentId: true } } },
+    });
+    return res.json({
+        id: assignment.id,
+        title: assignment.title,
+        description: (_a = assignment.description) !== null && _a !== void 0 ? _a : undefined,
+        testId: (_b = assignment.testId) !== null && _b !== void 0 ? _b : undefined,
+        contentId: (_c = assignment.contentId) !== null && _c !== void 0 ? _c : undefined,
+        testAssetId: (_d = assignment.testAssetId) !== null && _d !== void 0 ? _d : undefined,
+        classId: (_e = assignment.classId) !== null && _e !== void 0 ? _e : undefined,
+        assignedStudentIds: assignment.students.map((s) => s.studentId),
+        dueDate: assignment.dueDate.toISOString(),
+        points: assignment.points,
+        timeLimitMinutes: (_f = assignment.timeLimitMinutes) !== null && _f !== void 0 ? _f : undefined,
+    });
 });
 // Mesajlar (gönderen ve alıcı isimleriyle)
 router.get('/messages', (0, auth_1.authenticate)('teacher'), async (req, res) => {
@@ -2629,6 +3121,7 @@ router.get('/assignments/live-status', (0, auth_1.authenticate)('teacher'), asyn
 });
 // Yıllık gelişim raporu verileri
 router.get('/students/:id/performance', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (req, res) => {
+    var _a, _b, _c, _d, _e;
     const studentId = String(req.params.id);
     // Öğrenci bilgisi
     const student = await db_1.prisma.user.findUnique({
@@ -2672,7 +3165,7 @@ router.get('/students/:id/performance', (0, auth_1.authenticateMultiple)(['teach
     // Using TestResult sum is faster if correct/incorrect counts are stored there.
     const questionStats = await db_1.prisma.testResult.aggregate({
         where: { studentId },
-        _sum: { correctCount: true, incorrectCount: true }
+        _sum: { correctCount: true, incorrectCount: true, blankCount: true }
     });
     const solvedQuestions = (questionStats._sum.correctCount || 0) + (questionStats._sum.incorrectCount || 0);
     // 2. Subject/Topic Performance
@@ -2698,11 +3191,12 @@ router.get('/students/:id/performance', (0, auth_1.authenticateMultiple)(['teach
         }
         const subEntry = subjectMap.get(subId);
         if (!subEntry.topics.has(topic)) {
-            subEntry.topics.set(topic, { correct: 0, incorrect: 0 });
+            subEntry.topics.set(topic, { correct: 0, incorrect: 0, blank: 0 });
         }
         const topicEntry = subEntry.topics.get(topic);
         topicEntry.correct += res.correctCount;
         topicEntry.incorrect += res.incorrectCount;
+        topicEntry.blank += res.blankCount;
     }
     // Transform to frontend format
     const mapToFrontendKey = (name) => {
@@ -2730,23 +3224,35 @@ router.get('/students/:id/performance', (0, auth_1.authenticateMultiple)(['teach
         const topicsList = [];
         let totalCorrect = 0;
         let totalIncorrect = 0;
+        let totalBlank = 0;
         for (const [topicName, stats] of subData.topics.entries()) {
-            const total = stats.correct + stats.incorrect;
+            const total = stats.correct + stats.incorrect + stats.blank;
             const mastery = total > 0 ? Math.round((stats.correct / total) * 100) : 0;
             topicsList.push({
                 id: topicName,
                 name: topicName,
                 correct: stats.correct,
                 incorrect: stats.incorrect,
+                blank: stats.blank,
                 masteryPercent: mastery
             });
             totalCorrect += stats.correct;
             totalIncorrect += stats.incorrect;
+            totalBlank += stats.blank;
         }
         if (topicsList.length > 0) {
             subjectsOutput.push({
                 id: key,
                 label: subData.name,
+                summary: {
+                    totalQuestions: totalCorrect + totalIncorrect + totalBlank,
+                    correct: totalCorrect,
+                    incorrect: totalIncorrect,
+                    blank: totalBlank,
+                    correctPercent: totalCorrect + totalIncorrect + totalBlank > 0
+                        ? Math.round((totalCorrect / (totalCorrect + totalIncorrect + totalBlank)) * 100)
+                        : 0
+                },
                 topics: topicsList
             });
             const totalQ = totalCorrect + totalIncorrect;
@@ -2771,14 +3277,121 @@ router.get('/students/:id/performance', (0, auth_1.authenticateMultiple)(['teach
         avgMastery = radarData.reduce((a, b) => a + b.student, 0) / radarData.length;
     }
     // 0-10 arası puan. (Mastery % 70, Attendance % 30 ağırlıklı)
-    const annualScore = ((avgMastery / 10) * 0.7) + ((attendanceRate / 10) * 0.3);
-    // Mock percentile rank (Real rank requires comparing with all students, leaving as mock/random for now)
-    const annualRankPercentile = 80 + Math.floor(Math.random() * 19);
+    const annualScore = (avgMastery / 10) * 0.7 + (attendanceRate / 10) * 0.3;
+    // --- Gerçekçi yüzdelik dilim hesabı ---
+    // Aynı sınıftaki öğrenciler arasında sınav ortalamasına göre sıralama yapılır.
+    let annualRankPercentile = 0;
+    try {
+        // Öğrencinin sınıf seviyesi (ör. "9", "10", "11", "12", "MEZUN")
+        const gradeLevel = student.gradeLevel;
+        // Aynı sınıf seviyesindeki tüm öğrencileri bul
+        const classmates = await db_1.prisma.user.findMany({
+            where: {
+                role: 'student',
+                ...(gradeLevel ? { gradeLevel } : {}),
+            },
+            select: { id: true },
+        });
+        const classStudentIds = classmates.map((c) => c.id);
+        if (classStudentIds.length > 0) {
+            // Sınav sonuçlarından her öğrenci için ortalama puan
+            const grouped = await db_1.prisma.examResult.groupBy({
+                by: ['studentId'],
+                where: { studentId: { in: classStudentIds } },
+                _avg: { score: true },
+            });
+            if (grouped.length > 0) {
+                const scores = grouped.map((g) => {
+                    var _a;
+                    return ({
+                        studentId: g.studentId,
+                        score: (_a = g._avg.score) !== null && _a !== void 0 ? _a : 0,
+                    });
+                });
+                // Seçili öğrencinin ortalama puanı
+                const selfScoreEntry = scores.find((s) => s.studentId === student.id);
+                const selfScore = (_a = selfScoreEntry === null || selfScoreEntry === void 0 ? void 0 : selfScoreEntry.score) !== null && _a !== void 0 ? _a : 
+                // Eğer henüz sınav sonucu yoksa yıllık skoru 0-10'dan 0-100'e ölçekleyerek kullan
+                Number((annualScore * 10).toFixed(1));
+                // Artan sırada sıralama
+                const sorted = [...scores].sort((a, b) => a.score - b.score);
+                const index = sorted.findIndex((s) => s.studentId === student.id);
+                if (index >= 0) {
+                    // Bu öğrenciden düşük veya eşit puana sahip öğrencilerin yüzdesi (1–100)
+                    const percentile = Math.round(((index + 1) / sorted.length) * 100);
+                    annualRankPercentile = Math.max(1, Math.min(100, percentile));
+                }
+                else {
+                    // Öğrencinin henüz skoru yoksa, skor dağılımına göre yaklaşık yüzdelik
+                    const lowerOrEqual = sorted.filter((s) => s.score <= selfScore).length;
+                    const percentile = Math.round((lowerOrEqual / sorted.length) * 100);
+                    annualRankPercentile = Math.max(1, Math.min(100, percentile));
+                }
+            }
+            else {
+                // Sınıfta hiç sınav sonucu yoksa ortalama bir değer ver
+                annualRankPercentile = 50;
+            }
+        }
+        else {
+            // Aynı sınıf seviyesinde öğrenci yoksa genel bir tahmin kullan
+            annualRankPercentile = 50;
+        }
+    }
+    catch (e) {
+        // Herhangi bir hata durumunda UI'ın bozulmaması için güvenli varsayılan
+        annualRankPercentile = 50;
+    }
     // Mock subjects data if empty (to avoid broken UI if no test results)
     if (subjectsOutput.length === 0) {
         // Return minimal mock data so UI doesn't crash?
         // Or just let it be empty.
     }
+    // Basit ama veriye dayalı koç notu – PDF'lerdeki koç yorumuna benzer
+    let strongestSubject = null;
+    let weakestSubject = null;
+    if (radarData.length > 0) {
+        const sorted = [...radarData].sort((a, b) => b.student - a.student);
+        strongestSubject = (_c = (_b = sorted[0]) === null || _b === void 0 ? void 0 : _b.axis) !== null && _c !== void 0 ? _c : null;
+        weakestSubject = (_e = (_d = sorted[sorted.length - 1]) === null || _d === void 0 ? void 0 : _d.axis) !== null && _e !== void 0 ? _e : null;
+    }
+    const roundedMastery = Math.round(avgMastery || 0);
+    let overallLevel = 'geliştirilebilir';
+    if (roundedMastery >= 80) {
+        overallLevel = 'yüksek';
+    }
+    else if (roundedMastery >= 60) {
+        overallLevel = 'orta';
+    }
+    const effortSentences = [];
+    if (attendanceRate < 60) {
+        effortSentences.push('Canlı ders katılım oranı şu anda %60\'ın altında. Haftalık programında kaçırdığın dersleri mutlaka telafi listesi oluşturup yeniden izlemelisin.');
+    }
+    else if (attendanceRate < 85) {
+        effortSentences.push('Canlı ders katılımın fena değil; hedef, oranı %85 ve üzerine taşımak olmalı. Özellikle sınava yakın dönemlerde devamsızlıklarını en aza indirmeye çalış.');
+    }
+    else {
+        effortSentences.push('Canlı ders katılımın oldukça güçlü. Bu istikrarlı devamlılık, yıl içindeki ilerlemenin en önemli gücü.');
+    }
+    if (focusHours < 20) {
+        effortSentences.push('Odaklı çalışma süren (pomodoro) düşük görünüyor. Her gün en az 1 oturum hedefleyerek başlayabilir ve haftalık toplamı kademeli olarak artırabilirsin.');
+    }
+    else if (focusHours < 60) {
+        effortSentences.push('Odaklı çalışma süren orta seviyede. Haftada birkaç gün, 2–3 ardışık pomodoro yaparak özellikle zorlandığın konular için daha derin çalışma blokları oluşturmalısın.');
+    }
+    else {
+        effortSentences.push('Odaklı çalışma süren oldukça iyi. Bu süreyi, deneme çözümü sonrası yanlış analizleri ve konu tekrarı ile desteklemen başarıyı daha da kalıcı hale getirir.');
+    }
+    const coachNoteParts = [];
+    coachNoteParts.push(`Genel başarı seviyen şu anda ${overallLevel} düzeyinde (yaklaşık %${roundedMastery} doğruluk).`);
+    if (strongestSubject) {
+        coachNoteParts.push(`${strongestSubject} dersinde sınıf ortalamasına göre daha güçlü bir tablo görünüyor. Bu dersi, motivasyon kaynağın olarak kullanabilir ve çalışırken önce bu derste ısınma yapabilirsin.`);
+    }
+    if (weakestSubject) {
+        coachNoteParts.push(`${weakestSubject} dersinde ise gelişim alanların daha belirgin. Bu derste; önce temel konuları netleştirip ardından sık tekrar ve konu odaklı mini denemeler çözmen önerilir.`);
+    }
+    coachNoteParts.push(...effortSentences, 'Her deneme sonrası; doğru, yanlış ve boşlarını ders ve konu bazında tabloya bakarak mutlaka yorumla. Özellikle aynı konularda tekrar eden hataları ayrı bir listeye alıp, önce bu listeyi bitirmeyi haftalık hedef haline getirirsen yıl sonu performansın belirgin şekilde artacaktır.');
+    const coachNote = coachNoteParts.join(' ');
     return res.json({
         student: {
             name: student.name,
@@ -2795,7 +3408,7 @@ router.get('/students/:id/performance', (0, auth_1.authenticateMultiple)(['teach
         },
         subjects: subjectsOutput,
         radar: radarData,
-        coachNote: 'Öğrencinin performansı sistem verilerine dayalı olarak hesaplanmıştır. Düzenli çalışmaya devam ediniz.'
+        coachNote
     });
 });
 exports.default = router;

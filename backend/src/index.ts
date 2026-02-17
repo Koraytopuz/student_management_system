@@ -63,6 +63,13 @@ if (!fs.existsSync(uploadsRoot)) {
 }
 app.use('/uploads', express.static(uploadsRoot));
 
+// Öğretmen/admin tarafından yüklenen sınav kitapçıkları (PDF) frontend/public/tests altında tutuluyor.
+// Bunları backend üzerinden /tests yoluyla servis et.
+const testsPublicDir = path.join(__dirname, '..', '..', 'frontend', 'public', 'tests');
+if (fs.existsSync(testsPublicDir)) {
+  app.use('/tests', express.static(testsPublicDir));
+}
+
 // Kök: tarayıcıda localhost:4000 açıldığında bilgilendirme sayfası
 app.get('/', (_req, res) => {
   res.type('html').send(`
@@ -115,6 +122,9 @@ app.use('/teacher', teacherRoutes);
 app.use('/student', studentRoutes);
 app.use('/parent', parentRoutes);
 app.use('/questionbank', questionBankRoutes);
+
+// API prefix'leri – frontend bazı student endpoint'lerine /api/student ile erişiyor
+app.use('/api/student', studentRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api', examRoutes);   // examRoutes önce - GET /api/exams examAssignments ile dönsün
 app.use('/api', analysisRoutes);

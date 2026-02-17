@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Award, Bell, BookOpen, Calendar, CalendarCheck, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
+import { Award, BookOpen, Calendar, CalendarCheck, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { useReadingMode } from './ReadingModeContext';
 import {
@@ -43,7 +43,9 @@ import {
   type StudentCoachingSession,
   type StudentBadgeProgress,
   getStudentExamDetail,
-  submitStudentExamAnswers,
+
+  getStudentLessonScheduleEntries,
+  type LessonScheduleEntryDto,
 } from './api';
 import { Breadcrumb, DashboardLayout, GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
 import type { BreadcrumbItem, SidebarItem, SidebarSubItem } from './components/DashboardPrimitives';
@@ -56,7 +58,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { StudentQuestionBankTab } from './StudentQuestionBankTab';
 import { StudentBadgesTab } from './StudentBadges';
 import { FocusZone } from './components/FocusZone';
-import { ExamOpticalFormOverlay, type ExamSimple } from './ExamOpticalFormOverlay';
+import { NotificationDetailModal, type NotificationDetailModalData } from './components/NotificationDetailModal';
+import { type ExamSimple } from './api';
 import { StudentExamList } from './pages/student/StudentExamList';
 import { LessonScheduleTab } from './LessonScheduleTab';
 
@@ -111,6 +114,7 @@ export const StudentDashboard: React.FC = () => {
   const { readingMode } = useReadingMode();
   const [assignments, setAssignments] = useState<StudentAssignment[]>([]);
   const [meetings, setMeetings] = useState<StudentMeeting[]>([]);
+  const [teacherScheduleEntries, setTeacherScheduleEntries] = useState<LessonScheduleEntryDto[]>([]);
   const [contents, setContents] = useState<StudentContent[]>([]);
   const todosState = useApiState<StudentTodo[]>([]);
   const [todoMutation, setTodoMutation] = useState<{
@@ -143,11 +147,21 @@ export const StudentDashboard: React.FC = () => {
     getStudentMeetings(token)
       .then((data) => setMeetings(sortMeetingsByDate(data)))
       .catch(() => {});
+    getStudentLessonScheduleEntries(token)
+      .then(setTeacherScheduleEntries)
+      .catch(() => setTeacherScheduleEntries([]));
     progressState.run(() => getStudentProgressTopics(token)).catch(() => {});
     chartsState.run(() => getStudentProgressCharts(token)).catch(() => {});
     todosState.run(() => getStudentTodos(token)).catch(() => {});
     coachingState.run(() => getStudentCoachingSessions(token)).catch(() => {});
   }, [token]);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'schedule') return;
+    getStudentLessonScheduleEntries(token)
+      .then(setTeacherScheduleEntries)
+      .catch(() => setTeacherScheduleEntries([]));
+  }, [token, activeTab]);
 
   useEffect(() => {
     if (!token || activeTab !== 'badges') return;
@@ -248,6 +262,10 @@ export const StudentDashboard: React.FC = () => {
   const navigate = useNavigate();
 
   const [focusedNotificationId, setFocusedNotificationId] = useState<string | null>(null);
+  const [notificationDetailOpen, setNotificationDetailOpen] = useState(false);
+  const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
+  const activeNotification =
+    notifications.find((n) => n.id === activeNotificationId) ?? null;
 
   useEffect(() => {
     const notif = searchParams.get('notifications');
@@ -260,7 +278,6 @@ export const StudentDashboard: React.FC = () => {
   }, [searchParams, setSearchParams]);
 
   const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
 
   const [solutionOverlay, setSolutionOverlay] = useState<{
     open: boolean;
@@ -367,22 +384,33 @@ export const StudentDashboard: React.FC = () => {
   };
 
   const [activeExamToSolve, setActiveExamToSolve] = useState<ExamSimple | null>(null);
-  const [examSubmitting, setExamSubmitting] = useState(false);
+  // const [_examSubmitting, _setExamSubmitting] = useState(false);
 
   const handleSolveExam = async (examId: number) => {
     if (!token) return;
     try {
       const exam = await getStudentExamDetail(token, examId);
       setActiveExamToSolve(exam);
+      // Sınav başlatıldığında ekranı sınav alanına doğru kaydır
+      try {
+        window.scrollTo({
+          top: 0,
+          behavior: 'smooth',
+        });
+      } catch {
+        // window erişilemezse sessizce yut
+      }
     } catch (e) {
       // eslint-disable-next-line no-alert
       alert('Sınav detayları alınamadı. ' + (e instanceof Error ? e.message : ''));
     }
   };
 
-  const submitExamAnswers = async (answers: Record<number, string>) => {
+  
+  /*
+  const _submitExamAnswers = async (answers: Record<number, string>) => {
     if (!token || !activeExamToSolve) return;
-    setExamSubmitting(true);
+    _setExamSubmitting(true);
     try {
        const answersStr = Object.fromEntries(
            Object.entries(answers).map(([k,v]) => [String(k), v])
@@ -395,9 +423,10 @@ export const StudentDashboard: React.FC = () => {
        // eslint-disable-next-line no-alert
        alert('Gönderim başarısız: ' + (e instanceof Error ? e.message : ''));
     } finally {
-       setExamSubmitting(false);
+       _setExamSubmitting(false);
     }
   };
+  */
 
   const [activeTest, setActiveTest] = useState<StudentAssignmentDetail | null>(null);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
@@ -675,7 +704,7 @@ export const StudentDashboard: React.FC = () => {
     else if (activeTab === 'questionbank') items.push({ label: 'Soru Havuzu' });
     else if (activeTab === 'badges') items.push({ label: 'Rozetlerim' });
     else if (activeTab === 'liveclasses') items.push({ label: 'Canlı Dersler' });
-    else if (activeTab === 'coaching') items.push({ label: 'Koçluk' });
+    else if (activeTab === 'coaching') items.push({ label: 'Kişisel Gelişim' });
     else if (activeTab === 'notifications') items.push({ label: 'Bildirimler' });
     else if (activeTab === 'complaints') items.push({ label: 'Şikayet/Öneri' });
     else if (activeTab === 'exam-analysis') items.push({ label: 'Sınav Analizi' });
@@ -862,7 +891,9 @@ export const StudentDashboard: React.FC = () => {
                         ? 'Kişisel Gelişim'
                         : activeTab === 'notifications'
                           ? 'Bildirimler'
-                          : 'Şikayet/Öneri'
+                          : activeTab === 'exam-analysis'
+                            ? 'Sınav Analizi'
+                            : 'Şikayet/Öneri'
       }
       subtitle="Gerçek verilerle çalışma serini ve ödevlerini yönet."
       status={undefined}
@@ -932,30 +963,34 @@ export const StudentDashboard: React.FC = () => {
               <p className="student-schedule-helper">
                 Rehber öğretmeninin senin için veya sınıfın için hazırladığı ders programlarını buradan takip edebilirsin.
               </p>
-              {meetings.length === 0 ? (
+              {teacherScheduleEntries.length === 0 ? (
                 <div className="student-schedule-premium-hint">
                   <span>Henüz öğretmenin tarafından atanmış bir program bulunmuyor.</span>
                 </div>
               ) : (
                 <div className="student-schedule-premium-hint student-schedule-teacher-programs">
-                  <span className="student-schedule-teacher-label">
-                    Önümüzdeki canlı dersler / rehberlik seansları:
-                  </span>
                   <div className="student-schedule-teacher-programs-list">
-                    {meetings.slice(0, 3).map((m) => (
-                      <div key={m.id} className="student-schedule-teacher-program-item">
-                        <div className="student-schedule-teacher-title">{m.title}</div>
-                        <div className="student-schedule-teacher-meta">
-                          {new Date(m.scheduledAt).toLocaleString('tr-TR', {
-                            day: '2-digit',
-                            month: 'short',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                          {m.durationMinutes ? ` • ${m.durationMinutes} dk` : null}
+                    {(['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'] as const).map((dayName, dayIndex) => {
+                      const dayEntries = teacherScheduleEntries
+                        .filter((e) => e.dayOfWeek === dayIndex)
+                        .sort((a, b) => a.hour - b.hour);
+                      if (dayEntries.length === 0) return null;
+                      return (
+                        <div key={dayName} style={{ marginBottom: '0.75rem' }}>
+                          <span className="student-schedule-teacher-label" style={{ display: 'block', marginBottom: '0.25rem' }}>
+                            {dayName}
+                          </span>
+                          {dayEntries.map((e) => (
+                            <div key={e.id} className="student-schedule-teacher-program-item">
+                              <div className="student-schedule-teacher-title">
+                                {e.hour}:00 – {e.subjectName}
+                                {e.topic ? ` · ${e.topic}` : ''}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1066,8 +1101,13 @@ export const StudentDashboard: React.FC = () => {
                   key={n.id}
                   data-notification-id={n.id}
                   className="list-row"
+                  onClick={() => {
+                    setActiveNotificationId(n.id);
+                    setNotificationDetailOpen(true);
+                  }}
                   style={{
                     alignItems: 'flex-start',
+                    cursor: 'pointer',
                     ...(focusedNotificationId === n.id
                       ? {
                           background: 'rgba(59,130,246,0.12)',
@@ -1091,7 +1131,8 @@ export const StudentDashboard: React.FC = () => {
                           <button
                             type="button"
                             className="primary-btn"
-                            onClick={async () => {
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               if (!token) return;
                               try {
                                 const help = await getStudentHelpRequest(token, n.relatedEntityId!);
@@ -1128,16 +1169,18 @@ export const StudentDashboard: React.FC = () => {
                           <button
                             type="button"
                             className="primary-btn"
-                            onClick={async () => {
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               if (!user?.id) return;
                               try {
                                 if (n.relatedEntityType === 'exam') {
-                                    // Handle Exam
-                                    if (!n.read && token) {
-                                        await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
-                                        await loadNotifications();
-                                    }
-                                    handleSolveExam(Number(n.relatedEntityId));
+                                  // Sınav bildirimi: önce bildirimi okundu işaretle, sonra Sınav Analizi sekmesine geçip sınavı aç
+                                  if (!n.read && token) {
+                                    await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
+                                    await loadNotifications();
+                                  }
+                                  setActiveTab('exam-analysis');
+                                  handleSolveExam(Number(n.relatedEntityId));
                                 } else {
                                     // Handle Online Test (Legacy 'test')
                                     if (!n.read && token) {
@@ -1163,7 +1206,8 @@ export const StudentDashboard: React.FC = () => {
                           <button
                             type="button"
                             className="primary-btn"
-                            onClick={async () => {
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               if (!token || !user?.id) return;
                               try {
                                 const payload = JSON.parse(n.relatedEntityId!) as { studentId: string; examId: number };
@@ -1184,7 +1228,8 @@ export const StudentDashboard: React.FC = () => {
                             type="button"
                             className="ghost-btn"
                             style={{ border: '1px solid rgba(148,163,184,0.5)' }}
-                            onClick={async () => {
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               if (!user?.id) return;
                               try {
                                 const payload = JSON.parse(n.relatedEntityId!) as { studentId: string; examId: number };
@@ -1217,7 +1262,8 @@ export const StudentDashboard: React.FC = () => {
                         type="button"
                         className="ghost-btn"
                         style={{ fontSize: '0.75rem', padding: '0.15rem 0.6rem' }}
-                        onClick={async () => {
+                        onClick={async (e) => {
+                          e.stopPropagation();
                           if (!token) return;
                           try {
                             await apiRequest(`/student/notifications/${n.id}/read`, { method: 'PUT' }, token);
@@ -1234,7 +1280,8 @@ export const StudentDashboard: React.FC = () => {
                       type="button"
                       className="ghost-btn"
                       style={{ fontSize: '0.75rem', padding: '0.15rem 0.6rem', color: '#ef4444' }}
-                      onClick={async () => {
+                      onClick={async (e) => {
+                        e.stopPropagation();
                         if (!token) return;
                         try {
                           await apiRequest(`/student/notifications/${n.id}`, { method: 'DELETE' }, token);
@@ -1253,16 +1300,50 @@ export const StudentDashboard: React.FC = () => {
           )}
         </GlassCard>
       )}
+
+      <NotificationDetailModal
+        open={notificationDetailOpen}
+        notification={
+          activeNotification
+            ? ({
+                id: activeNotification.id,
+                title: activeNotification.title,
+                body: activeNotification.body,
+                createdAt: activeNotification.createdAt,
+                read: activeNotification.read,
+                type: activeNotification.type,
+                relatedEntityType: activeNotification.relatedEntityType,
+                relatedEntityId: activeNotification.relatedEntityId,
+              } satisfies NotificationDetailModalData)
+            : null
+        }
+        onClose={() => setNotificationDetailOpen(false)}
+        actions={
+          activeNotification && !activeNotification.read && token ? (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={async () => {
+                if (!token) return;
+                try {
+                  await apiRequest(`/student/notifications/${activeNotification.id}/read`, { method: 'PUT' }, token);
+                  await loadNotifications();
+                } catch {
+                  // ignore
+                }
+              }}
+            >
+              Okundu
+            </button>
+          ) : null
+        }
+      />
       {activeTab === 'complaints' && (
         <StudentComplaints token={token} />
       )}
-      {activeExamToSolve && (
-        <ExamOpticalFormOverlay
-          exam={activeExamToSolve}
-          onClose={() => setActiveExamToSolve(null)}
-          onSubmit={submitExamAnswers}
-          submitting={examSubmitting}
-        />
+      {activeExamToSolve && activeTab === 'exam-analysis' && (
+        <div className="ui-modal-overlay">Module Missing: ExamOpticalFormOverlay</div>
+        /* <ExamOpticalFormOverlay ... /> commented out due to missing module */
       )}
       {activeTest && (
         <TestSolveOverlay
@@ -1688,6 +1769,15 @@ const TestSolveOverlay: React.FC<{
   const [drawingLineWidth, setDrawingLineWidth] = useState<number>(3);
   const [eraserWidth, setEraserWidth] = useState<number>(18);
 
+  // ESC ile kapatma (Full screen çıkış)
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
   const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
   const canvasWidth = Math.min(1200, viewportWidth - 40);
@@ -1715,30 +1805,50 @@ const TestSolveOverlay: React.FC<{
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'var(--ui-modal-backdrop-strong)',
+        background: 'var(--ui-modal-surface)',
+        zIndex: 9999, // Sidebar ve header'ı kapla
+        padding: 0,
         display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 60,
-        padding: '2rem 1.25rem',
+        flexDirection: 'column',
       }}
     >
       <div
         style={{
           width: '100%',
-          maxWidth: 1200,
-          maxHeight: '100%',
-          background: 'var(--ui-modal-surface)',
-          borderRadius: 24,
-          padding: '1.75rem',
-          boxShadow: 'var(--ui-modal-shadow)',
-          border: '1px solid var(--ui-modal-border)',
+          height: '100%',
+          padding: '2rem',
           display: 'flex',
           flexDirection: 'column',
           gap: '1.75rem',
           color: 'var(--color-text-main)',
+          overflowY: 'auto',
+          position: 'relative', // X butonu için
         }}
       >
+        <button
+          onClick={onClose}
+          title="Kapat (ESC)"
+          style={{
+            position: 'absolute',
+            top: '1.5rem',
+            right: '1.5rem',
+            background: 'var(--color-surface-soft, rgba(0,0,0,0.05))',
+            border: '1px solid var(--color-border-subtle)',
+            borderRadius: '50%',
+            width: 44,
+            height: 44,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            zIndex: 10,
+            color: 'var(--color-text-muted)',
+            transition: 'all 0.2s',
+          }}
+          className="close-fullscreen-btn"
+        >
+          <X size={24} />
+        </button>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div>
@@ -1772,13 +1882,7 @@ const TestSolveOverlay: React.FC<{
                 </div>
               </div>
             )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="ghost-btn"
-            >
-              Kapat
-            </button>
+
           </div>
 
           <div
@@ -1790,6 +1894,31 @@ const TestSolveOverlay: React.FC<{
               boxShadow: 'var(--shadow-soft)',
             }}
           >
+            {question.imageUrl && (
+              <div 
+                style={{
+                  marginBottom: '1.25rem',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  background: readingModeEnabled ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.03)',
+                  padding: '1rem',
+                  borderRadius: 12,
+                  border: '1px solid var(--panel-border)'
+                }}
+              >
+                <img
+                  src={question.imageUrl}
+                  alt="Soru Görseli"
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: 500,
+                    borderRadius: 8,
+                    objectFit: 'contain',
+                    display: 'block'
+                  }}
+                />
+              </div>
+            )}
             <p style={{ margin: 0, fontSize: '1.05rem', lineHeight: readingModeEnabled ? 1.85 : 1.6 }}>
               {question.text}
             </p>
@@ -3010,7 +3139,6 @@ const StudentAssignments: React.FC<{
   <GlassCard
     title="Ödev Takibi"
     subtitle="Görevleri gerçek zamanlı güncelle"
-    actions={<TagChip label="Canlı API" tone="success" />}
   >
     {loading && <div className="empty-state">Ödevler yükleniyor...</div>}
     {!loading && assignments.length === 0 && <div className="empty-state">Aktif ödev yok.</div>}
@@ -3033,53 +3161,6 @@ const StudentAssignments: React.FC<{
       ))}
     </div>
   </GlassCard>
-);
-
-const StudentGrades: React.FC<{
-  progress: ProgressOverview | null;
-  charts: ProgressCharts | null;
-  loading: boolean;
-}> = ({ progress, charts, loading }) => (
-  <div className="space-y-6">
-  <div className="dual-grid">
-    <GlassCard
-      title="Sınav Performansı"
-      subtitle="Son 7 gün ortalama"
-    >
-      {loading && <div className="empty-state">Analiz yükleniyor...</div>}
-      <div className="list-stack">
-        <div className="list-row">
-          <div>
-            <strong>Ortalama Skor</strong>
-            <small>Güncel başarı</small>
-          </div>
-          <TagChip label={`${progress?.averageScorePercent ?? 0}%`} tone="success" />
-        </div>
-        <div className="list-row">
-          <div>
-            <strong>Toplam Soru</strong>
-            <small>Bu hafta çözülen</small>
-          </div>
-          <TagChip label={`${progress?.totalQuestionsSolved ?? 0}`} tone="warning" />
-        </div>
-      </div>
-    </GlassCard>
-
-    <GlassCard title="Ders Bazlı Gelişim" subtitle="Konu tamamlanma">
-      <div className="list-stack">
-        {(progress?.topics ?? []).slice(0, 4).map((topic) => (
-          <div className="list-row" key={topic.topic}>
-            <div>
-              <strong>{topic.topic}</strong>
-              <small>Tamamlama: {topic.completionPercent}%</small>
-            </div>
-          </div>
-        ))}
-        {charts?.daily?.length === 0 && <div className="empty-state">Veri bulunamadı.</div>}
-      </div>
-    </GlassCard>
-  </div>
-  </div>
 );
 
 const StudentCoachingTab: React.FC<{
@@ -3156,7 +3237,7 @@ const StudentCoachingTab: React.FC<{
                 <div key={s.id} className="list-row">
                   <div style={{ flex: 1 }}>
                     <strong style={{ display: 'block' }}>
-                      {s.title || 'Koçluk görüşmesi'}
+                      {s.title || 'Kişisel gelişim görüşmesi'}
                     </strong>
                     <small
                       style={{
@@ -3209,7 +3290,7 @@ const StudentCoachingTab: React.FC<{
               color: 'var(--color-text-muted)',
             }}
           >
-            Koçluk seanslarının detaylı notları yalnızca öğretmenin ve yetkili yöneticilerin
+            Kişisel gelişim seanslarının detaylı notları yalnızca öğretmenin ve yetkili yöneticilerin
             erişimine açıktır; burada sadece temel planlama bilgileri gösterilir.
           </div>
         </div>

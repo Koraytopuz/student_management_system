@@ -5,17 +5,17 @@ import { useNavigate } from 'react-router-dom';
 
 const DEMO_EMAILS: Record<UserRole, string> = {
   teacher: 'ayse.teacher@example.com',
-  student: 'ali.student@example.com',
+  student: 'koray@gmail.com',
   parent: 'mehmet.parent@example.com',
   admin: 'admin@example.com',
 };
 
-const DEMO_STUDENTS = [
-  { id: '1', name: 'Ali Yılmaz', email: 'ali.student@example.com', grade: '12. Sınıf' },
-  { id: '2', name: 'Ayşe Demir', email: 'ayse.student@example.com', grade: '11. Sınıf' },
-  { id: '3', name: 'Mehmet Öz', email: 'mehmet.student@example.com', grade: '10. Sınıf' },
-  { id: '4', name: 'Zeynep Kaya', email: 'zeynep.student@example.com', grade: '9. Sınıf' },
-];
+const DEMO_PASSWORDS: Record<UserRole, string> = {
+  teacher: 'sky123',
+  student: 'kry123',
+  parent: 'sky123',
+  admin: 'sky123',
+};
 
 const roles: { value: UserRole; label: string }[] = [
   { value: 'teacher', label: 'Öğretmen' },
@@ -27,7 +27,7 @@ const roles: { value: UserRole; label: string }[] = [
 export const LoginPage: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('teacher');
   const [email, setEmail] = useState(DEMO_EMAILS.teacher);
-  const [password, setPassword] = useState('sky123');
+  const [password, setPassword] = useState(DEMO_PASSWORDS.teacher);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { loginSuccess } = useAuth();
@@ -319,6 +319,7 @@ export const LoginPage: React.FC = () => {
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);
     setEmail(DEMO_EMAILS[role]);
+    setPassword(DEMO_PASSWORDS[role]);
     setError(null);
   };
 
@@ -350,37 +351,6 @@ export const LoginPage: React.FC = () => {
             </button>
           ))}
         </div>
-
-        {selectedRole === 'student' && (
-          <div style={{ marginBottom: '1rem' }}>
-            <label className="field">
-              <span>Demo Öğrenci Seçimi</span>
-              <select
-                value={DEMO_STUDENTS.find(s => s.email === email)?.email ? email : ''}
-                onChange={(e) => {
-                  if (e.target.value) setEmail(e.target.value);
-                }}
-                style={{
-                  width: '100%',
-                  padding: '0.6rem',
-                  borderRadius: '0.7rem',
-                  border: '1px solid #d1d5db',
-                  background: 'var(--color-surface, #f9fafb)',
-                  fontSize: '0.9rem',
-                  color: 'var(--color-text-main, #0f172a)',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="" disabled>Listeden seçin...</option>
-                {DEMO_STUDENTS.map((s) => (
-                  <option key={s.id} value={s.email}>
-                    {s.name} ({s.grade})
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        )}
 
         <form onSubmit={handleSubmit} className="form">
           <label className="field">

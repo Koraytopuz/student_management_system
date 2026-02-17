@@ -1,10 +1,25 @@
 import express, { type Request, type Response, type RequestHandler } from 'express';
 import multer from 'multer';
+import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import { PDFDocument } from 'pdf-lib';
 import { authenticateMultiple, type AuthenticatedRequest } from './auth';
 import { callGemini } from './ai';
 import { prisma as prismaClient } from './db';
+
+// Try to import pdfExtractor service (may fail if dependencies missing)
+let extractQuestionsFromPdf: ((buffer: Buffer, config: any) => Promise<any[]>) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const pdfExtractorService = require('./services/pdfExtractor.service');
+  if (pdfExtractorService && typeof pdfExtractorService.extractQuestionsFromPdf === 'function') {
+    extractQuestionsFromPdf = pdfExtractorService.extractQuestionsFromPdf;
+  }
+} catch (err) {
+  // Service not available - will use fallback approach
+  // eslint-disable-next-line no-console
+  console.warn('[AI Routes] PDF extractor service not available, will use fallback:', err instanceof Error ? err.message : String(err));
+}
 
 // Cast prisma to any to avoid IDE type glitches; model exists at runtime
 const prisma = prismaClient as any;
@@ -23,9 +38,11 @@ const upload = multer({
 });
 
 const MAX_PAGES_PER_CALL = 10;
+const CHUNK_SIZE = 3; // Büyük PDF'leri daha küçük parçalara bölerek işle (daha stabil sonuç için)
 
 interface ParsedQuestion {
   question_text: string;
+  imageUrl?: string;
   options: string[];
   correct_option?: string | null;
   difficulty: string;
@@ -208,6 +225,14 @@ router.post(
         });
       }
 
+      const fileBuffer = (req.file as Express.Multer.File & { buffer?: Buffer }).buffer;
+      if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
+        return res.status(400).json({
+          success: false,
+          error: 'PDF dosyası yüklenemedi. Lütfen tekrar deneyin.',
+        });
+      }
+
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(500).json({
@@ -226,7 +251,7 @@ router.post(
       const startPage = req.body.startPage ? Number(req.body.startPage) : undefined;
       const endPage = req.body.endPage ? Number(req.body.endPage) : undefined;
 
-      let workingBuffer = req.file.buffer;
+      let workingBuffer = fileBuffer;
       try {
         if (pageMode) {
           workingBuffer = await slicePdfBuffer(workingBuffer, {
@@ -245,138 +270,455 @@ router.post(
         });
       }
 
-      const pdfBase64 = workingBuffer.toString('base64');
+      // Toplam sayfa sayısını kontrol et – büyük PDF'leri chunk'lara böl
+      const srcDocForCount = await PDFDocument.load(workingBuffer);
+      const totalPageCount = srcDocForCount.getPageCount();
+      // eslint-disable-next-line no-console
+      console.log(`[AI][parse-pdf] PDF has ${totalPageCount} pages`);
 
       const systemInstruction = [
-        'Sen uzman bir ölçme-değerlendirme öğretmenisin. Türkçe, matematik, fen, sosyal, İngilizce vb. TÜM derslerden gelen çoktan seçmeli sınav PDF’lerini analiz edersin.',
+        'Sen uzman bir ölçme-değerlendirme öğretmenisin. Türkçe, matematik, fen, sosyal, İngilizce vb. TÜM derslerden gelen çoktan seçmeli sınav PDF\'lerini analiz edersin.',
         '',
-        'Kurallar:',
-        '1. Sadece çoktan seçmeli soruları ayıkla.',
-        '2. Her soru için TAM soru metnini (giriş cümlesi, paragraf, tablo açıklaması dahil) `question_text` alanına yaz. ŞIKLARI buraya KOPYALAMA.',
-        '3. Şıkları (A,B,C,D,E) ayrı ayrı `options` listesine yaz (örn: ["A) ...", "B) ...", ...]).',
-        '4. Varsa doğru cevabı `correct_option` alanına A, B, C, D veya E harfi olarak yaz.',
-        '5. Her soru için kısa ve anlamlı bir konu başlığı tahmin et (örn: \"Paragrafta Anlam\", \"Üslü Sayılar\", \"Kimya – Asit Baz\") ve `topic` alanına yaz.',
-        '6. Eğer konu başlığını kestiremiyorsan bile `topic` alanına en azından ilgili ders adını veya \"Genel\" yaz (asla boş bırakma).',
-        '7. İstersen her soru için `difficulty` alanına \"Kolay\", \"Orta\" veya \"Zor\" değeri yazabilirsin; bu alan boş da olabilir.',
-        '8. ÇIKTIYI SADECE GEÇERLİ BİR JSON ARRAY OLARAK VER. Başında veya sonunda açıklama, doğal dil metni, yorum satırı, Markdown, ```json gibi işaretler OLMAMALIDIR.',
-        '9. JSON içinde hiç yorum (// veya /* */), fazladan virgül veya metin kullanma. Tüm anahtarlar ve string değerler çift tırnak ile yazılmalıdır.',
-        '10. JSON çıktını <json> ve </json> etiketleri arasına koy. Etiketlerin dışında hiçbir şey yazma.',
+        'KRİTİK KURALLAR:',
         '',
-        'Format tam olarak şöyle olmalıdır:',
+        '1. TÜM SORULARI YAKALA:',
+        '   - PDF\'deki HER çoktan seçmeli soruyu bul ve çıkar. Hiçbir soru atlanmamalı.',
+        '   - Soru numaralarını (1., 2., 3. vb.) veya harflerini (A., B., C. vb.) takip ederek tüm soruları sırayla işle.',
+        '   - Sayfa sonlarında veya başlarında kalan soruları da dahil et.',
+        '',
+        '2. METİN BAĞLAMI ÇOK ÖNEMLİ:',
+        '   - Bir sorunun üstünde, önünde veya yanında metin, paragraf, tablo, grafik, açıklama varsa MUTLAKA dahil et.',
+        '   - Örnek: "Aşağıdaki paragrafa göre 1-3. soruları cevaplayınız" şeklinde bir başlık varsa, bu başlık ve paragraf TÜM ilgili soruların `question_text` alanına dahil edilmeli.',
+        '   - Bir metin bloğundan sonra birden fazla soru (örn: 1, 2, 3. sorular) geliyorsa, her soru için o metin bloğunu da ekle.',
+        '   - Tablo, grafik veya görsel açıklamaları soru metnine dahil et.',
+        '   - KURAL: Soru metni, soruyu anlamak için gereken TÜM bağlamı içermeli. Bağımsız okunabilir olmalı.',
+        '',
+        '3. SORU METNİ FORMATI:',
+        '   - `question_text` alanına şunları dahil et:',
+        '     * Soru numarası (varsa: "1.", "2." vb.)',
+        '     * Üstteki/açıklayıcı metin, paragraf, tablo açıklaması (VARSa)',
+        '     * Soru kökü (asıl soru cümlesi)',
+        '     * ŞIKLARI buraya KOPYALAMA - şıklar ayrı `options` listesinde olacak',
+        '',
+        '4. ŞIKLAR:',
+        '   - Şıkları (A, B, C, D, E) ayrı ayrı `options` listesine yaz (örn: ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."]).',
+        '   - TEMİZLİK KURALI: Şık metinlerindeki tüm işaretlemeleri (koyu yazı, altı çizili, yanındaki "X", "Cevap", "(Doğru)" gibi ibareleri) KESİNLİKLE SİL. Öğrenci sadece şıkkın içeriğini görmeli.',
+        '   - Şık sayısı 4 veya 5 olabilir. Mevcut şıkları olduğu gibi al.',
+        '',
+        '5. DOĞRU CEVAP:',
+        '   - Varsa doğru cevabı `correct_option` alanına A, B, C, D veya E harfi olarak yaz.',
+        '   - Eğer PDF üzerinde doğru şık işaretlenmişse (yuvarlak içine alınmış, koyu yazılmış vb.), bunu algıla ve `correct_option`\'a yaz, AMA `options` veya `question_text` içinden bu işareti temizle.',
+        '   - Yoksa bu alanı null bırak.',
+        '',
+        '6. KONU VE GÖRSELLER:',
+        '   - Her soru için kısa ve anlamlı bir konu başlığı tahmin et.',
+        '   - GÖRSELLİ SORULAR (Geometri, Grafik vb.): Eğer soru bir şekil içeriyorsa, bu şekli `question_text` içine metin olarak tasvir etmeye çalış (örn: "[Görsel: ABC üçgeni, A açısı 90 derece...]"). Bu sayede metin tabanlı da olsa soru anlaşılabilir olsun.',
+        '',
+        '7. ZORLUK SEVİYESİ:',
+        '   - İstersen her soru için `difficulty` alanına "Kolay", "Orta" veya "Zor" değeri yazabilirsin; bu alan boş da olabilir.',
+        '',
+        '8. ÇIKTI FORMATI:',
+        '   - ÇIKTIYI SADECE GEÇERLİ BİR JSON ARRAY OLARAK VER. Başında veya sonunda açıklama, doğal dil metni, yorum satırı, Markdown, ```json gibi işaretler OLMAMALIDIR.',
+        '   - JSON içinde hiç yorum (// veya /* */), fazladan virgül veya metin kullanma. Tüm anahtarlar ve string değerler çift tırnak ile yazılmalıdır.',
+        '   - JSON çıktını <json> ve </json> etiketleri arasına koy. Etiketlerin dışında hiçbir şey yazma.',
+        '',
+        'ÖRNEK FORMAT:',
         '<json>',
         '[',
         '  {',
-        '    "question_text": "Soru metni...",',
-        '    "options": ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."],',
+        '    "question_text": "Aşağıdaki paragrafa göre 1-3. soruları cevaplayınız.\\n\\nParagraf metni buraya gelir...\\n\\n1. Bu paragrafa göre...",',
+        '    "options": ["A) Seçenek 1", "B) Seçenek 2", "C) Seçenek 3", "D) Seçenek 4"],',
+        '    "correct_option": "B",',
+        '    "difficulty": "Orta",',
+        '    "topic": "Paragrafta Anlam"',
+        '  },',
+        '  {',
+        '    "question_text": "2. Aynı paragrafa göre...",',
+        '    "options": ["A) ...", "B) ...", "C) ...", "D) ..."],',
         '    "correct_option": "A",',
-        '    "difficulty": "Orta" veya null veya hiç yok,',
-        '    "topic": "Üslü Sayılar"',
+        '    "difficulty": "Orta",',
+        '    "topic": "Paragrafta Anlam"',
         '  }',
         ']',
         '</json>',
+        '',
+        'ÖNEMLİ HATIRLATMA:',
+        '- PDF\'deki TÜM soruları çıkar. Hiçbirini atlama. Sayfa sayfa kontrol et.',
+        '- Soru metninin üstündeki/açıklayıcı metinleri MUTLAKA dahil et.',
+        '- Her soru bağımsız okunabilir ve anlaşılır olmalı.',
+        '- ASLA placeholder metinler ("Soru metni 1", "Soru 1", "..." vb.) kullanma. PDF\'deki GERÇEK soru metinlerini olduğu gibi kopyala.',
+        '- Soru numarası varsa dahil et, ama soru içeriğini tam olarak al.',
+        '- Şıkları da PDF\'deki gibi tam olarak kopyala, kısaltma yapma.',
       ].join('\n');
 
-      const response = await (genAi as any).models.generateContent({
-        model: modelName,
-        systemInstruction: {
-          role: 'system',
-          parts: [{ text: systemInstruction }],
-        },
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  data: pdfBase64,
-                  mimeType: req.file.mimetype || 'application/pdf',
-                },
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.25,
-          maxOutputTokens: 4096,
-          // Modelden doğrudan JSON üretmesini istiyoruz
-          responseMimeType: 'application/json',
-        },
-      } as Parameters<(typeof genAi)['models']['generateContent']>[0]);
+      // -- Chunk mantığı: büyük PDF'leri parçalar halinde işle --
+      const allParsed: ParsedQuestion[] = [];
+      const chunkCount = Math.ceil(totalPageCount / CHUNK_SIZE);
 
-      const rawText = extractResponseText(response);
-      if (!rawText) {
-        return res.status(500).json({
-          success: false,
-          error: 'Yapay zeka yanıtı alınamadı. Lütfen daha sonra tekrar deneyin.',
+      for (let chunkIdx = 0; chunkIdx < chunkCount; chunkIdx++) {
+        const chunkStart = chunkIdx * CHUNK_SIZE + 1; // 1-indexed
+        const chunkEnd = Math.min((chunkIdx + 1) * CHUNK_SIZE, totalPageCount);
+
+        // eslint-disable-next-line no-console
+        console.log(`[AI][parse-pdf] Processing chunk ${chunkIdx + 1}/${chunkCount} (pages ${chunkStart}-${chunkEnd})`);
+
+        let chunkBuffer: Buffer;
+        if (chunkCount === 1) {
+          // Tek chunk – tüm PDF'i gönder
+          chunkBuffer = workingBuffer;
+        } else {
+          // Çok chunk – ilgili sayfaları ayır
+          chunkBuffer = await slicePdfBuffer(workingBuffer, {
+            mode: 'range',
+            startPage: chunkStart,
+            endPage: chunkEnd,
+          });
+        }
+
+        const pdfBase64 = chunkBuffer.toString('base64');
+
+        const response = await genAi.models.generateContent({
+          model: modelName,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    data: pdfBase64,
+                    mimeType: req.file!.mimetype || 'application/pdf',
+                  },
+                },
+              ],
+            },
+          ],
+          config: {
+            systemInstruction,
+            temperature: 0.1,
+            maxOutputTokens: 65536,
+            responseMimeType: 'application/json',
+          },
         });
+
+        const rawText = extractResponseText(response);
+        if (!rawText) {
+          // eslint-disable-next-line no-console
+          console.warn(`[AI][parse-pdf] No response for chunk ${chunkIdx + 1}, skipping...`);
+          continue;
+        }
+
+        let chunkParsed: ParsedQuestion[];
+        try {
+          const cleaned = cleanJsonResponse(rawText);
+          // eslint-disable-next-line no-console
+          console.log(`[AI][parse-pdf] Chunk ${chunkIdx + 1} cleaned JSON length:`, cleaned.length);
+          const json = JSON.parse(cleaned);
+          if (!Array.isArray(json)) {
+            throw new Error('Beklenen format JSON array değil.');
+          }
+          chunkParsed = json as ParsedQuestion[];
+          // eslint-disable-next-line no-console
+          console.log(`[AI][parse-pdf] Chunk ${chunkIdx + 1}: parsed ${chunkParsed.length} questions`);
+        } catch (err) {
+          // İlk parse başarısız olduysa, metni ikinci bir AI çağrısıyla JSON'a dönüştürmeyi dene
+          // eslint-disable-next-line no-console
+          console.error(`[AI][parse-pdf] Chunk ${chunkIdx + 1} JSON parse error:`, err);
+          // eslint-disable-next-line no-console
+          console.error(`[AI][parse-pdf] Raw text (first 1000 chars):`, rawText.slice(0, 1000));
+          try {
+            const repairPrompt = [
+              'Aşağıda bir yapay zeka çıktısı göreceksin. Bu çıktı PDF test kitabındaki sorularla ilgili, ancak geçerli bir JSON array formatında değil.',
+              '',
+              'Görev:',
+              '1. Bu metindeki soru verilerini kullanarak geçerli bir JSON array oluştur.',
+              '2. HER ELEMAN aşağıdaki yapıda olmalı:',
+              '   {',
+              '     "question_text": "Soru metni...",',
+              '     "options": ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."],',
+              '     "correct_option": "A" veya null veya hiç yok,',
+              '     "difficulty": "Kolay" | "Orta" | "Zor",',
+              '     "topic": "Konu başlığı"',
+              '   }',
+              '3. SADECE geçerli bir JSON array döndür. Başında/sonunda açıklama, yorum, Markdown, ```json vb. OLMAMALI.',
+              '4. Response MIME type application/json olarak ayarlanmış, bu yüzden SADECE JSON döndür.',
+              '',
+              'Kaynak metin:',
+              rawText.slice(0, 30000),
+            ].join('\n\n');
+
+            const repaired = await callGemini(repairPrompt, {
+              systemInstruction:
+                'Sen bir JSON onarım asistanısın. Görevin sadece geçerli bir JSON array döndürmek. Doğal dil açıklaması yazma. Sadece JSON döndür.',
+              temperature: 0.1,
+              maxOutputTokens: 65536,
+              responseMimeType: 'application/json',
+            });
+
+            // eslint-disable-next-line no-console
+            console.log(`[AI][parse-pdf] Repair response length for chunk ${chunkIdx + 1}:`, repaired.length);
+            const cleanedRepaired = cleanJsonResponse(repaired);
+            const json = JSON.parse(cleanedRepaired);
+            if (!Array.isArray(json)) {
+              throw new Error('Onarım sonrası çıktı JSON array değil.');
+            }
+            chunkParsed = json as ParsedQuestion[];
+            // eslint-disable-next-line no-console
+            console.log(`[AI][parse-pdf] Chunk ${chunkIdx + 1} repaired: ${chunkParsed.length} questions`);
+          } catch (repairErr) {
+            // eslint-disable-next-line no-console
+            console.error(`[AI][parse-pdf] Chunk ${chunkIdx + 1} JSON repair failed:`, repairErr);
+            // Chunk'un soruları alınamazsa diğer chunk'larla devam et
+            if (chunkCount > 1) {
+              // eslint-disable-next-line no-console
+              console.warn(`[AI][parse-pdf] Skipping failed chunk ${chunkIdx + 1}, continuing...`);
+              continue;
+            }
+            return res.status(500).json({
+              success: false,
+              error:
+                'Yapay zekadan gelen yanıt geçerli formata dönüştürülemedi. Lütfen daha sade bir PDF sayfası deneyin veya daha küçük parçalar halinde yükleyin. Hata detayları: ' +
+                (repairErr instanceof Error ? repairErr.message : String(repairErr)),
+            });
+          }
+        }
+
+        allParsed.push(...chunkParsed);
       }
 
-      let parsed: ParsedQuestion[];
-      try {
-        const cleaned = cleanJsonResponse(rawText);
-        const json = JSON.parse(cleaned);
-        if (!Array.isArray(json)) {
-          throw new Error('Beklenen format JSON array değil.');
-        }
-        parsed = json as ParsedQuestion[];
-      } catch (err) {
-        // İlk parse başarısız olduysa, metni ikinci bir AI çağrısıyla JSON'a dönüştürmeyi dene
-        // eslint-disable-next-line no-console
-        console.error('[AI][parse-pdf] JSON parse error, trying repair step:', err);
-        try {
-          const repairPrompt = [
-            'Aşağıda bir yapay zeka çıktısı göreceksin. Bu çıktı PDF test kitabındaki sorularla ilgili, ancak geçerli bir JSON array formatında değil.',
-            '',
-            'Görev:',
-            '1. Bu metindeki soru verilerini kullanarak geçerli bir JSON array oluştur.',
-            '2. HER ELEMAN aşağıdaki yapıda olmalı:',
-            '   {',
-            '     "question_text": "Soru metni...",',
-            '     "options": ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."],',
-            '     "correct_option": "A" veya null veya hiç yok,',
-            '     "difficulty": "Kolay" | "Orta" | "Zor",',
-            '     "topic": "Konu başlığı"',
-            '   }',
-            '3. SADECE geçerli bir JSON array döndür. Başında/sonunda açıklama, yorum, Markdown, ```json vb. OLMAMALI.',
-            '',
-            'Kaynak metin:',
-            rawText,
-          ].join('\n\n');
+      // eslint-disable-next-line no-console
+      console.log(`[AI][parse-pdf] Total questions parsed across all chunks: ${allParsed.length}`);
 
-          const repaired = await callGemini(repairPrompt, {
-            systemInstruction:
-              'Sen bir JSON onarım asistanısın. Görevin sadece geçerli bir JSON array döndürmek. Doğal dil açıklaması yazma.',
-            temperature: 0.1,
-            maxOutputTokens: 4096,
-          });
-
-          const cleanedRepaired = cleanJsonResponse(repaired);
-          const json = JSON.parse(cleanedRepaired);
-          if (!Array.isArray(json)) {
-            throw new Error('Onarım sonrası çıktı JSON array değil.');
-          }
-          parsed = json as ParsedQuestion[];
-        } catch (repairErr) {
-          // eslint-disable-next-line no-console
-          console.error('[AI][parse-pdf] JSON repair failed:', repairErr);
-          return res.status(500).json({
-            success: false,
-            error:
-              'Yapay zekadan gelen yanıt geçerli formata dönüştürülemedi. Lütfen daha sade bir PDF sayfası deneyin veya daha küçük parçalar halinde yükleyin.',
-          });
-        }
+      if (allParsed.length === 0) {
+        return res.status(500).json({
+          success: false,
+          error: 'PDF\'den hiçbir soru çıkarılamadı. Lütfen farklı bir PDF deneyin.',
+        });
       }
 
       return res.json({
         success: true,
-        data: parsed,
+        data: allParsed,
       });
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       // eslint-disable-next-line no-console
-      console.error('[AI][parse-pdf] Unexpected error:', error);
+      console.error('[AI][parse-pdf] Unexpected error:', err.message, err.stack);
+
+      // 429 / kota aşımı: kullanıcıya anlaşılır mesaj ver
+      const raw = err.message || String(error);
+      const isQuota =
+        raw.includes('429') ||
+        raw.includes('quota') ||
+        raw.includes('RESOURCE_EXHAUSTED') ||
+        (error as { status?: number }).status === 429;
+      if (isQuota) {
+        let retrySec: number | null = null;
+        try {
+          const parsed = JSON.parse(raw) as {
+            error?: { details?: Array<{ '@type'?: string; retryDelay?: string }> };
+          };
+          const retryInfo = parsed?.error?.details?.find((d) =>
+            d['@type']?.includes('RetryInfo'),
+          );
+          if (retryInfo?.retryDelay) {
+            const match = retryInfo.retryDelay.match(/(\d+)/);
+            if (match && match[1]) retrySec = parseInt(match[1], 10);
+          }
+        } catch {
+          const match = raw.match(/retry in (\d+(?:\.\d+)?)\s*s/i);
+          if (match && match[1]) retrySec = Math.ceil(parseFloat(match[1]));
+        }
+        const waitHint =
+          retrySec != null ? ` Yaklaşık ${retrySec} saniye sonra tekrar deneyin.` : '';
+        return res.status(429).json({
+          success: false,
+          error:
+            'Günlük ücretsiz istek kotası aşıldı (model başına 20 istek).' +
+            waitHint +
+            ' Daha fazla kullanım için: https://ai.google.dev/gemini-api/docs/rate-limits',
+        });
+      }
+
+      const message = `PDF analiz hatası: ${err.message}`;
       return res.status(500).json({
         success: false,
-        error: 'PDF analiz edilirken beklenmeyen bir hata oluştu.',
+        error: message,
+      });
+    }
+  },
+);
+
+/**
+ * POST /api/ai/extract-questions
+ * PDF sayfalarını görsele çevirip Gemini ile soru bölgelerini tespit eder,
+ * Sharp ile her soruyu kırpıp görsel olarak döndürür.
+ */
+router.post(
+  '/extract-questions',
+  authenticateMultiple(['admin', 'teacher', 'student']) as unknown as RequestHandler,
+  upload.single('file'),
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          error: 'Lütfen bir PDF dosyası yükleyin.',
+        });
+      }
+      if (req.file.mimetype !== 'application/pdf') {
+        return res.status(400).json({
+          success: false,
+          error: 'Yalnızca PDF dosyaları desteklenmektedir.',
+        });
+      }
+      const fileBuffer = (req.file as Express.Multer.File & { buffer?: Buffer }).buffer;
+      if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
+        return res.status(400).json({
+          success: false,
+          error: 'PDF dosyası yüklenemedi. Lütfen tekrar deneyin.',
+        });
+      }
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({
+          success: false,
+          error: 'Yapay zeka servisi yapılandırılmamış. Lütfen yönetici ile iletişime geçin.',
+        });
+      }
+
+      // Canvas tabanlı extractor varsa onu kullan, yoksa fallback
+      if (extractQuestionsFromPdf) {
+        const outputDir = path.join(__dirname, '..', 'uploads', 'question-images');
+        const questions = await extractQuestionsFromPdf(fileBuffer, {
+          apiKey,
+          modelName: process.env.GEMINI_MODEL?.trim() || 'gemini-2.0-flash',
+          scale: 2.0,
+          skipEmptyPages: true,
+          outputDir,
+        });
+        return res.json({
+          success: true,
+          questions,
+          count: questions.length,
+        });
+      }
+
+      // Fallback: Canvas yok – pdf-lib ile her sayfayı ayrı PDF olarak Gemini'ye gönder
+      // eslint-disable-next-line no-console
+      console.log('[AI][extract-questions] Using pdf-lib fallback (no canvas)');
+
+      const genAi = new GoogleGenAI({ apiKey });
+      const modelName = process.env.GEMINI_MODEL?.trim() || 'gemini-2.0-flash';
+
+      const srcDoc = await PDFDocument.load(fileBuffer);
+      const numPages = srcDoc.getPageCount();
+
+      interface FallbackQuestion {
+        questionNumber: number;
+        question_text: string;
+        options: string[];
+        correct_option?: string | null;
+        difficulty?: string;
+        topic?: string;
+        originalPage: number;
+        imageUrl: string;
+      }
+
+      const allQuestions: FallbackQuestion[] = [];
+      let globalQNum = 1;
+
+      for (let pageIdx = 0; pageIdx < numPages; pageIdx++) {
+        try {
+          // Her sayfayı ayrı bir PDF olarak oluştur
+          const singlePageDoc = await PDFDocument.create();
+          const [copiedPage] = await singlePageDoc.copyPages(srcDoc, [pageIdx]);
+          singlePageDoc.addPage(copiedPage);
+          const singlePageBytes = await singlePageDoc.save();
+          const pageBase64 = Buffer.from(singlePageBytes).toString('base64');
+
+          // eslint-disable-next-line no-console
+          console.log(`[AI][extract-questions] Processing page ${pageIdx + 1}/${numPages}`);
+
+          const response = await genAi.models.generateContent({
+            model: modelName,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    inlineData: {
+                      data: pageBase64,
+                      mimeType: 'application/pdf',
+                    },
+                  },
+                  {
+                    text: `Bu PDF sayfasındaki tüm çoktan seçmeli soruları bul. Her soru için şunları döndür:
+- questionNumber: soru numarası
+- question_text: soru metni (paragraf, bağlam dahil)
+- options: şıklar dizisi ("A) ...", "B) ..." şeklinde)
+- correct_option: doğru cevap harfi (varsa, yoksa null)
+- difficulty: zorluk (Kolay/Orta/Zor)
+- topic: konu başlığı
+
+SADECE JSON array döndür. Markdown, açıklama veya başka metin YAZMA.`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              temperature: 0.1,
+              maxOutputTokens: 65536,
+              responseMimeType: 'application/json',
+            },
+          });
+
+          const rawText = extractResponseText(response);
+          if (!rawText) continue;
+
+          try {
+            const cleaned = cleanJsonResponse(rawText);
+            const pageQuestions = JSON.parse(cleaned);
+            if (Array.isArray(pageQuestions)) {
+              for (const q of pageQuestions) {
+                const qNum = q.questionNumber ?? globalQNum;
+                allQuestions.push({
+                  questionNumber: typeof qNum === 'number' ? qNum : globalQNum,
+                  question_text: q.question_text ?? '',
+                  options: Array.isArray(q.options) ? q.options : [],
+                  correct_option: q.correct_option ?? null,
+                  difficulty: q.difficulty ?? 'Orta',
+                  topic: q.topic ?? 'Genel',
+                  originalPage: pageIdx + 1,
+                  imageUrl: '', // Görsel yok, metin tabanlı
+                });
+                globalQNum++;
+              }
+            }
+          } catch (parseErr) {
+            // eslint-disable-next-line no-console
+            console.warn(`[AI][extract-questions] Page ${pageIdx + 1} parse error, skipping`);
+          }
+        } catch (pageErr) {
+          // eslint-disable-next-line no-console
+          console.warn(`[AI][extract-questions] Page ${pageIdx + 1} error, skipping:`, pageErr instanceof Error ? pageErr.message : String(pageErr));
+        }
+      }
+
+      // eslint-disable-next-line no-console
+      console.log(`[AI][extract-questions] Fallback extracted ${allQuestions.length} questions`);
+
+      return res.json({
+        success: true,
+        questions: allQuestions,
+        count: allQuestions.length,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      // eslint-disable-next-line no-console
+      console.error('[AI][extract-questions] Error:', err.message, err.stack);
+      return res.status(500).json({
+        success: false,
+        error: `Görsel çıkarma hatası: ${err.message}`,
       });
     }
   },
@@ -438,28 +780,29 @@ router.post(
         const topicValue = rawTopic || 'Genel';
 
         return {
-        subjectId,
-        gradeLevel,
-        topic: topicValue,
-        text: q.question_text ?? '',
-        type: 'multiple_choice',
-        choices: normalizeChoices(q.options),
-        correctAnswer: normalizeCorrectAnswer(q.correct_option ?? null) || 'A',
-        difficulty: mapDifficultyToQuestionBank(q.difficulty),
-        bloomLevel: null,
-        subtopic: null,
-        kazanimKodu: null,
-        estimatedMinutes: null,
-        distractorReasons: null,
-        solutionExplanation: null,
-        source: 'import' as const,
-        createdByTeacherId,
-        isApproved: true,
-        approvedByTeacherId: createdByTeacherId,
-        qualityScore: null,
-        usageCount: 0,
-        tags: [] as string[],
-      };
+          subjectId,
+          gradeLevel,
+          topic: topicValue,
+          text: q.question_text ?? '',
+          imageUrl: q.imageUrl || null,
+          type: 'multiple_choice',
+          choices: normalizeChoices(q.options),
+          correctAnswer: normalizeCorrectAnswer(q.correct_option ?? null) || 'A',
+          difficulty: mapDifficultyToQuestionBank(q.difficulty),
+          bloomLevel: null,
+          subtopic: null,
+          kazanimKodu: null,
+          estimatedMinutes: null,
+          distractorReasons: null,
+          solutionExplanation: null,
+          source: 'import' as const,
+          createdByTeacherId,
+          isApproved: true,
+          approvedByTeacherId: createdByTeacherId,
+          qualityScore: null,
+          usageCount: 0,
+          tags: [] as string[],
+        };
       });
 
       const result = await prisma.questionBank.createMany({

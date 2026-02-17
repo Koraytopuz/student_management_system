@@ -125,13 +125,15 @@ export function StudentQuestionBankTab({
     };
   }, [token]);
 
-  // Öğrenci sadece kendi sınıfına (ve gerekirse TYT/AYT içeriklerine) göre test oluşturabilsin
+  // Öğrenci sadece kendi sınıfına (ve gerekirse TYT/AYT/LGS içeriklerine) göre test oluşturabilsin
   const gradeLevels = useMemo(() => {
     if (!baseGrade) return ['9'];
     const grades: string[] = [baseGrade];
-    // 9–12 arası öğrenciler için TYT/AYT de göster
+    // 9–12 arası öğrenciler için TYT/AYT, 8. sınıf için LGS göster
     if (['9', '10', '11', '12'].includes(baseGrade)) {
       grades.push('TYT', 'AYT');
+    } else if (baseGrade === '8') {
+      grades.push('LGS');
     }
     return grades;
   }, [baseGrade]);
@@ -141,7 +143,6 @@ export function StudentQuestionBankTab({
     (s) => s.subjectId === selectedSubjectId,
   );
   const topics = currentSubject?.topics ?? [];
-  const currentTopic = topics.find((t) => t.topic === selectedTopic);
 
   useEffect(() => {
     if (!currentSubject && subjects.length > 0) {
@@ -342,7 +343,7 @@ export function StudentQuestionBankTab({
                 >
                   {gradeLevels.map((g) => (
                     <option key={g} value={g}>
-                      {g}. Sınıf
+                      {g === 'TYT' || g === 'AYT' || g === 'LGS' ? g : `${g}. Sınıf`}
                     </option>
                   ))}
                 </select>

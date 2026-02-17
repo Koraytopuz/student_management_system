@@ -14,8 +14,6 @@ const router = Router();
 // POST /api/exams - Sınav oluştur
 router.post('/exams', async (req: Request, res: Response) => {
     try {
-        // Not: Şu anda sınav dosyası veritabanında saklanmıyor,
-        // bu nedenle fileUrl ve fileName sadece log amaçlı okunuyor.
         const { name, type, date, questionCount, description, classGroupIds, fileUrl, fileName } = req.body;
 
         console.log('📥 Received exam creation request:', {
@@ -35,14 +33,40 @@ router.post('/exams', async (req: Request, res: Response) => {
             questionCount: questionCount || 0,
             description,
         };
+        // Eğer admin PDF kitapçığı yükleyip URL bilgisini gönderdiyse, kayda ekle
+        if (typeof fileUrl === 'string' && fileUrl.trim()) {
+            examData.fileUrl = fileUrl.trim();
+        }
+        if (typeof fileName === 'string' && fileName.trim()) {
+            examData.fileName = fileName.trim();
+        }
 
+        // Sınıf gruplarını güvenli hale getir (sadece gerçekten var olan id'ler)
+        let validClassGroupIds: string[] = [];
         if (Array.isArray(classGroupIds) && classGroupIds.length > 0) {
-            examData.examAssignments = {
-                create: classGroupIds.map((id: string) => ({
-                    classGroupId: id,
-                })),
-            };
-            console.log(`✅ Creating ${classGroupIds.length} class assignments`);
+            const existingClassGroups = await prisma.classGroup.findMany({
+                where: { id: { in: classGroupIds as string[] } },
+                select: { id: true },
+            });
+            validClassGroupIds = existingClassGroups.map((g) => g.id);
+
+            if (validClassGroupIds.length > 0) {
+                examData.examAssignments = {
+                    create: validClassGroupIds.map((id: string) => ({
+                        classGroupId: id,
+                    })),
+                };
+                console.log(
+                    `✅ Creating ${validClassGroupIds.length} class assignments (filtered from ${
+                        classGroupIds.length
+                    })`,
+                );
+            } else {
+                console.warn(
+                    '[Exam] No valid classGroupIds found, creating exam without assignments',
+                    { classGroupIds },
+                );
+            }
         } else {
             console.log('⚠️ No classGroupIds provided');
         }
@@ -125,7 +149,11 @@ router.post('/exams', async (req: Request, res: Response) => {
         res.json(exam);
     } catch (error) {
         console.error('❌ Error creating exam:', error);
-        res.status(500).json({ error: 'Failed to create exam' });
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(500).json({
+            error: 'Failed to create exam',
+            ...(process.env.NODE_ENV !== 'production' && { debug: message }),
+        });
     }
 });
 
@@ -134,7 +162,7 @@ router.put('/exams/:id', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const examId = parseInt(id as string);
-        const { name, type, date, questionCount, description, classGroupIds } = req.body;
+        const { name, type, date, questionCount, description, classGroupIds, fileUrl, fileName } = req.body;
 
         console.log('📝 Updating exam:', examId, {
             name,
@@ -149,6 +177,14 @@ router.put('/exams/:id', async (req: Request, res: Response) => {
             questionCount: questionCount || 0,
             description,
         };
+
+        // PDF kitapçığı güncellemesi (varsa)
+        if (typeof fileUrl === 'string') {
+            updateData.fileUrl = fileUrl && fileUrl.trim() ? fileUrl.trim() : null;
+        }
+        if (typeof fileName === 'string') {
+            updateData.fileName = fileName && fileName.trim() ? fileName.trim() : null;
+        }
 
         if (Array.isArray(classGroupIds)) {
             updateData.examAssignments = {

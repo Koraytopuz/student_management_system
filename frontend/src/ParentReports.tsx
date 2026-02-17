@@ -193,22 +193,10 @@ export const ParentReports: React.FC = () => {
                   <span className="stat-value">{summary.questionsSolved}</span>
                 </div>
                 <div className="stat-card">
-                  <span className="stat-label">Ortalama Başarı</span>
-                  <span className="stat-value">%{summary.averageScorePercent}</span>
-                </div>
-                <div className="stat-card">
                   <span className="stat-label">Toplam Çalışma Süresi</span>
                   <span className="stat-value">
                     {Math.round(summary.totalStudyMinutes / 60)} saat
                   </span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-label">İzlenen İçerik</span>
-                  <span className="stat-value">{summary.contentsWatched}</span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-label">Tamamlanan Görev</span>
-                  <span className="stat-value">{summary.assignmentsCompleted}</span>
                 </div>
                 {summary.assignmentsOverdue > 0 && (
                   <div className="stat-card" style={{ borderColor: 'var(--error)' }}>
@@ -220,10 +208,10 @@ export const ParentReports: React.FC = () => {
                 )}
               </div>
 
-              {/* Koçluk hedef ilerlemesi ve gelişim notları */}
+              {/* Kişisel Gelişim hedef ilerlemesi ve gelişim notları */}
               <div className="cards-grid" style={{ marginBottom: '2rem' }}>
                 <div className="card">
-                  <h3>Koçluk Hedef İlerlemesi</h3>
+                  <h3>Kişisel Gelişim Hedef İlerlemesi</h3>
                   {coachingProgress ? (
                     <>
                       <p style={{ marginBottom: '0.5rem' }}>
@@ -276,16 +264,16 @@ export const ParentReports: React.FC = () => {
                     </>
                   ) : (
                     <p style={{ color: 'var(--color-text-muted)' }}>
-                      Henüz koçluk hedefi bulunmuyor.
+                      Henüz kişisel gelişim hedefi bulunmuyor.
                     </p>
                   )}
                 </div>
 
                 <div className="card">
-                  <h3>Koçluk Gelişim Notları</h3>
+                  <h3>Kişisel Gelişim Notları</h3>
                   {coachingNotes.length === 0 ? (
                     <p style={{ color: 'var(--color-text-muted)' }}>
-                      Henüz paylaşılmış koçluk notu bulunmuyor.
+                      Henüz paylaşılmış kişisel gelişim notu bulunmuyor.
                     </p>
                   ) : (
                     <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>

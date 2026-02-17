@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -17,6 +50,8 @@ const routes_admin_1 = __importDefault(require("./routes.admin"));
 const routes_questionbank_1 = __importDefault(require("./routes.questionbank"));
 const aiRoutes_1 = __importDefault(require("./aiRoutes"));
 const routes_assignmentRoutes_1 = __importDefault(require("./routes.assignmentRoutes"));
+const routes_analysis_1 = __importDefault(require("./routes.analysis"));
+const routes_exam_1 = __importDefault(require("./routes.exam"));
 // Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -81,6 +116,24 @@ app.get('/favicon.ico', (_req, res) => {
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
 });
+// Demo kullanıcı kontrolü (geliştirme - admin var mı?)
+app.get('/auth/check-demo', async (_req, res) => {
+    try {
+        const { prisma } = await Promise.resolve().then(() => __importStar(require('./db')));
+        const admin = await prisma.user.findFirst({
+            where: { email: 'admin@example.com', role: 'admin' },
+            select: { id: true, email: true, name: true, role: true },
+        });
+        return res.json({
+            adminExists: !!admin,
+            admin: admin ? { email: admin.email, name: admin.name } : null,
+            hint: admin ? 'Şifre: sky123' : 'Seed çalıştırın: npx prisma db seed',
+        });
+    }
+    catch (e) {
+        return res.status(500).json({ error: String(e) });
+    }
+});
 // Kimlik doğrulama
 app.post('/auth/login', auth_1.loginHandler);
 // Rol bazlı router'lar
@@ -90,6 +143,8 @@ app.use('/student', routes_student_1.default);
 app.use('/parent', routes_parent_1.default);
 app.use('/questionbank', routes_questionbank_1.default);
 app.use('/api/ai', aiRoutes_1.default);
+app.use('/api', routes_exam_1.default); // examRoutes önce - GET /api/exams examAssignments ile dönsün
+app.use('/api', routes_analysis_1.default);
 app.use('/assignments', routes_assignmentRoutes_1.default);
 // Chrome DevTools isteği (CSP hatasını önlemek için boş yanıt)
 app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {

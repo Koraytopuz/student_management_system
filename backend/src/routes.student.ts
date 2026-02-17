@@ -319,6 +319,42 @@ router.get(
   },
 );
 
+// Öğretmenin öğrenci/sınıf için oluşturduğu ders programı kayıtları
+router.get(
+  '/lesson-schedule-entries',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const studentId = req.user!.id;
+    const user = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: { gradeLevel: true },
+    });
+    const myGrade = user?.gradeLevel ?? '';
+
+    const entries = await prisma.lessonScheduleEntry.findMany({
+      where: {
+        OR: [
+          { scope: 'student', studentId },
+          ...(myGrade ? [{ scope: 'class', gradeLevel: myGrade }] : []),
+          ...(myGrade ? [{ scope: 'subject', gradeLevel: myGrade }] : []),
+        ],
+      },
+      orderBy: [{ dayOfWeek: 'asc' }, { hour: 'asc' }],
+    });
+    return res.json(
+      entries.map((e) => ({
+        id: e.id,
+        gradeLevel: e.gradeLevel ?? '',
+        subjectId: e.subjectId ?? '',
+        subjectName: e.subjectName,
+        dayOfWeek: e.dayOfWeek,
+        hour: e.hour,
+        topic: e.topic ?? undefined,
+      })),
+    );
+  },
+);
+
 // Öğrenciye atanan sınavları listele
 router.get(
   '/exams',
@@ -2762,6 +2798,26 @@ router.put(
       data: { read: true, readAt: new Date() },
     });
     return res.json({ updated: result.count });
+  },
+);
+
+router.delete(
+  '/notifications/:id',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const userId = req.user!.id;
+    const id = String(req.params.id);
+
+    // Sadece bu öğrenciye ait bildirimi silelim
+    const deleted = await prisma.notification.deleteMany({
+      where: { id, userId },
+    });
+
+    if (deleted.count === 0) {
+      return res.status(404).json({ error: 'Bildirim bulunamadı' });
+    }
+
+    return res.json({ success: true });
   },
 );
 

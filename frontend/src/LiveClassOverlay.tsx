@@ -862,6 +862,7 @@ const LiveClassInner: React.FC<{
     });
     setPrivateMessageText('');
     setPrivateMessageTarget(null);
+    pushInfoToast('Mesaj iletildi.');
   };
 
   // Mute all (teacher) – LiveKit RoomService ile gerçek muting

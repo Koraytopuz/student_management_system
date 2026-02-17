@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, LogOut, Menu } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, LogOut, Menu } from 'lucide-react';
 import { useDashboardSidebar } from '../DashboardSidebarContext';
 
 export type BreadcrumbItem = {
@@ -411,37 +411,87 @@ export interface GlassCardProps {
   subtitle?: string;
   icon?: React.ReactNode;
   actions?: React.ReactNode;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   children: React.ReactNode;
   className?: string;
 }
 
-export const GlassCard: React.FC<GlassCardProps> = ({ title, subtitle, icon, actions, children, className }) => {
+export const GlassCard: React.FC<GlassCardProps> = ({
+  title,
+  subtitle,
+  icon,
+  actions,
+  collapsible = false,
+  collapsed = false,
+  onToggleCollapsed,
+  children,
+  className,
+}) => {
+  const isCollapsible = collapsible && typeof onToggleCollapsed === 'function';
   return (
     <div className={`glass-card${className ? ` ${className}` : ''}`}>
       {(title || subtitle || actions) && (
-        <div className="card-header">
-          <div>
-            {title && (
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                {icon ? <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>{icon}</span> : null}
-                <span>{title}</span>
-              </h3>
-            )}
-            {subtitle && <p className="card-subtitle">{subtitle}</p>}
+        isCollapsible ? (
+          <div
+            className="card-header card-header--clickable"
+            role="button"
+            tabIndex={0}
+            onClick={onToggleCollapsed}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onToggleCollapsed()}
+            aria-expanded={!collapsed}
+          >
+            <div style={{ minWidth: 0 }}>
+              {title && (
+                <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {icon ? <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>{icon}</span> : null}
+                  <span>{title}</span>
+                </h3>
+              )}
+              {!collapsed && subtitle && <p className="card-subtitle">{subtitle}</p>}
+            </div>
+            <div className="card-actions">
+              {!collapsed ? actions : null}
+              <span className="card-collapse-icon" aria-hidden>
+                {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+              </span>
+            </div>
           </div>
-          {actions && <div className="card-actions">{actions}</div>}
-        </div>
+        ) : (
+          <div className="card-header">
+            <div>
+              {title && (
+                <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {icon ? <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>{icon}</span> : null}
+                  <span>{title}</span>
+                </h3>
+              )}
+              {subtitle && <p className="card-subtitle">{subtitle}</p>}
+            </div>
+            {actions && <div className="card-actions">{actions}</div>}
+          </div>
+        )
       )}
-      {children}
+      {(!isCollapsible || !collapsed) && children}
     </div>
   );
 };
 
 
-export const TagChip: React.FC<{ label: string; tone?: 'success' | 'warning' | 'info' }> = ({
+export const TagChip: React.FC<{ label: string; tone?: 'success' | 'warning' | 'info' | 'error' | 'neutral' }> = ({
   label,
   tone = 'info',
 }) => {
-  const toneClass = tone === 'success' ? 'tag-chip success' : tone === 'warning' ? 'tag-chip warning' : 'tag-chip';
+  const toneClass =
+    tone === 'success'
+      ? 'tag-chip success'
+      : tone === 'warning'
+        ? 'tag-chip warning'
+        : tone === 'error'
+          ? 'tag-chip error'
+          : tone === 'neutral'
+            ? 'tag-chip neutral'
+            : 'tag-chip';
   return <span className={toneClass}>{label}</span>;
 };

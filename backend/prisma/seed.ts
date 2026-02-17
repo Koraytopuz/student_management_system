@@ -1025,8 +1025,10 @@ const LESSON_TO_SUBJECT_ID: Record<string, string> = {
   'Mantık': 'sub_mantik',
 };
 
-// Sınıf tanımları: 4-10, 11/12 Sayısal/EA/Sözel, Mezun
-const CLASS_DEFINITIONS: { id: string; name: string; gradeLevel: string; stream?: StreamType }[] = [
+// Sınıf tanımları: 4-10 (akışsız), 11/12 ve Mezun (Sayısal/EA/Sözel)
+// Şube (section) bilgisi aşağıda otomatik olarak A/B/C/D ile üretilecektir.
+const CLASS_DEFINITIONS: { id: string; name: string; gradeLevel: string; stream?: StreamType; section?: string }[] = [
+  // 4–10: akışsız sınıflar, A–D şubeleri üretilecek
   { id: 'c_4', name: '4. Sınıf', gradeLevel: '4' },
   { id: 'c_5', name: '5. Sınıf', gradeLevel: '5' },
   { id: 'c_6', name: '6. Sınıf', gradeLevel: '6' },
@@ -1034,13 +1036,21 @@ const CLASS_DEFINITIONS: { id: string; name: string; gradeLevel: string; stream?
   { id: 'c_8', name: '8. Sınıf', gradeLevel: '8' },
   { id: 'c_9', name: '9. Sınıf', gradeLevel: '9' },
   { id: 'c_10', name: '10. Sınıf', gradeLevel: '10' },
+
+  // 11. sınıf – akışlı
   { id: 'c_11_say', name: '11. Sınıf Sayısal', gradeLevel: '11', stream: StreamType.SAYISAL },
   { id: 'c_11_ea', name: '11. Sınıf Eşit Ağırlık', gradeLevel: '11', stream: StreamType.ESIT_AGIRLIK },
   { id: 'c_11_soz', name: '11. Sınıf Sözel', gradeLevel: '11', stream: StreamType.SOZEL },
+
+  // 12. sınıf – akışlı
   { id: 'c_12_say', name: '12. Sınıf Sayısal', gradeLevel: '12', stream: StreamType.SAYISAL },
   { id: 'c_12_ea', name: '12. Sınıf Eşit Ağırlık', gradeLevel: '12', stream: StreamType.ESIT_AGIRLIK },
   { id: 'c_12_soz', name: '12. Sınıf Sözel', gradeLevel: '12', stream: StreamType.SOZEL },
-  { id: 'c_mezun', name: 'Mezun', gradeLevel: 'MEZUN' },
+
+  // Mezun – akışlı (Sayısal / EA / Sözel)
+  { id: 'c_mezun_say', name: 'Mezun Sayısal', gradeLevel: 'MEZUN', stream: StreamType.SAYISAL },
+  { id: 'c_mezun_ea', name: 'Mezun Eşit Ağırlık', gradeLevel: 'MEZUN', stream: StreamType.ESIT_AGIRLIK },
+  { id: 'c_mezun_soz', name: 'Mezun Sözel', gradeLevel: 'MEZUN', stream: StreamType.SOZEL },
 ];
 
 const STUDENT_NAMES = ['Ali', 'Zeynep', 'Mehmet', 'Aylin', 'Burak', 'Elif', 'Can', 'Selin', 'Emre', 'Deniz'];
@@ -1151,56 +1161,67 @@ async function main() {
 
   const matematikTeacherId = branchTeachers['sub_matematik'];
 
-  // Sınıfları oluştur ve her sınıfa 5 öğrenci ekle
+  // Sınıfları (şube dahil) oluştur ve her sınıfa 5 öğrenci ekle
   const classGroupsMap: Record<string, { classGroup: any; students: any[] }> = {};
 
+  const SECTIONS = ['A', 'B', 'C', 'D'];
+
   for (const cls of CLASS_DEFINITIONS) {
-    const students: any[] = [];
+    for (const section of SECTIONS) {
+      const compositeId = `${cls.id}_${section}`;
+      const compositeName = `${cls.name} ${section}`;
 
-    for (let i = 1; i <= 5; i++) {
-      const email = `ogr_${cls.id}_${i}.student@example.com`;
-      const nameIdx = ((cls.id.charCodeAt(0) + i) % STUDENT_NAMES.length);
-      const name = `${STUDENT_NAMES[nameIdx]} ${cls.name} ${i}`;
+      const students: any[] = [];
 
-      const student = await prisma.user.upsert({
-        where: { email_role: { email, role: 'student' } },
+      for (let i = 1; i <= 5; i++) {
+        const email = `ogr_${compositeId}_${i}.student@example.com`;
+        const nameIdx = ((compositeId.charCodeAt(0) + i) % STUDENT_NAMES.length);
+        const name = `${STUDENT_NAMES[nameIdx]} ${compositeName} ${i}`;
+
+        const student = await prisma.user.upsert({
+          where: { email_role: { email, role: 'student' } },
+          create: {
+            name,
+            email,
+            role: 'student',
+            passwordHash,
+            gradeLevel: cls.gradeLevel,
+          },
+          update: { gradeLevel: cls.gradeLevel },
+        });
+        students.push(student);
+      }
+
+      const classGroup = await prisma.classGroup.upsert({
+        where: { id: compositeId },
         create: {
-          name,
-          email,
-          role: 'student',
-          passwordHash,
+          id: compositeId,
+          name: compositeName,
           gradeLevel: cls.gradeLevel,
+          stream: cls.stream ?? null,
+          section,
+          teacherId: matematikTeacherId,
+          students: {
+            create: students.map((s) => ({ studentId: s.id })),
+          },
         },
-        update: { gradeLevel: cls.gradeLevel },
+        update: {
+          stream: cls.stream ?? undefined,
+          section,
+        },
       });
-      students.push(student);
+
+      await prisma.user.updateMany({
+        where: { id: { in: students.map((s) => s.id) } },
+        data: { classId: classGroup.id },
+      });
+
+      classGroupsMap[compositeId] = { classGroup, students };
     }
-
-    const classGroup = await prisma.classGroup.upsert({
-      where: { id: cls.id },
-      create: {
-        id: cls.id,
-        name: cls.name,
-        gradeLevel: cls.gradeLevel,
-        stream: cls.stream ?? null,
-        teacherId: matematikTeacherId,
-        students: {
-          create: students.map((s) => ({ studentId: s.id })),
-        },
-      },
-      update: { stream: cls.stream ?? undefined },
-    });
-
-    await prisma.user.updateMany({
-      where: { id: { in: students.map((s) => s.id) } },
-      data: { classId: classGroup.id },
-    });
-
-    classGroupsMap[cls.id] = { classGroup, students };
   }
 
-  // Parent-Student links (9. sınıfın ilk 2 öğrencisi)
-  const nineClassStudents = classGroupsMap['c_9']!.students;
+  // Parent-Student links (9. sınıf A şubesinin ilk 2 öğrencisi)
+  const nineClassStudents = classGroupsMap['c_9_A']!.students;
   for (let i = 0; i < Math.min(2, nineClassStudents.length); i++) {
     await prisma.parentStudent.upsert({
       where: { parentId_studentId: { parentId: parent.id, studentId: nineClassStudents[i].id } },
@@ -1270,88 +1291,92 @@ async function main() {
     update: { name: 'Üslü Sayılar' },
   });
 
-  // Her sınıf için 1 sınav oluştur ve öğrencilere random sonuç ata
+  // Her sınıf (şube) için 1 sınav oluştur ve öğrencilere random sonuç ata
   let examIdCounter = 1;
 
   for (const cls of CLASS_DEFINITIONS) {
-    const { classGroup, students } = classGroupsMap[cls.id]!;
-    const questionCount = 20;
+    for (const section of SECTIONS) {
+      const compositeId = `${cls.id}_${section}`;
+      const { classGroup, students } = classGroupsMap[compositeId]!;
+      const questionCount = 20;
 
-    const exam = await prisma.exam.upsert({
-      where: { id: examIdCounter },
-      create: {
-        id: examIdCounter,
-        name: `${cls.name} Deneme 1`,
-        type: cls.gradeLevel === 'MEZUN' ? ExamType.TYT : ExamType.ARA_SINIF,
-        date: new Date(Date.now() - getRandomInt(1, 30) * 24 * 60 * 60 * 1000),
-        questionCount,
-        description: `${cls.name} için örnek deneme`,
-      },
-      update: {},
-    });
-    examIdCounter++;
-
-    await prisma.examAssignment.upsert({
-      where: { examId_classGroupId: { examId: exam.id, classGroupId: classGroup.id } },
-      create: { examId: exam.id, classGroupId: classGroup.id },
-      update: {},
-    });
-
-    for (let idx = 0; idx < students.length; idx++) {
-      const student = students[idx];
-      const stats = generateRandomQuestionStats(questionCount);
-      const score = 100 + stats.net * 3;
-      const percentile = Math.max(1, Math.min(99, 85 - idx * 5 + getRandomInt(-5, 5)));
-
-      await prisma.examResult.upsert({
-        where: { studentId_examId: { studentId: student.id, examId: exam.id } },
+      const exam = await prisma.exam.upsert({
+        where: { id: examIdCounter },
         create: {
-          studentId: student.id,
-          examId: exam.id,
-          totalNet: stats.net,
-          score,
-          percentile,
-          details: {
-            create: [
-              {
-                lessonId: subject1.id,
-                lessonName: subject1.name,
-                correct: stats.correct,
-                wrong: stats.wrong,
-                empty: stats.empty,
-                net: stats.net,
-                topicAnalyses: {
-                  create: [
-                    {
-                      topicId: usluSayilarTopic.id,
-                      topicName: usluSayilarTopic.name,
-                      totalQuestion: stats.total,
-                      correct: stats.correct,
-                      wrong: stats.wrong,
-                      empty: stats.empty,
-                      net: stats.net,
-                      priorityLevel:
-                        stats.correct / (stats.total || 1) < 0.3
-                          ? PriorityLevel.ONE
-                          : stats.correct / (stats.total || 1) < 0.6
-                            ? PriorityLevel.TWO
-                            : PriorityLevel.THREE,
-                      lostPoints: (stats.wrong + stats.empty) * 1,
-                    },
-                  ],
-                },
-              },
-            ],
-          },
+          id: examIdCounter,
+          name: `${cls.name} ${section} Deneme 1`,
+          type: cls.gradeLevel === 'MEZUN' ? ExamType.TYT : ExamType.ARA_SINIF,
+          date: new Date(Date.now() - getRandomInt(1, 30) * 24 * 60 * 60 * 1000),
+          questionCount,
+          description: `${cls.name} için örnek deneme`,
         },
-        update: { totalNet: stats.net, score, percentile },
+        update: {},
       });
+      examIdCounter++;
+
+      await prisma.examAssignment.upsert({
+        where: { examId_classGroupId: { examId: exam.id, classGroupId: classGroup.id } },
+        create: { examId: exam.id, classGroupId: classGroup.id },
+        update: {},
+      });
+
+      for (let idx = 0; idx < students.length; idx++) {
+        const student = students[idx];
+        const stats = generateRandomQuestionStats(questionCount);
+        const score = 100 + stats.net * 3;
+        const percentile = Math.max(1, Math.min(99, 85 - idx * 5 + getRandomInt(-5, 5)));
+
+        await prisma.examResult.upsert({
+          where: { studentId_examId: { studentId: student.id, examId: exam.id } },
+          create: {
+            studentId: student.id,
+            examId: exam.id,
+            totalNet: stats.net,
+            score,
+            percentile,
+            details: {
+              create: [
+                {
+                  lessonId: subject1.id,
+                  lessonName: subject1.name,
+                  correct: stats.correct,
+                  wrong: stats.wrong,
+                  empty: stats.empty,
+                  net: stats.net,
+                  topicAnalyses: {
+                    create: [
+                      {
+                        topicId: usluSayilarTopic.id,
+                        topicName: usluSayilarTopic.name,
+                        totalQuestion: stats.total,
+                        correct: stats.correct,
+                        wrong: stats.wrong,
+                        empty: stats.empty,
+                        net: stats.net,
+                        priorityLevel:
+                          stats.correct / (stats.total || 1) < 0.3
+                            ? PriorityLevel.ONE
+                            : stats.correct / (stats.total || 1) < 0.6
+                              ? PriorityLevel.TWO
+                              : PriorityLevel.THREE,
+                        lostPoints: (stats.wrong + stats.empty) * 1,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+          update: { totalNet: stats.net, score, percentile },
+        });
+      }
     }
   }
 
-  const classGroup = classGroupsMap['c_9']!.classGroup;
-  const student1 = classGroupsMap['c_9']!.students[0];
-  const student2 = classGroupsMap['c_9']!.students[1];
+  // İçerik/test örnekleri için 9. sınıf A şubesi üzerinden devam edelim
+  const classGroup = classGroupsMap['c_9_A']!.classGroup;
+  const student1 = classGroupsMap['c_9_A']!.students[0];
+  const student2 = classGroupsMap['c_9_A']!.students[1];
   const teacher = { id: matematikTeacherId };
 
   // Content

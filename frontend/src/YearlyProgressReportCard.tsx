@@ -17,6 +17,13 @@ export const YearlyProgressReportCard: React.FC<YearlyProgressReportCardProps> =
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
   const gaugeOffset = gaugeCircumference * (1 - scorePercent / 100);
 
+  const qualitativeLevel =
+    student.annualScore >= 8.5
+      ? 'Üst Düzey'
+      : student.annualScore >= 7
+        ? 'İyi'
+        : 'Gelişim Alanı';
+
   return (
     <div className="glass-card rounded-2xl overflow-hidden px-6 py-5 space-y-4">
       {/* Üst: Küçük fotoğraf + başlık ve skor */}
@@ -120,6 +127,41 @@ export const YearlyProgressReportCard: React.FC<YearlyProgressReportCardProps> =
           hesaplanmış yıllık genel performans indeksidir. Yüzdelik değer, benzer
           öğrenciler arasında yaklaşık konumunu gösteren tahmini bir dilimdir.
         </p>
+        {/* Özet seviye etiketi + yatay ilerleme çubuğu */}
+        <div className="mt-3 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>Genel seviye</span>
+            <span
+              className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+              style={{
+                backgroundColor:
+                  qualitativeLevel === 'Üst Düzey'
+                    ? 'rgba(16,185,129,0.18)'
+                    : qualitativeLevel === 'İyi'
+                      ? 'rgba(56,189,248,0.15)'
+                      : 'rgba(248,113,113,0.18)',
+                color:
+                  qualitativeLevel === 'Üst Düzey'
+                    ? '#6ee7b7'
+                    : qualitativeLevel === 'İyi'
+                      ? '#7dd3fc'
+                      : '#fecaca',
+              }}
+            >
+              {qualitativeLevel}
+            </span>
+          </div>
+          <div className="w-full h-2 rounded-full bg-slate-900/80 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-sky-400 to-indigo-500"
+              style={{ width: `${scorePercent}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-slate-500">
+            Çubuk, 10 üzerinden genel başarı puanını görsel olarak temsil eder; sağa yaklaştıkça
+            öğrencinin yıl sonu performansı artar.
+          </p>
+        </div>
       </div>
     </div>
   );

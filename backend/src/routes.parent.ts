@@ -668,7 +668,7 @@ router.get(
     const otherUserIds = [...new Set(userMessages.map((m) => (m.fromUserId === userId ? m.toUserId : m.fromUserId)))];
     const users = await prisma.user.findMany({
       where: { id: { in: otherUserIds } },
-      select: { id: true, name: true, role: true, profilePictureUrl: true },
+      select: { id: true, name: true, role: true, profilePictureUrl: true, subjectAreas: true },
     } as any);
     const userMap = new Map(users.map((u) => [u.id, u]));
     const studentsData = await prisma.user.findMany({
@@ -697,6 +697,7 @@ router.get(
           userId: otherUserId,
           userName: otherUser.name,
           userRole: otherUser.role,
+          subjectAreas: (otherUser as any).subjectAreas ?? [],
           studentId: msg.studentId ?? undefined,
           studentName: msg.studentId ? studentMap.get(msg.studentId) : undefined,
           profilePictureUrl: (otherUser as any).profilePictureUrl ?? undefined,
@@ -755,10 +756,87 @@ router.get(
 router.get(
   '/teachers',
   authenticate('parent'),
-  async (_req: AuthenticatedRequest, res: express.Response) => {
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const parentId = req.user!.id;
+    const studentId = (req.query.studentId as string | undefined) ?? undefined;
+
+    // Varsayılan davranış: tüm öğretmenler
+    if (!studentId) {
+      const teachersData = await prisma.user.findMany({
+        where: { role: 'teacher' },
+        select: { id: true, name: true, email: true, subjectAreas: true },
+        orderBy: { name: 'asc' },
+      });
+      return res.json(teachersData);
+    }
+
+    // Güvenlik: sadece velinin öğrencisi için filtrele
+    const link = await prisma.parentStudent.findUnique({
+      where: { parentId_studentId: { parentId, studentId } },
+      select: { parentId: true },
+    });
+    if (!link) {
+      return res.status(403).json({ error: 'Bu öğrenciye erişim yetkiniz yok.' });
+    }
+
+    const student = await prisma.user.findUnique({
+      where: { id: studentId },
+      select: { id: true, classId: true, gradeLevel: true },
+    });
+    if (!student) {
+      return res.status(404).json({ error: 'Öğrenci bulunamadı.' });
+    }
+
+    const teacherIds = new Set<string>();
+
+    if (student.classId) {
+      const classGroup = await prisma.classGroup.findUnique({
+        where: { id: student.classId },
+        select: { teacherId: true },
+      });
+      if (classGroup?.teacherId) teacherIds.add(classGroup.teacherId);
+
+      const assignmentTeachers = await prisma.assignment.findMany({
+        where: { classId: student.classId, createdByTeacherId: { not: null } },
+        select: { createdByTeacherId: true },
+        distinct: ['createdByTeacherId'],
+      });
+      assignmentTeachers.forEach((a) => {
+        if (a.createdByTeacherId) teacherIds.add(a.createdByTeacherId);
+      });
+    }
+
+    const helpTeachers = await prisma.helpRequest.findMany({
+      where: { studentId: student.id },
+      select: { teacherId: true },
+      distinct: ['teacherId'],
+    });
+    helpTeachers.forEach((h) => teacherIds.add(h.teacherId));
+
+    const coachingTeachers = await prisma.coachingSession.findMany({
+      where: { studentId: student.id },
+      select: { teacherId: true },
+      distinct: ['teacherId'],
+    });
+    coachingTeachers.forEach((c) => teacherIds.add(c.teacherId));
+
+    // Eğer henüz ilişki yoksa (boş set) gradeLevel'e göre en azından ilgili seviyeyi döndür.
+    if (teacherIds.size === 0 && student.gradeLevel) {
+      const teachersData = await prisma.user.findMany({
+        where: {
+          role: 'teacher',
+          teacherGrades: { has: student.gradeLevel },
+        },
+        select: { id: true, name: true, email: true, subjectAreas: true },
+        orderBy: { name: 'asc' },
+      });
+      return res.json(teachersData);
+    }
+
     const teachersData = await prisma.user.findMany({
-      where: { role: 'teacher' },
-      select: { id: true, name: true, email: true },
+      where: { role: 'teacher', id: { in: Array.from(teacherIds) } },
+      select: { id: true, name: true, email: true, subjectAreas: true },
+      orderBy: { name: 'asc' },
     });
     return res.json(teachersData);
   },
@@ -1833,6 +1911,91 @@ router.post(
       status: created.status,
       createdAt: created.createdAt.toISOString(),
     });
+  },
+);
+
+/**
+ * GET /parent/attendance/:studentId
+ * Öğrencinin devamsızlık kayıtlarını getir
+ */
+router.get(
+  '/attendance/:studentId',
+  authenticate('parent'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const parentId = req.user!.id;
+    const studentId = String(req.params.studentId);
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+
+    // Veli erişim kontrolü
+    const access = await checkParentAccess(parentId, studentId);
+    if (!access.allowed) {
+      return res.status(403).json({ error: access.error });
+    }
+
+    try {
+      const where: any = {
+        studentId,
+      };
+
+      if (startDate || endDate) {
+        where.date = {};
+        if (startDate) {
+          where.date.gte = new Date(startDate);
+        }
+        if (endDate) {
+          const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+          where.date.lte = end;
+        }
+      }
+
+      const records = await prisma.classAttendance.findMany({
+        where,
+        include: {
+          classGroup: {
+            select: {
+              id: true,
+              name: true,
+              gradeLevel: true,
+            },
+          },
+          teacher: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          student: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        take: 500,
+      });
+
+      return res.json(
+        records.map((r) => ({
+          id: r.id,
+          studentId: r.studentId,
+          studentName: r.student?.name ?? 'Öğrenci',
+          teacherId: r.teacherId,
+          teacherName: r.teacher?.name ?? 'Öğretmen',
+          classGroupId: r.classGroupId,
+          classGroupName: r.classGroup.name,
+          date: r.date.toISOString(),
+          present: r.present,
+          notes: r.notes,
+          createdAt: r.createdAt.toISOString(),
+        })),
+      );
+    } catch (error) {
+      console.error('[parent/attendance]', error);
+      return res.status(500).json({ error: 'Devamsızlık kayıtları yüklenemedi.' });
+    }
   },
 );
 

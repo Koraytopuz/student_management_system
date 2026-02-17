@@ -7,7 +7,6 @@ import {
   Loader2,
   PenSquare,
   Plus,
-  Search,
   Sparkles,
   Trash2,
   X,
@@ -110,7 +109,7 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
   token,
   defaultGradeLevel,
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TodoPriority>('all');
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -121,17 +120,14 @@ export const StudentPlanner: React.FC<StudentPlannerProps> = ({
   const [studyPlanResult, setStudyPlanResult] = useState<string | null>(null);
   const [studyPlanFocusTopic, setStudyPlanFocusTopic] = useState('');
   const [studyPlanWeeklyHours, setStudyPlanWeeklyHours] = useState(5);
-  const [studyPlanGradeLevel, setStudyPlanGradeLevel] = useState(
-    defaultGradeLevel ?? '9',
-  );
+  const [studyPlanGradeLevel] = useState(defaultGradeLevel ?? '9');
   // Çalışma planı için seçilen ders (subjectId) ve müfredat verileri
   const [studyPlanSubject, setStudyPlanSubject] = useState(''); // subjectId
   const [studyPlanSubjectName, setStudyPlanSubjectName] = useState(''); // serbest metin ders adı
   const [studyPlanSubjects, setStudyPlanSubjects] = useState<
     StudentQuestionBankSubjectMeta[]
   >([]);
-  const [studyPlanSubjectsLoading, setStudyPlanSubjectsLoading] =
-    useState(false);
+  const [, setStudyPlanSubjectsLoading] = useState(false);
   const [studyPlanTopics, setStudyPlanTopics] = useState<string[]>([]);
   const [studyPlans, setStudyPlans] = useState<StudentStudyPlan[]>([]);
   const [selectedStudyPlanId, setSelectedStudyPlanId] = useState<string | null>(null);

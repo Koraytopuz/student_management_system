@@ -15,6 +15,7 @@ import { AnalysisReportPage } from './pages/student/AnalysisReport';
 import { ParentChildHomeworksPage } from './pages/parent/ChildHomeworks';
 import { DashboardSidebarProvider, useDashboardSidebar } from './DashboardSidebarContext';
 import { ReadingModeProvider, useReadingMode } from './ReadingModeContext';
+import { getParentUnreadNotificationCount, getTeacherUnreadNotificationCount, getAdminNotifications } from './api';
 
 const ProtectedRoute: React.FC<{
   children: React.ReactElement;
@@ -31,11 +32,57 @@ const ProtectedRoute: React.FC<{
 };
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const readingMode = useReadingMode();
   const showReadingModeButton = user && (user.role === 'teacher' || user.role === 'student') && /^\/(teacher|student)/.test(location.pathname);
+
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = React.useState<number>(0);
+
+  React.useEffect(() => {
+    if (!user || !token) {
+      setUnreadNotificationsCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        if (user.role === 'teacher') {
+          const payload = await getTeacherUnreadNotificationCount(token);
+          if (!cancelled) setUnreadNotificationsCount(payload.count ?? 0);
+        } else if (user.role === 'parent') {
+          const payload = await getParentUnreadNotificationCount(token);
+          if (!cancelled) setUnreadNotificationsCount(payload.count ?? 0);
+        } else if (user.role === 'admin') {
+          const list = await getAdminNotifications(token, 50);
+          if (!cancelled) {
+            const unread = list.filter((n) => !n.read).length;
+            setUnreadNotificationsCount(unread);
+          }
+        } else {
+          if (!cancelled) setUnreadNotificationsCount(0);
+        }
+      } catch {
+        if (!cancelled) setUnreadNotificationsCount(0);
+      }
+    };
+
+    // İlk yükleme + periyodik güncelleme
+    refresh().catch(() => {});
+    const t = window.setInterval(() => refresh().catch(() => {}), 30000);
+
+    const onNotificationsUpdated = () => {
+      refresh().catch(() => {});
+    };
+    window.addEventListener('notifications-updated', onNotificationsUpdated);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+      window.removeEventListener('notifications-updated', onNotificationsUpdated);
+    };
+  }, [user?.role, token, location.pathname]);
 
   const handleGoToNotifications = (notificationId?: string) => {
     const path = location.pathname;
@@ -43,7 +90,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (path.startsWith('/teacher')) navigate(`/teacher?tab=notifications${idParam}`);
     else if (path.startsWith('/student')) navigate(`/student?notifications=1${idParam}`);
     else if (path.startsWith('/parent')) navigate(`/parent?tab=notifications${idParam}`);
-    else if (path.startsWith('/admin')) navigate('/admin');
+    else if (path.startsWith('/admin')) navigate('/admin?tab=notifications');
   };
   const [isDark, setIsDark] = React.useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -154,15 +201,39 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     {isDark ? <Moon size={18} /> : <Sun size={18} />}
                   </button>
                 )}
-                {panelTitle && user.role !== 'admin' && /^\/(teacher|student|parent)/.test(location.pathname) && (
+                {panelTitle && /^\/(teacher|student|parent|admin)/.test(location.pathname) && (
                   <button
                     type="button"
                     className="ghost-btn"
                     aria-label="Bildirimler"
                     onClick={() => handleGoToNotifications()}
-                    style={{ padding: '0.5rem' }}
+                    style={{ padding: '0.5rem', position: 'relative' }}
                   >
                     <Bell size={18} />
+                    {unreadNotificationsCount > 0 && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: -6,
+                          right: -6,
+                          minWidth: 18,
+                          height: 18,
+                          padding: '0 5px',
+                          borderRadius: 999,
+                          background: '#ef4444',
+                          color: 'white',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 11,
+                          fontWeight: 800,
+                          lineHeight: 1,
+                          boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
+                        }}
+                      >
+                        {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                      </span>
+                    )}
                   </button>
                 )}
                 <button type="button" className="topbar-logout-btn" onClick={logout}>

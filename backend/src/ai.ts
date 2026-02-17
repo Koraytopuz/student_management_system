@@ -49,6 +49,7 @@ export interface CallGeminiOptions {
   systemInstruction?: string;
   temperature?: number;
   maxOutputTokens?: number;
+  responseMimeType?: string;
 }
 
 /**
@@ -65,25 +66,36 @@ export async function callGemini(
 
   const genAi = new GoogleGenAI({ apiKey });
   const models = getModelCandidates();
-  const { systemInstruction, temperature = 0.5, maxOutputTokens = 2048 } = options;
+  const { systemInstruction, temperature = 0.5, maxOutputTokens = 2048, responseMimeType } = options;
 
   let lastError: unknown = null;
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  const _unused = 0; // Prevent unused var error if logic changes
+
   for (const model of models) {
     try {
-      const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
-      if (systemInstruction) {
-        contents.push({ role: 'user', parts: [{ text: systemInstruction }] });
-      }
-      contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-
-      const response = await genAi.models.generateContent({
+      // API call setup
+      const modelParams: any = {
         model,
-        contents,
-        generationConfig: {
+        contents: [
+          ...(systemInstruction ? [{ role: 'user', parts: [{ text: systemInstruction }] }] : []),
+          { role: 'user', parts: [{ text: userPrompt }] },
+        ],
+        config: {
           temperature,
           maxOutputTokens,
+          responseMimeType,
         },
-      } as Parameters<typeof genAi.models.generateContent>[0]);
+      };
+
+      // v1/v2 compatibility check - some SDKs use generationConfig instead of config
+      // But @google/genai usually uses config or generationConfig depending on method
+      // We'll stick to what seemed to work but add responseMimeType
+      // Actually, looking at aiRoutes.ts (lines 361), it uses 'config' property with generateContent
+      // But here in ai.ts it was using generationConfig. I should align with aiRoutes.ts approach
+      // aiRoutes.ts uses: genAi.models.generateContent({ model, contents: [...], config: { ... } })
+
+      const response = await genAi.models.generateContent(modelParams);
 
       const text = extractResponseText(response);
       if (text) return text;

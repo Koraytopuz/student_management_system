@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { X, ChevronDown, ChevronUp, Upload, FileText, Check, Calendar, Users, Trash2 } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { X, ChevronDown, ChevronUp, FileText, Check, Calendar, Users, Trash2, ClipboardList } from 'lucide-react';
+import { GlassCard, MetricCard, TagChip } from '../../components/DashboardPrimitives';
 
 interface ClassGroup {
   id: string;
   name: string;
   gradeLevel: string;
   stream?: 'SAYISAL' | 'SOZEL' | 'ESIT_AGIRLIK' | null;
+  section?: string | null;
 }
 
 interface Exam {
@@ -37,8 +39,10 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [editingExamId, setEditingExamId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [examSearch] = useState('');
   
   // Form state
   const [formData, setFormData] = useState({
@@ -50,7 +54,6 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
   
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -111,22 +114,27 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
   };
 
   // Sınıfları sırala
-  const sortedClassGroups = React.useMemo(() => {
+  const sortedClassGroups = useMemo(() => {
     const grouped = new Map<string, ClassGroup[]>();
-    
+
     classGroups.forEach((cg) => {
+      // 9A sınıfını tamamen gizle
+      const lowerName = (cg.name || '').toLowerCase();
+      if (lowerName.includes('9a') || lowerName.includes('9/a') || lowerName.includes('9-a')) {
+        return;
+      }
       const key = cg.gradeLevel || 'OTHER';
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(cg);
     });
 
     const result: ClassGroup[] = [];
-    
+
     GRADE_ORDER.forEach((grade) => {
       if (!grouped.has(grade)) return;
-      
+
       const groups = grouped.get(grade)!;
-      
+
       if (grade === 'MEZUN' || grade === '12' || grade === '11') {
         // Stream'e göre sırala
         STREAM_ORDER.forEach((stream) => {
@@ -138,16 +146,124 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
         result.push(...groups);
       }
     });
-    
+
     return result;
   }, [classGroups]);
 
-  const toggleClass = (classId: string) => {
+  // Sınav türüne göre katılabilecek sınıfları filtrele
+  const eligibleClassGroups = useMemo(() => {
+    return sortedClassGroups.filter((cg) => {
+      const grade = (cg.gradeLevel || '').toUpperCase();
+      switch (formData.type) {
+        case 'TYT':
+          // TYT: 9, 10, 11, 12 ve Mezun
+          return (
+            grade === '9' ||
+            grade === '10' ||
+            grade === '11' ||
+            grade === '12' ||
+            grade === 'MEZUN'
+          );
+        case 'AYT':
+          // AYT: 11, 12 ve Mezun
+          return grade === '11' || grade === '12' || grade === 'MEZUN';
+        case 'LGS':
+          // LGS: sadece 8. sınıf
+          return grade === '8';
+        case 'ARA_SINIF':
+        default:
+          // Ara Sınıf: diğer tüm sınıflar gösterilebilir (4–7 gibi)
+          return grade !== '8' && grade !== '9' && grade !== '10' && grade !== '11' && grade !== '12' && grade !== 'MEZUN';
+      }
+    });
+  }, [sortedClassGroups, formData.type]);
+
+  // Tür değişince, artık uygun olmayan sınıfları seçimden çıkar
+  useEffect(() => {
     setSelectedClasses((prev) =>
-      prev.includes(classId)
-        ? prev.filter((id) => id !== classId)
-        : [...prev, classId]
+      prev.filter((id) => {
+        const cg = eligibleClassGroups.find((g) => g.id === id);
+        return !!cg;
+      }),
     );
+  }, [eligibleClassGroups]);
+
+  const examsFiltered = useMemo(() => {
+    const q = examSearch.trim().toLowerCase();
+    if (!q) return exams;
+    return exams.filter((e) => (e.name || '').toLowerCase().includes(q));
+  }, [exams, examSearch]);
+
+  const stats = useMemo(() => {
+    const total = exams.length;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const upcoming = exams.filter((e) => new Date(e.date).getTime() >= today.getTime()).length;
+    const totalAssignments = exams.reduce((acc, e) => acc + (e.examAssignments?.length ?? 0), 0);
+    return { total, upcoming, totalAssignments };
+  }, [exams]);
+
+  // Belirli bir sınıf seçimi için, aynı akıştaki (Sayısal / EA / Sözel) tüm şubeleri çözer.
+  // 12. ve 11. sınıflar için aynı akıştaki tüm classGroup'ları; TYT / AYT ise mezun akışlarını da ekler.
+  const resolveClassIdsForSelection = (classId: string): string[] => {
+    const base = eligibleClassGroups.find((g) => g.id === classId);
+    if (!base) return [classId];
+
+    const grade = (base.gradeLevel || '').toUpperCase();
+    const stream = base.stream;
+
+    // Sadece akış tanımlı (SAYISAL / EA / SOZEL) gruplar için genişletme yap
+    if (!stream) return [classId];
+
+    const resultIds: string[] = [];
+
+    // 11 ve 12. sınıflarda, aynı akıştaki tüm şubeleri ekle
+    if (grade === '11' || grade === '12') {
+      eligibleClassGroups.forEach((g) => {
+        const gGrade = (g.gradeLevel || '').toUpperCase();
+        if (gGrade === grade && g.stream === stream) {
+          resultIds.push(g.id);
+        }
+      });
+
+      // TYT / AYT sınavlarında, aynı akıştaki mezun sınıflarını da ekle
+      if (formData.type === 'TYT' || formData.type === 'AYT') {
+        eligibleClassGroups.forEach((g) => {
+          const gGrade = (g.gradeLevel || '').toUpperCase();
+          if (gGrade === 'MEZUN' && g.stream === stream) {
+            resultIds.push(g.id);
+          }
+        });
+      }
+
+      return Array.from(new Set(resultIds));
+    }
+
+    // Mezun seçiminde, aynı akıştaki tüm mezun gruplarını ekle
+    if (grade === 'MEZUN') {
+      eligibleClassGroups.forEach((g) => {
+        const gGrade = (g.gradeLevel || '').toUpperCase();
+        if (gGrade === 'MEZUN' && g.stream === stream) {
+          resultIds.push(g.id);
+        }
+      });
+      return Array.from(new Set(resultIds));
+    }
+
+    return [classId];
+  };
+
+  const toggleClass = (classId: string) => {
+    setSelectedClasses((prev) => {
+      const ids = resolveClassIdsForSelection(classId);
+      const allSelected = ids.every((id) => prev.includes(id));
+      if (allSelected) {
+        // Tümü zaten seçiliyse, bu akıştaki tüm şubeleri kaldır
+        return prev.filter((id) => !ids.includes(id));
+      }
+      // Aksi halde, bu akıştaki tüm şubeleri ekle
+      return Array.from(new Set([...prev, ...ids]));
+    });
   };
 
   const removeClass = (classId: string) => {
@@ -158,12 +274,20 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
     setFormData((prev) => ({ ...prev, examFile: file }));
   };
 
-  const handleFileDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer?.files?.[0];
-    if (file) handleFileSelect(file);
-  }, []);
+  const startEditExam = (exam: Exam) => {
+    setEditingExamId(exam.id);
+    setFormData({
+      name: exam.name,
+      type: exam.type as any,
+      date: exam.date ? exam.date.slice(0, 10) : '',
+      examFile: null,
+    });
+    const assignedClassIds =
+      exam.examAssignments?.map((a) => a.classGroup.id) ?? [];
+    setSelectedClasses(assignedClassIds);
+    setError(null);
+    setSuccess(null);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,8 +313,41 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
     setSubmitting(true);
 
     try {
-      const response = await fetch('http://localhost:4000/api/exams', {
-        method: 'POST',
+      // 1) Eğer kitapçık dosyası seçildiyse önce sunucuya yükle
+      let uploadedFileUrl: string | undefined;
+      let uploadedFileName: string | undefined;
+
+      if (formData.examFile) {
+        const uploadData = new FormData();
+        uploadData.append('file', formData.examFile);
+
+        const uploadResponse = await fetch('http://localhost:4000/teacher/test-assets/upload', {
+          method: 'POST',
+          headers: {
+            // Content-Type form-data için otomatik ayarlanır; sadece auth ekliyoruz
+            Authorization: `Bearer ${token}`,
+          },
+          body: uploadData,
+        });
+
+        if (!uploadResponse.ok) {
+          const errBody = await uploadResponse.json().catch(() => ({}));
+          throw new Error(errBody.error || 'Kitapçık yüklenirken hata oluştu');
+        }
+
+        const uploaded = await uploadResponse.json() as { url: string; fileName: string };
+        uploadedFileUrl = uploaded.url;
+        uploadedFileName = uploaded.fileName;
+      }
+
+      // 2) Sınav kaydı oluştur / güncelle
+      const url = editingExamId
+        ? `http://localhost:4000/api/exams/${editingExamId}`
+        : 'http://localhost:4000/api/exams';
+      const method = editingExamId ? 'PUT' : 'POST';
+
+      const response = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
@@ -202,6 +359,9 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
           questionCount: 0,
           description: '',
           classGroupIds: selectedClasses,
+          // PDF kitapçığı yüklenmişse, sınava iliştir
+          fileUrl: uploadedFileUrl,
+          fileName: uploadedFileName,
         }),
       });
 
@@ -211,9 +371,13 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
       }
 
       // Başarılı
-      setSuccess('Sınav başarıyla oluşturuldu ve öğrencilere bildirim gönderildi');
+      setSuccess(
+        editingExamId
+          ? 'Sınav başarıyla güncellendi ve öğrencilere bildirim gönderildi'
+          : 'Sınav başarıyla oluşturuldu ve öğrencilere bildirim gönderildi',
+      );
       
-      // Formu temizle ve sınav listesini yenile
+      // Formu temizle, düzenleme modundan çık ve sınav listesini yenile
       setFormData({
         name: '',
         type: 'TYT',
@@ -221,6 +385,7 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
         examFile: null,
       });
       setSelectedClasses([]);
+      setEditingExamId(null);
       fetchExams();
       
       // Success mesajını 5 saniye sonra kaldır
@@ -233,69 +398,74 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-        <div className="text-slate-600 dark:text-slate-300">Yükleniyor...</div>
-      </div>
-    );
+    return <div className="empty-state">Yükleniyor...</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-            Sınav Yönetimi
-          </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Kurumdaki tüm deneme sınavlarını tek ekrandan oluşturun, sınıflara atayın ve yönetin.
-          </p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      <GlassCard
+        title="Sınav Yönetimi"
+        subtitle="Deneme sınavlarını tek ekrandan oluşturun, sınıflara atayın ve yönetin."
+        icon={<ClipboardList size={18} />}
+        actions={
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <TagChip label={`Toplam: ${stats.total}`} tone="neutral" />
+            <TagChip label={`Yaklaşan: ${stats.upcoming}`} tone="info" />
+          </div>
+        }
+      >
+        {(success || error) && (
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {success && <TagChip label={success} tone="success" />}
+            {error && <TagChip label={error} tone="error" />}
+          </div>
+        )}
+
+        <div className="metric-grid" style={{ marginTop: '1rem', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+          <MetricCard label="Sınav" value={`${stats.total}`} helper="Kayıtlı" trendLabel="Liste" />
+          <MetricCard label="Atama" value={`${stats.totalAssignments}`} helper="Sınıf eşleştirmesi" trendLabel="Dağıtım" />
+          <MetricCard label="Yaklaşan" value={`${stats.upcoming}`} helper="Bugün ve sonrası" trendLabel="Takvim" />
         </div>
+      </GlassCard>
 
-        {/* Success/Error Messages */}
-        {success && (
-          <div className="mb-6 rounded-lg bg-emerald-50 border border-emerald-200 p-4 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-200">
-            {success}
-          </div>
-        )}
-
-        {error && (
-          <div className="mb-6 rounded-lg bg-red-50 border border-red-200 p-4 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200">
-            {error}
-          </div>
-        )}
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {/* Sınav Adı */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                Sınav Adı <span className="text-red-500">*</span>
-              </label>
+      <div className="dual-grid" style={{ alignItems: 'flex-start' }}>
+        <GlassCard
+          title="Yeni Sınav"
+          subtitle="3 adımda sınavı oluşturun ve sınıflara atayın."
+          icon={<FileText size={18} />}
+          className="exam-management-form-card"
+        >
+          <form onSubmit={handleSubmit} className="form" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div
+              style={{
+                fontSize: '0.78rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.14em',
+                opacity: 0.8,
+              }}
+            >
+              1. Sınav Bilgileri
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <label style={{ fontSize: '0.85rem', opacity: 0.85 }}>Sınav Adı *</label>
               <input
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-50 dark:focus:border-blue-400"
-                placeholder="Örn: 2025 TYT Deneme Sınavı 1"
+                className="teacher-content-input"
+                placeholder="Örn: 2026 TYT Deneme 1"
                 required
               />
             </div>
 
-            {/* Sınav Türü ve Tarih */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Sınav Türü <span className="text-red-500">*</span>
-                </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <label style={{ fontSize: '0.85rem', opacity: 0.85 }}>Sınav Türü *</label>
                 <select
                   value={formData.type}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, type: e.target.value as any }))
-                  }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-50 dark:focus:border-blue-400"
+                  onChange={(e) => setFormData((prev) => ({ ...prev, type: e.target.value as any }))}
+                  className="attendance-select"
+                  style={{ padding: '0.65rem 0.85rem' }}
                   required
                 >
                   <option value="TYT">TYT</option>
@@ -305,259 +475,258 @@ const ExamManagement: React.FC<ExamManagementProps> = ({ token }) => {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Tarih <span className="text-red-500">*</span>
-                </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <label style={{ fontSize: '0.85rem', opacity: 0.85 }}>Tarih *</label>
                 <input
                   type="date"
                   value={formData.date}
                   onChange={(e) => setFormData((prev) => ({ ...prev, date: e.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-50 dark:focus:border-blue-400"
+                  className="attendance-select"
+                  style={{ padding: '0.65rem 0.85rem' }}
                   required
                 />
               </div>
             </div>
 
-            {/* Sınıf Seçimi */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                Sınıflar <span className="text-red-500">*</span>
-              </label>
-              
-              {/* Dropdown */}
-              <div className="relative inline-block min-w-[220px]" ref={dropdownRef}>
+            <div
+              style={{
+                fontSize: '0.78rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.14em',
+                opacity: 0.8,
+                marginTop: '0.25rem',
+              }}
+            >
+              2. Sınıf Seçimi
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <label style={{ fontSize: '0.85rem', opacity: 0.85 }}>Sınıflar *</label>
+              <div className="relative inline-block" style={{ minWidth: 240 }} ref={dropdownRef}>
                 <button
                   type="button"
                   onClick={() => setDropdownOpen(!dropdownOpen)}
-                  className="w-full flex items-center justify-between rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-900 shadow-sm transition hover:border-blue-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-50 dark:hover:border-blue-400 dark:focus:border-blue-400"
+                  className="ghost-btn"
+                  style={{ width: '100%', justifyContent: 'space-between', height: '2.5rem', borderRadius: 12 }}
                 >
-                  <span className={selectedClasses.length === 0 ? 'text-slate-400' : ''}>
-                    {selectedClasses.length === 0
-                      ? 'Sınıf seçin...'
-                      : `${selectedClasses.length} sınıf seçildi`}
+                  <span style={{ opacity: selectedClasses.length === 0 ? 0.7 : 1 }}>
+                    {selectedClasses.length === 0 ? 'Sınıf seçin...' : `${selectedClasses.length} sınıf seçildi`}
                   </span>
-                  {dropdownOpen ? (
-                    <ChevronUp className="h-5 w-5 text-slate-500" />
-                  ) : (
-                    <ChevronDown className="h-5 w-5 text-slate-500" />
-                  )}
+                  {dropdownOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                 </button>
 
                 {dropdownOpen && (
-                  <div className="absolute z-50 mt-2 w-full max-h-80 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800">
-                    <div className="py-2">
-                      {sortedClassGroups.map((classGroup) => {
-                        const isSelected = selectedClasses.includes(classGroup.id);
-                        return (
-                          <label
-                            key={classGroup.id}
-                            className="flex items-center gap-3 px-4 py-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleClass(classGroup.id)}
-                              className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-1 focus:ring-blue-500 dark:border-slate-600"
-                            />
-                            <span className="flex-1 text-xs text-slate-700 dark:text-slate-300">
-                              {classGroup.name}
-                            </span>
-                            {isSelected && (
-                              <Check className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-                            )}
-                          </label>
-                        );
-                      })}
-                    </div>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      zIndex: 50,
+                      marginTop: 8,
+                      width: '80%',
+                      maxWidth: 420,
+                      maxHeight: 360,
+                      overflowY: 'auto',
+                      borderRadius: 14,
+                      border: '1px solid var(--glass-border)',
+                      background: 'var(--glass-bg)',
+                      boxShadow: '0 30px 70px rgba(15, 23, 42, 0.10)',
+                      padding: '0.35rem',
+                    }}
+                  >
+                    {eligibleClassGroups.map((classGroup) => {
+                      const isSelected = selectedClasses.includes(classGroup.id);
+                      return (
+                        <label
+                          key={classGroup.id}
+                          className="list-row"
+                          style={{ alignItems: 'center', borderRadius: 12, cursor: 'pointer', padding: '0.65rem 0.75rem' }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleClass(classGroup.id)}
+                            style={{ width: 16, height: 16 }}
+                          />
+                          <span style={{ flex: 1, fontSize: '0.85rem' }}>{classGroup.name}</span>
+                          {isSelected && <Check size={16} />}
+                        </label>
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
-              {/* Seçilen Sınıflar Önizlemesi */}
               {selectedClasses.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                   {selectedClasses
                     .map((id) => classGroups.find((cg) => cg.id === id))
                     .filter((cg): cg is ClassGroup => Boolean(cg))
                     .map((cg) => (
-                      <div
-                        key={cg.id}
-                        className="inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-3 py-1 text-[11px] text-white shadow-sm"
-                      >
-                        <span className="truncate max-w-[140px]">{cg.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeClass(cg.id)}
-                          className="ml-1 rounded-full p-0.5 hover:bg-blue-500/80 transition"
-                        >
-                          <X className="h-3 w-3" />
+                      <span key={cg.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <TagChip label={cg.name} tone="info" />
+                        <button type="button" className="ghost-btn" style={{ height: '1.75rem' }} onClick={() => removeClass(cg.id)}>
+                          <X size={14} />
                         </button>
-                      </div>
+                      </span>
                     ))}
                 </div>
               )}
             </div>
 
-            {/* Dosya Yükleme */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                Sınav Dosyası (Opsiyonel)
-              </label>
-
-              {formData.examFile ? (
-                <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
-                  <FileText className="h-5 w-5 text-slate-500 dark:text-slate-400" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
-                      {formData.examFile.name}
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {formatFileSize(formData.examFile.size)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleFileSelect(null)}
-                    className="rounded-lg p-2 text-slate-500 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ) : (
-                <div
-                  onDragEnter={(e) => {
-                    e.preventDefault();
-                    setIsDragging(true);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    if (e.currentTarget === e.target) {
-                      setIsDragging(false);
-                    }
-                  }}
-                  onDrop={handleFileDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed py-12 cursor-pointer transition ${
-                    isDragging
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50 dark:border-slate-600 dark:hover:border-blue-500 dark:hover:bg-slate-800/50'
-                  }`}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
-                    onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
-                  />
-                  <Upload className={`h-10 w-10 mb-3 ${isDragging ? 'text-blue-600' : 'text-slate-400'}`} />
-                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    Dosya seçin veya sürükleyip bırakın
-                  </p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    PDF, Word, Excel veya görsel dosyaları
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Butonlar */}
-          <div className="mt-6 flex flex-col sm:flex-row gap-2 justify-end">
-            <button
-              type="button"
-              onClick={() => {
-                setFormData({
-                  name: '',
-                  type: 'TYT',
-                  date: '',
-                  examFile: null,
-                });
-                setSelectedClasses([]);
-                setError(null);
-                setSuccess(null);
+            <div
+              style={{
+                fontSize: '0.78rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.14em',
+                opacity: 0.8,
               }}
-              className="ghost-btn"
             >
-              İptal
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="primary-btn disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {submitting ? 'Kaydediliyor...' : 'Sınavı Kaydet'}
-            </button>
-          </div>
-        </form>
-
-        {/* Kaydedilen Sınavlar Listesi */}
-        <div className="mt-12">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-4">
-            Kaydedilen Sınavlar
-          </h2>
-          {exams.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 py-12 text-center dark:border-slate-700 dark:bg-slate-800/30">
-              <FileText className="mx-auto h-10 w-10 text-slate-400 dark:text-slate-500" />
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                Henüz sınav oluşturulmamış.
-              </p>
+              3. Sınav Dosyası (Opsiyonel)
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {exams.map((exam) => (
-                <div
-                  key={exam.id}
-                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', position: 'relative' }}>
+              <label style={{ fontSize: '0.85rem', opacity: 0.85 }}>Sınav Dosyası (opsiyonel)</label>
+              {/* Gerçek input: görünmez ama tıklanabilir */}
+              <input
+                ref={fileInputRef}
+                id="exam-file-input"
+                type="file"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,application/pdf,image/*"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  opacity: 0,
+                  cursor: 'pointer',
+                }}
+                onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
+              />
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label
+                  htmlFor="exam-file-input"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.4rem 0.9rem',
+                    borderRadius: 999,
+                    border: '1px solid rgba(148,163,184,0.6)',
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.9), rgba(241,245,249,0.95))',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    color: 'var(--color-text-main)',
+                    boxShadow: '0 8px 20px rgba(15,23,42,0.08)',
+                  }}
                 >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h3 className="font-medium text-slate-900 dark:text-slate-50">
-                        {exam.name}
-                      </h3>
-                      <span className="mt-1 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-200">
-                        {exam.type}
-                      </span>
+                  Dosya Seç
+                </label>
+                {!formData.examFile && (
+                  <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>Henüz dosya seçilmedi (PDF / Word / Excel / görsel)</span>
+                )}
+                {formData.examFile && (
+                  <div className="list-row" style={{ alignItems: 'center', borderRadius: 12, flex: 1, minWidth: 0 }}>
+                    <FileText size={18} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <strong style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {formData.examFile.name}
+                      </strong>
+                      <small style={{ display: 'block', opacity: 0.75 }}>{formatFileSize(formData.examFile.size)}</small>
                     </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!window.confirm(`"${exam.name}" sınavını silmek istediğinize emin misiniz?`)) return;
-                        try {
-                          const res = await fetch(`http://localhost:4000/api/exams/${exam.id}`, {
-                            method: 'DELETE',
-                            headers: { Authorization: `Bearer ${token}` },
-                          });
-                          if (res.ok) fetchExams();
-                        } catch (e) {
-                          console.error(e);
-                        }
-                      }}
-                      className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-slate-700 dark:hover:text-red-400 transition"
-                    >
-                      <Trash2 className="h-4 w-4" />
+                    <button type="button" className="ghost-btn" onClick={() => handleFileSelect(null)}>
+                      Kaldır
                     </button>
                   </div>
-                  <div className="mt-3 flex flex-col gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="h-3.5 w-3.5" />
-                      {new Date(exam.date).toLocaleDateString('tr-TR')}
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  setFormData({ name: '', type: 'TYT', date: '', examFile: null });
+                  setSelectedClasses([]);
+                  setEditingExamId(null);
+                  setError(null);
+                  setSuccess(null);
+                }}
+              >
+                {editingExamId ? 'Düzenlemeyi İptal Et' : 'Temizle'}
+              </button>
+              <button type="submit" disabled={submitting} className="primary-btn">
+                {submitting
+                  ? 'Kaydediliyor...'
+                  : editingExamId
+                    ? 'Sınavı Güncelle'
+                    : 'Sınavı Kaydet'}
+              </button>
+            </div>
+          </form>
+        </GlassCard>
+
+        <GlassCard
+          title="Sınavlar"
+          subtitle="Oluşturulan sınavlar ve hızlı işlemler"
+          icon={<Calendar size={18} />}
+          className="exam-management-list-card"
+        >
+          {examsFiltered.length === 0 ? (
+            <div className="empty-state">Henüz sınav yok veya aramanıza uygun sonuç bulunamadı.</div>
+          ) : (
+            <div className="list-stack">
+              {examsFiltered
+                .slice()
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                .map((exam) => (
+                  <div key={exam.id} className="list-row" style={{ alignItems: 'flex-start', borderRadius: 14 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <strong style={{ display: 'block' }}>{exam.name}</strong>
+                      <small style={{ display: 'block', marginTop: 4, opacity: 0.85 }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 10 }}>
+                          <Calendar size={14} /> {new Date(exam.date).toLocaleDateString('tr-TR')}
+                        </span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <Users size={14} /> {exam.examAssignments?.length ?? 0} sınıf · {exam._count?.results ?? 0} sonuç
+                        </span>
+                      </small>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                        <TagChip label={exam.type} tone="info" />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Users className="h-3.5 w-3.5" />
-                      {exam.examAssignments?.length ?? 0} sınıf · {exam._count?.results ?? 0} sonuç
+
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => startEditExam(exam)}
+                        title="Düzenle"
+                      >
+                        Düzenle
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={async () => {
+                          if (!window.confirm(`"${exam.name}" sınavını silmek istediğinize emin misiniz?`)) return;
+                          try {
+                            const res = await fetch(`http://localhost:4000/api/exams/${exam.id}`, {
+                              method: 'DELETE',
+                              headers: { Authorization: `Bearer ${token}` },
+                            });
+                            if (res.ok) fetchExams();
+                          } catch (e) {
+                            console.error(e);
+                          }
+                        }}
+                        style={{ borderColor: 'rgba(239,68,68,0.35)', color: '#b91c1c' }}
+                        title="Sil"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
           )}
-        </div>
+        </GlassCard>
       </div>
     </div>
   );

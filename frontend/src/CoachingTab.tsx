@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { PlusCircle, Trash2, Edit2, List } from 'lucide-react';
 import { GlassCard, MetricCard, TagChip } from './components/DashboardPrimitives';
@@ -101,6 +101,13 @@ export const CoachingTab: React.FC<{
 
   /** Öğrenci listesi paneli açık mı; ilk açılışta kapalı, butonla açılır, öğrenci seçilince kapanır. */
   const [studentListExpanded, setStudentListExpanded] = useState(false);
+  const sessionFormRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (formOpen && editingSession && sessionFormRef.current) {
+      sessionFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [formOpen, editingSession]);
 
   const studentsWithPresence = useMemo(() => {
     const now = Date.now();
@@ -116,7 +123,7 @@ export const CoachingTab: React.FC<{
     [students, selectedStudentId],
   );
 
-  /** Koçluk verilen öğrencilerin sınıf seviyeleri (benzersiz, sıralı). */
+  /** Kişisel gelişim verilen öğrencilerin sınıf seviyeleri (benzersiz, sıralı). */
   const availableGradeLevels = useMemo(() => {
     const set = new Set<string>();
     students.forEach((s) => {
@@ -161,7 +168,7 @@ export const CoachingTab: React.FC<{
       setGoals(data);
     } catch (e) {
       setGoalsError(
-        e instanceof Error ? e.message : 'Koçluk hedefleri yüklenemedi.',
+        e instanceof Error ? e.message : 'Kişisel gelişim hedefleri yüklenemedi.',
       );
     } finally {
       setGoalsLoading(false);
@@ -180,7 +187,7 @@ export const CoachingTab: React.FC<{
       setNotes(data);
     } catch (e) {
       setNotesError(
-        e instanceof Error ? e.message : 'Koçluk notları yüklenemedi.',
+        e instanceof Error ? e.message : 'Kişisel gelişim notları yüklenemedi.',
       );
     } finally {
       setNotesLoading(false);
@@ -198,7 +205,7 @@ export const CoachingTab: React.FC<{
       const data = await getTeacherCoachingSessions(token, selectedStudentId);
       setSessions(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Koçluk kayıtları yüklenemedi.');
+      setError(e instanceof Error ? e.message : 'Kişisel gelişim kayıtları yüklenemedi.');
     } finally {
       setLoading(false);
     }
@@ -294,7 +301,7 @@ export const CoachingTab: React.FC<{
       await refresh();
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : 'Koçluk kaydı kaydedilirken bir hata oluştu.',
+        e instanceof Error ? e.message : 'Kişisel gelişim kaydı kaydedilirken bir hata oluştu.',
       );
     } finally {
       setSaving(false);
@@ -304,7 +311,7 @@ export const CoachingTab: React.FC<{
   const handleDelete = async (session: TeacherCoachingSession) => {
     if (!token) return;
     // eslint-disable-next-line no-alert
-    const ok = window.confirm('Bu koçluk kaydını silmek istediğinize emin misiniz?');
+    const ok = window.confirm('Bu kişisel gelişim kaydını silmek istediğinize emin misiniz?');
     if (!ok) return;
     try {
       await deleteTeacherCoachingSession(token, session.id);
@@ -465,7 +472,7 @@ export const CoachingTab: React.FC<{
               >
                 {availableGradeLevels.length === 0 && (
                   <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                    Koçluk öğrencisi yok.
+                    Kişisel gelişim öğrencisi yok.
                   </span>
                 )}
                 {availableGradeLevels.map((grade) => {
@@ -498,7 +505,7 @@ export const CoachingTab: React.FC<{
                   <div className="empty-state">Önce bir sınıf seçin.</div>
                 )}
                 {selectedGradeLevel && studentsInSelectedGrade.length === 0 && (
-                  <div className="empty-state">Bu sınıfta koçluk öğrencisi yok.</div>
+                  <div className="empty-state">Bu sınıfta kişisel gelişim öğrencisi yok.</div>
                 )}
                 {studentsInSelectedGrade.map((student) => (
                   <button
@@ -597,12 +604,13 @@ export const CoachingTab: React.FC<{
         <div style={{ minWidth: 0 }}>
           {!selectedGradeLevel || !selectedStudentId ? (
             <div className="empty-state" style={{ padding: '2rem 1rem' }}>
-              Önce soldan bir sınıf ve öğrenci seçin. Koçluk detayları seçimden sonra görüntülenecektir.
+              Önce soldan bir sınıf ve öğrenci seçin. Kişisel gelişim detayları seçimden sonra görüntülenecektir.
             </div>
           ) : (
           <>
           {formOpen && (
             <div
+              ref={sessionFormRef}
               style={{
                 marginBottom: '1rem',
                 padding: '0.9rem 1rem 1rem',
@@ -1153,12 +1161,12 @@ export const CoachingTab: React.FC<{
                   {activeDetailTab === 'sessions' && (
                     <>
                       {loading ? (
-                        <div className="empty-state">Koçluk kayıtları yükleniyor...</div>
+                        <div className="empty-state">Kişisel gelişim kayıtları yükleniyor...</div>
                       ) : sessions.length === 0 ? (
                         <div className="empty-state">
                           {selectedStudent
                             ? `${selectedStudent.name} için henüz koçluk kaydı yok.`
-                            : 'Koçluk kaydı bulunamadı.'}
+                            : 'Kişisel gelişim kaydı bulunamadı.'}
                         </div>
                       ) : (
                         <div className="list-stack">
@@ -1260,7 +1268,7 @@ export const CoachingTab: React.FC<{
                           label="Çözülen Test"
                           value={profileLoading ? '…' : `${totalTests}`}
                           helper="Toplam bireysel test"
-                          trendLabel="Koçluk için hazır veri"
+                          trendLabel="Kişisel gelişim için hazır veri"
                           trendTone="positive"
                         />
                         <MetricCard

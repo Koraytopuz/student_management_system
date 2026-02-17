@@ -22,7 +22,6 @@ import {
   FolderOpen,
   List,
   ChevronDown,
-  SlidersHorizontal,
 } from 'lucide-react';
 import { GlassCard } from './components/DashboardPrimitives';
 import {
@@ -110,8 +109,6 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
     page: 1,
     limit: 10,
   });
-  const [showFilters, setShowFilters] = useState(false);
-
   // Modal states
   // Modal/Card states
   const [showAddCard, setShowAddCard] = useState(false);
@@ -144,7 +141,8 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
   const [previewExpandedSolution, setPreviewExpandedSolution] = useState<Set<string>>(new Set());
 
   // Folder View States
-  const [viewMode, setViewMode] = useState<'list' | 'folder'>('list');
+  // Varsayılan: Soru klasörleri (admin menüsüne girince ilk ekran)
+  const [viewMode, setViewMode] = useState<'list' | 'folder'>('folder');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [questionsForFolder, setQuestionsForFolder] = useState<QuestionBankItem[]>([]);
   const [folderStructureLoading, setFolderStructureLoading] = useState(false);
@@ -333,6 +331,23 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
     loadStats();
   }, []);
 
+  // Filters değiştiğinde veriyi yeniden yükle
+  useEffect(() => {
+    loadData();
+  }, [token, filters]);
+
+  // PDF'ten soru kaydedildiğinde soru bankasını yenile
+  useEffect(() => {
+    const handleRefresh = () => {
+      loadData();
+      loadStats();
+    };
+    window.addEventListener('questionBankRefresh', handleRefresh);
+    return () => {
+      window.removeEventListener('questionBankRefresh', handleRefresh);
+    };
+  }, [token]);
+
   const loadSubjects = async () => {
     if (!token) return;
     try {
@@ -370,9 +385,6 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
     }
   };
 
-  const handleFilterChange = (key: keyof QuestionBankSearchParams, value: string | boolean | undefined) => {
-    setFilters({ ...filters, page: 1, [key]: value });
-  };
 
   const handlePageChange = (newPage: number) => {
     setFilters({ ...filters, page: newPage });
@@ -577,15 +589,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
               {viewMode === 'list' ? <Folder className="qb-header-icon w-4 h-4" strokeWidth={1.75} /> : <List className="qb-header-icon w-4 h-4" strokeWidth={1.75} />}
               {viewMode === 'list' ? 'Klasör' : 'Liste'}
             </button>
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              type="button"
-              className={`${showFilters ? 'primary-btn' : 'ghost-btn'}`}
-              title="Sınıf, ders ve konu ile filtrele"
-            >
-              <SlidersHorizontal className="qb-header-icon w-4 h-4" strokeWidth={1.75} />
-              Filtreler
-            </button>
+            {/* Filtreler UI kaldırıldı */}
           </div>
           <div className="qb-premium-stat">
             <span className="qb-premium-stat-value">{stats?.total ?? 0}</span>
@@ -1087,38 +1091,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
         </div>
       )}
 
-      {/* Filtreler: Sınıf, Ders, Konu (header'da Filtreler ile açılır) */}
-      {showFilters && (
-        <div className="flex flex-wrap gap-4 items-center p-4 rounded-xl bg-white/5 border border-white/10">
-          <select
-            value={filters.gradeLevel || ''}
-            onChange={(e) => handleFilterChange('gradeLevel', e.target.value || undefined)}
-            className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500/50 text-sm"
-          >
-            <option value="">Tüm Sınıflar</option>
-            {displayGradeLevels.map((g) => (
-              <option key={g} value={g}>{g}. Sınıf</option>
-            ))}
-          </select>
-          <select
-            value={filters.subjectId || ''}
-            onChange={(e) => handleFilterChange('subjectId', e.target.value || undefined)}
-            className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500/50 text-sm"
-          >
-                <option value="">{allowedSubjectNames.length > 0 && availableSubjectsForFilters.length === 0 ? 'Branşınıza ait ders yok' : 'Tüm Dersler'}</option>
-                {availableSubjectsForFilters.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <input
-            type="text"
-            placeholder="Konu başlığı..."
-            value={filters.topic || ''}
-            onChange={(e) => handleFilterChange('topic', e.target.value || undefined)}
-            className="px-3 py-2 min-w-[160px] bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-blue-500/50 text-sm"
-          />
-        </div>
-      )}
+      {/* Filtreler UI kaldırıldı */}
 
       {/* Questions List or Folder View — premium kart */}
       {viewMode === 'folder' ? (
@@ -1294,6 +1267,15 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                       {getDifficultyBadge(q.difficulty)}
                       {getSourceBadge(q.source, q.isApproved)}
                     </div>
+                    {q.imageUrl && (
+                      <div className="mb-2">
+                        <img 
+                          src={q.imageUrl} 
+                          alt="Soru Görseli" 
+                          className="max-w-full h-auto max-h-64 rounded-lg border border-white/10" 
+                        />
+                      </div>
+                    )}
                     <p className="text-white font-medium whitespace-pre-wrap">{q.text || '(Soru metni yok)'}</p>
                     {Array.isArray(q.choices) && q.choices.length > 0 && (
                       <div className="mt-2 grid grid-cols-2 gap-1 text-sm text-white/70">

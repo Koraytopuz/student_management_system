@@ -1,11 +1,17 @@
 /**
  * Ders Programı — Öğretmen sınıf/ders/öğrenci ve günlük/haftalık/aylık/dönemlik program oluşturur.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { GlassCard } from './components/DashboardPrimitives';
 import type { TeacherStudent } from './api';
-import { getCurriculumSubjects } from './api';
+import {
+  getCurriculumSubjects,
+  getTeacherLessonScheduleEntries,
+  createTeacherLessonScheduleEntry,
+  updateTeacherLessonScheduleEntry,
+  deleteTeacherLessonScheduleEntry,
+} from './api';
 
 type Scope = 'class' | 'subject' | 'student';
 type Period = 'daily' | 'weekly' | 'monthly' | 'term';
@@ -83,6 +89,48 @@ export function LessonScheduleTab({
   const [editingTopicSlot, setEditingTopicSlot] = useState<{ hour: number; dayIndex: number } | null>(null);
   const [editingTopicValue, setEditingTopicValue] = useState('');
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const editModalRef = useRef<HTMLDivElement>(null);
+  const [entriesLoading, setEntriesLoading] = useState(false);
+  const scopeRef = useRef<Scope>(scope);
+
+  // scope değiştiğinde ref'i güncelle
+  useEffect(() => {
+    scopeRef.current = scope;
+  }, [scope]);
+
+  useEffect(() => {
+    if (editModalOpen && editModalRef.current) {
+      editModalRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [editModalOpen]);
+
+  // Öğretmen modunda: kapsam seçimi tamam olduğunda API'den programı yükle
+  useEffect(() => {
+    if (isStudentMode || !token) return;
+    
+    // Ref'ten scope'u al - bu closure sorununu önler
+    const currentScope = scopeRef.current;
+    const canLoad =
+      (currentScope === 'class' && gradeLevel) ||
+      (currentScope === 'subject' && gradeLevel && subjectId) ||
+      (currentScope === 'student' && studentId);
+    
+    if (!canLoad) {
+      setEntries([]);
+      return;
+    }
+    
+    setEntriesLoading(true);
+    const params: { scope: string; gradeLevel?: string; subjectId?: string; studentId?: string } = { scope: currentScope };
+    if (currentScope === 'class' || currentScope === 'subject') params.gradeLevel = gradeLevel || undefined;
+    if (currentScope === 'subject') params.subjectId = subjectId || undefined;
+    if (currentScope === 'student') params.studentId = studentId || undefined;
+    
+    getTeacherLessonScheduleEntries(token, params)
+      .then((list) => setEntries(list.map((e) => ({ ...e, topic: e.topic }))))
+      .catch(() => setEntries([]))
+      .finally(() => setEntriesLoading(false));
+  }, [isStudentMode, token, scope, gradeLevel, subjectId, studentId]);
 
   const grades = useMemo(() => {
     const base = allowedGrades.length ? allowedGrades : ['4', '5', '6', '7', '8', '9', '10', '11', '12'];
@@ -113,24 +161,12 @@ export function LessonScheduleTab({
   };
 
   React.useEffect(() => {
-    if (gradeLevel && scope === 'subject') loadSubjects();
-    else setSubjects([]);
+    if (gradeLevel && scope === 'subject') {
+      loadSubjects();
+    } else {
+      setSubjects([]);
+    }
   }, [gradeLevel, scope, token]);
-
-  const openAddModal = () => {
-    const g = gradeLevel || grades[0] || '';
-    setAddForm({
-      gradeLevel: g,
-      subjectId: subjectId || '',
-      subjectName: subjects.find((s) => s.id === subjectId)?.name || '',
-      dayOfWeek: 0,
-      hour: 8,
-      topic: '',
-    });
-    setAddModalOpen(true);
-    if (token && g) getCurriculumSubjects(token, g).then(setModalSubjects).catch(() => setModalSubjects([]));
-    else setModalSubjects(subjects);
-  };
 
   const closeAddModal = () => {
     setAddModalOpen(false);
@@ -150,22 +186,43 @@ export function LessonScheduleTab({
     setAddForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleSaveEntry = () => {
+  const handleSaveEntry = async () => {
     const subj = modalSubjects.find((s) => s.id === addForm.subjectId);
     if (!addForm.gradeLevel || !addForm.subjectId || subj == null) return;
-    setEntries((prev) => [
-      ...prev,
-      {
-        id: `e-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    if (isStudentMode) {
+      setEntries((prev) => [
+        ...prev,
+        {
+          id: `e-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          gradeLevel: addForm.gradeLevel,
+          subjectId: addForm.subjectId,
+          subjectName: subj.name,
+          dayOfWeek: addForm.dayOfWeek,
+          hour: addForm.hour,
+          topic: addForm.topic || undefined,
+        },
+      ]);
+      closeAddModal();
+      return;
+    }
+    if (!token) return;
+    try {
+      const payload = {
+        scope,
         gradeLevel: addForm.gradeLevel,
         subjectId: addForm.subjectId,
-        subjectName: subj.name,
+        studentId: scope === 'student' ? studentId || undefined : undefined,
         dayOfWeek: addForm.dayOfWeek,
         hour: addForm.hour,
+        subjectName: subj.name,
         topic: addForm.topic || undefined,
-      },
-    ]);
-    closeAddModal();
+      };
+      const created = await createTeacherLessonScheduleEntry(token, payload);
+      setEntries((prev) => [...prev, { ...created, topic: created.topic }]);
+      closeAddModal();
+    } catch {
+      // Hata durumunda sessiz kal veya toast
+    }
   };
 
   const openEditModal = (entry: ScheduleEntry) => {
@@ -187,29 +244,60 @@ export function LessonScheduleTab({
     setEditingEntryId(null);
   };
 
-  const handleUpdateEntry = () => {
+  const handleUpdateEntry = async () => {
     const subj = modalSubjects.find((s) => s.id === addForm.subjectId);
     if (!editingEntryId || !addForm.gradeLevel || !addForm.subjectId || subj == null) return;
-    setEntries((prev) =>
-      prev.map((e) =>
-        e.id === editingEntryId
-          ? {
-              ...e,
-              gradeLevel: addForm.gradeLevel,
-              subjectId: addForm.subjectId,
-              subjectName: subj.name,
-              dayOfWeek: addForm.dayOfWeek,
-              hour: addForm.hour,
-              topic: addForm.topic || undefined,
-            }
-          : e
-      )
-    );
-    closeEditModal();
+    if (isStudentMode) {
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === editingEntryId
+            ? {
+                ...e,
+                gradeLevel: addForm.gradeLevel,
+                subjectId: addForm.subjectId,
+                subjectName: subj.name,
+                dayOfWeek: addForm.dayOfWeek,
+                hour: addForm.hour,
+                topic: addForm.topic || undefined,
+              }
+            : e
+        )
+      );
+      closeEditModal();
+      return;
+    }
+    if (!token) return;
+    try {
+      const updated = await updateTeacherLessonScheduleEntry(token, editingEntryId, {
+        gradeLevel: addForm.gradeLevel,
+        subjectId: addForm.subjectId,
+        subjectName: subj.name,
+        dayOfWeek: addForm.dayOfWeek,
+        hour: addForm.hour,
+        topic: addForm.topic || undefined,
+      });
+      setEntries((prev) =>
+        prev.map((e) => (e.id === editingEntryId ? { ...updated, topic: updated.topic } : e))
+      );
+      closeEditModal();
+    } catch {
+      // Hata durumunda sessiz kal
+    }
   };
 
-  const handleDeleteEntry = (id: string) => {
-    if (window.confirm('Bu ders saatini silmek istediğinize emin misiniz?')) setEntries((prev) => prev.filter((e) => e.id !== id));
+  const handleDeleteEntry = async (id: string) => {
+    if (!window.confirm('Bu ders saatini silmek istediğinize emin misiniz?')) return;
+    if (isStudentMode) {
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+      return;
+    }
+    if (!token) return;
+    try {
+      await deleteTeacherLessonScheduleEntry(token, id);
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+    } catch {
+      // Hata durumunda sessiz kal
+    }
   };
 
   const sortedEntriesForList = useMemo(() => {
@@ -230,81 +318,141 @@ export function LessonScheduleTab({
     return list;
   }, [entries, gradeLevel, subjectId]);
 
-  const handleInlineSave = () => {
+  const handleInlineSave = async () => {
     if (!editingSlot) return;
-    const name = editingSubjectName.trim();
-    if (!name) {
-      // Boş bırakılırsa kaydetme
-      setEditingSlot(null);
-      return;
-    }
     const { hour, dayIndex } = editingSlot;
     const g = gradeLevel || grades[0] || '';
-    setEntries((prev) => {
-      const idx = prev.findIndex(
-        (e) => e.gradeLevel === g && e.hour === hour && e.dayOfWeek === dayIndex,
-      );
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = {
-          ...copy[idx],
-          subjectName: name,
-        };
-        return copy;
+    const existing = entries.find(
+      (e) => e.gradeLevel === g && e.hour === hour && e.dayOfWeek === dayIndex,
+    );
+    const name = editingSubjectName.trim();
+
+    // İçerik tamamen silinip Enter'a basıldığında slot'ı boş bırak
+    if (!name) {
+      if (isStudentMode && existing) {
+        // Öğrenci panelinde sadece local state'ten giriş silinir
+        setEntries((prev) =>
+          prev.filter(
+            (e) =>
+              !(
+                e.gradeLevel === g &&
+                e.hour === hour &&
+                e.dayOfWeek === dayIndex
+              ),
+          ),
+        );
       }
-      const id = `e-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      return [
-        ...prev,
-        {
-          id,
+      setEditingSlot(null);
+      setEditingSubjectName('');
+      return;
+    }
+
+    if (isStudentMode) {
+      setEntries((prev) => {
+        const idx = prev.findIndex((e) => e.gradeLevel === g && e.hour === hour && e.dayOfWeek === dayIndex);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = { ...copy[idx], subjectName: name };
+          return copy;
+        }
+        return [
+          ...prev,
+          {
+            id: `e-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            gradeLevel: g,
+            subjectId: '',
+            subjectName: name,
+            dayOfWeek: dayIndex,
+            hour,
+            topic: undefined,
+          },
+        ];
+      });
+      setEditingSlot(null);
+      setEditingSubjectName('');
+      return;
+    }
+    if (!token) return;
+    try {
+      if (existing) {
+        const updated = await updateTeacherLessonScheduleEntry(token, existing.id, { subjectName: name });
+        setEntries((prev) => prev.map((e) => (e.id === existing.id ? { ...updated, topic: updated.topic } : e)));
+      } else {
+        const payload = {
+          scope,
           gradeLevel: g,
           subjectId: '',
-          subjectName: name,
+          studentId: scope === 'student' ? studentId || undefined : undefined,
           dayOfWeek: dayIndex,
           hour,
-          topic: undefined,
-        },
-      ];
-    });
+          subjectName: name,
+        };
+        const created = await createTeacherLessonScheduleEntry(token, payload);
+        setEntries((prev) => [...prev, { ...created, topic: created.topic }]);
+      }
+    } catch {
+      // Hata sessiz
+    }
     setEditingSlot(null);
     setEditingSubjectName('');
   };
 
-  const handleInlineTopicSave = () => {
+  const handleInlineTopicSave = async () => {
     if (!editingTopicSlot) return;
     const value = editingTopicValue.trim();
     const { hour, dayIndex } = editingTopicSlot;
     const g = gradeLevel || grades[0] || '';
-    setEntries((prev) => {
-      const idx = prev.findIndex(
-        (e) =>
-          e.gradeLevel === g &&
-          e.hour === hour &&
-          e.dayOfWeek === dayIndex,
-      );
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = {
-          ...copy[idx],
-          topic: value || undefined,
-        };
-        return copy;
-      }
-      if (!value) return prev;
-      const id = `e-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      return [
-        ...prev,
-        {
-          id,
+    const existing = entries.find(
+      (e) => e.gradeLevel === g && e.hour === hour && e.dayOfWeek === dayIndex,
+    );
+    if (isStudentMode) {
+      setEntries((prev) => {
+        const idx = prev.findIndex((e) => e.gradeLevel === g && e.hour === hour && e.dayOfWeek === dayIndex);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = { ...copy[idx], topic: value || undefined };
+          return copy;
+        }
+        if (!value) return prev;
+        return [
+          ...prev,
+          {
+            id: `e-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            gradeLevel: g,
+            subjectId: '',
+            subjectName: '',
+            dayOfWeek: dayIndex,
+            hour,
+            topic: value,
+          },
+        ];
+      });
+      setEditingTopicSlot(null);
+      setEditingTopicValue('');
+      return;
+    }
+    if (!token) return;
+    try {
+      if (existing) {
+        const updated = await updateTeacherLessonScheduleEntry(token, existing.id, { topic: value || undefined });
+        setEntries((prev) => prev.map((e) => (e.id === existing.id ? { ...updated, topic: updated.topic } : e)));
+      } else if (value) {
+        const payload = {
+          scope,
           gradeLevel: g,
           subjectId: '',
-          subjectName: '',
+          studentId: scope === 'student' ? studentId || undefined : undefined,
           dayOfWeek: dayIndex,
           hour,
+          subjectName: '-',
           topic: value,
-        },
-      ];
-    });
+        };
+        const created = await createTeacherLessonScheduleEntry(token, payload);
+        setEntries((prev) => [...prev, { ...created, topic: created.topic }]);
+      }
+    } catch {
+      // Hata sessiz
+    }
     setEditingTopicSlot(null);
     setEditingTopicValue('');
   };
@@ -327,6 +475,39 @@ export function LessonScheduleTab({
       newDayIndex = Math.max(0, currentDayIndex - 1);
     } else if (direction === 'right') {
       newDayIndex = Math.min(WEEKDAYS.length - 1, currentDayIndex + 1);
+    }
+
+    const newHour = HOURS[newHourIndex];
+    setEditingSlot({ hour: newHour, dayIndex: newDayIndex });
+    const g = gradeLevel || grades[0] || '';
+    const existing = entries.find(
+      (e) =>
+        e.gradeLevel === g &&
+        e.hour === newHour &&
+        e.dayOfWeek === newDayIndex,
+    );
+    setEditingSubjectName(existing?.subjectName ?? '');
+  };
+
+  // Haftalık görünüm için imleç hareketi (günler satır, saatler sütun)
+  const moveInlineCursorWeekly = (
+    direction: 'up' | 'down' | 'left' | 'right',
+    currentHour: number,
+    currentDayIndex: number,
+  ) => {
+    const hourIndex = HOURS.indexOf(currentHour);
+    if (hourIndex === -1) return;
+    let newHourIndex = hourIndex;
+    let newDayIndex = currentDayIndex;
+
+    if (direction === 'up') {
+      newDayIndex = Math.max(0, currentDayIndex - 1);
+    } else if (direction === 'down') {
+      newDayIndex = Math.min(WEEKDAYS.length - 1, currentDayIndex + 1);
+    } else if (direction === 'left') {
+      newHourIndex = Math.max(0, hourIndex - 1);
+    } else if (direction === 'right') {
+      newHourIndex = Math.min(HOURS.length - 1, hourIndex + 1);
     }
 
     const newHour = HOURS[newHourIndex];
@@ -447,6 +628,11 @@ export function LessonScheduleTab({
 
       {/* Program içeriği alanı */}
       <GlassCard className="p-4 relative">
+        {!isStudentMode && entriesLoading && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
+            <span style={{ color: 'var(--color-text-muted)' }}>Yükleniyor...</span>
+          </div>
+        )}
         <div className="absolute top-4 right-4 left-auto" dir="ltr">
           <button
             type="button"
@@ -642,86 +828,105 @@ export function LessonScheduleTab({
             </div>
           )}
 
-          {/* Haftalık program: günler × saatler tablosu */}
+          {/* Haftalık program: sol tarafta günler, üstte saatler */}
           {period === 'weekly' && (
             <table className="w-full text-sm text-left border-collapse schedule-table">
               <thead>
                 <tr>
-                  <th className="schedule-table-hour-header">Saat</th>
-                  <th className="schedule-table-day-header">Pazartesi</th>
-                  <th className="schedule-table-day-header">Salı</th>
-                  <th className="schedule-table-day-header">Çarşamba</th>
-                  <th className="schedule-table-day-header">Perşembe</th>
-                  <th className="schedule-table-day-header">Cuma</th>
+                  <th className="schedule-table-day-header">Gün</th>
+                  {HOURS.map((hour) => (
+                    <th key={hour} className="schedule-table-hour-header">
+                      {hour}:00
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-              {HOURS.map((hour, rowIndex) => (
-                <tr key={hour} className={rowIndex % 2 === 0 ? 'schedule-table-row-even' : 'schedule-table-row-odd'}>
-                  <td className="schedule-table-hour-cell">{hour}:00</td>
-                  {WEEKDAYS.map((_, dayIndex) => {
-                    const entry = entryAt(hour, dayIndex);
-                    const isEditing =
-                      inlineAddMode &&
-                      editingSlot &&
-                      editingSlot.hour === hour &&
-                      editingSlot.dayIndex === dayIndex;
-                    return (
-                      <td key={dayIndex} className="schedule-table-cell">
-                        {isEditing ? (
-                          <input
-                            className="schedule-inline-input"
-                            value={editingSubjectName}
-                            onChange={(e) => setEditingSubjectName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleInlineSave();
-                              if (e.key === 'ArrowUp') {
-                                e.preventDefault();
-                                handleInlineSave();
-                                moveInlineCursor('up', hour, dayIndex);
+                {WEEKDAYS.map((day, dayIndex) => (
+                  <tr
+                    key={day}
+                    className={
+                      dayIndex % 2 === 0
+                        ? 'schedule-table-row-even'
+                        : 'schedule-table-row-odd'
+                    }
+                  >
+                    <td className="schedule-table-day-header">{day}</td>
+                    {HOURS.map((hour) => {
+                      const entry = entryAt(hour, dayIndex);
+                      const isEditing =
+                        inlineAddMode &&
+                        editingSlot &&
+                        editingSlot.hour === hour &&
+                        editingSlot.dayIndex === dayIndex;
+                      return (
+                        <td key={hour} className="schedule-table-cell">
+                          {isEditing ? (
+                            <input
+                              className="schedule-inline-input"
+                              value={editingSubjectName}
+                              onChange={(e) =>
+                                setEditingSubjectName(e.target.value)
                               }
-                              if (e.key === 'ArrowDown') {
-                                e.preventDefault();
-                                handleInlineSave();
-                                moveInlineCursor('down', hour, dayIndex);
-                              }
-                              if (e.key === 'ArrowLeft') {
-                                e.preventDefault();
-                                handleInlineSave();
-                                moveInlineCursor('left', hour, dayIndex);
-                              }
-                              if (e.key === 'ArrowRight') {
-                                e.preventDefault();
-                                handleInlineSave();
-                                moveInlineCursor('right', hour, dayIndex);
-                              }
-                              if (e.key === 'Escape') {
-                                setEditingSlot(null);
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleInlineSave();
+                                  // Enter ile bir sonraki hücreye geç
+                                  moveInlineCursorWeekly('right', hour, dayIndex);
+                                }
+                                if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  handleInlineSave();
+                                  moveInlineCursorWeekly('up', hour, dayIndex);
+                                }
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  handleInlineSave();
+                                  moveInlineCursorWeekly('down', hour, dayIndex);
+                                }
+                                if (e.key === 'ArrowLeft') {
+                                  e.preventDefault();
+                                  handleInlineSave();
+                                  moveInlineCursorWeekly('left', hour, dayIndex);
+                                }
+                                if (e.key === 'ArrowRight') {
+                                  e.preventDefault();
+                                  handleInlineSave();
+                                  moveInlineCursorWeekly('right', hour, dayIndex);
+                                }
+                                if (e.key === 'Escape') {
+                                  setEditingSlot(null);
+                                  setEditingSubjectName('');
+                                }
+                              }}
+                              autoFocus
+                              placeholder="Ders adı"
+                            />
+                          ) : entry ? (
+                            <span
+                              className="schedule-table-entry"
+                              title={entry.topic}
+                            >
+                              {entry.subjectName}
+                            </span>
+                          ) : (
+                            <span
+                              className="schedule-table-empty"
+                              onClick={() => {
+                                if (!inlineAddMode) return;
+                                setEditingSlot({ hour, dayIndex });
                                 setEditingSubjectName('');
-                              }
-                            }}
-                            autoFocus
-                            placeholder="Ders adı"
-                          />
-                        ) : entry ? (
-                          <span className="schedule-table-entry" title={entry.topic}>{entry.subjectName}</span>
-                        ) : (
-                          <span
-                            className="schedule-table-empty"
-                            onClick={() => {
-                              if (!inlineAddMode) return;
-                              setEditingSlot({ hour, dayIndex });
-                              setEditingSubjectName('');
-                            }}
-                          >
-                            —
-                          </span>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                              }}
+                            >
+                              —
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -1014,7 +1219,7 @@ export function LessonScheduleTab({
       {/* Düzenleme modal */}
       {editModalOpen && (
         <div className="schedule-modal-overlay" onClick={closeEditModal}>
-          <div className="schedule-modal" onClick={(e) => e.stopPropagation()}>
+          <div ref={editModalRef} className="schedule-modal" onClick={(e) => e.stopPropagation()}>
             <div className="schedule-modal-header">
               <h3 className="schedule-modal-title">Ders saatini düzenle</h3>
               <button type="button" onClick={closeEditModal} className="schedule-modal-close" aria-label="Kapat">

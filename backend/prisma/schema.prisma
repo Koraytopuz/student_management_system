@@ -143,12 +143,12 @@ enum AlertStatus {
 }
 
 enum BloomLevel {
-  hatirlama       // Knowledge - Remembering
-  anlama          // Comprehension - Understanding
-  uygulama        // Application - Applying
-  analiz          // Analysis - Analyzing
-  degerlendirme   // Evaluation - Evaluating
-  yaratma         // Synthesis - Creating
+  hatirlama // Knowledge - Remembering
+  anlama // Comprehension - Understanding
+  uygulama // Application - Applying
+  analiz // Analysis - Analyzing
+  degerlendirme // Evaluation - Evaluating
+  yaratma // Synthesis - Creating
 }
 
 enum QuestionSource {
@@ -196,57 +196,60 @@ enum BadgeCategory {
 }
 
 model User {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   name         String
   email        String
   role         UserRole
-  passwordHash String   @map("password_hash")
-  createdAt    DateTime @default(now())
+  passwordHash String    @map("password_hash")
+  createdAt    DateTime  @default(now())
   lastSeenAt   DateTime? @map("last_seen_at")
 
   // Teacher-specific
-  subjectAreas String[] @default([]) @map("subject_areas")
+  subjectAreas  String[] @default([]) @map("subject_areas")
   /// Öğretmenin yetkili olduğu sınıflar (örn. "4", "5", ..., "12")
   teacherGrades String[] @default([]) @map("teacher_grades")
 
   // Student-specific
-  gradeLevel  String? @map("grade_level")
-  classId     String? @map("class_id")
-  parentPhone String? @map("parent_phone")
+  gradeLevel        String? @map("grade_level")
+  classId           String? @map("class_id")
+  parentPhone       String? @map("parent_phone")
   profilePictureUrl String? @map("profile_picture_url")
 
   // Relations
-  classGroupsAsTeacher  ClassGroup[]         @relation("ClassGroupTeacher")
-  classGroupStudents    ClassGroupStudent[]
-  parentStudents        ParentStudent[]      @relation("ParentStudents")
-  parentOfStudents      ParentStudent[]      @relation("ParentOfStudents")
-  contentStudents       ContentStudent[]
-  assignmentStudents    AssignmentStudent[]
-  watchRecords          WatchRecord[]
-  meetingStudents       MeetingStudent[]
-  meetingParents        MeetingParent[]
-  meetingAttendances    MeetingAttendance[]
-  assignmentsCreated    Assignment[]         @relation("AssignmentCreatedByTeacher")
+  classGroupsAsTeacher      ClassGroup[]        @relation("ClassGroupTeacher")
+  classGroupStudents        ClassGroupStudent[]
+  parentStudents            ParentStudent[]     @relation("ParentStudents")
+  parentOfStudents          ParentStudent[]     @relation("ParentOfStudents")
+  contentStudents           ContentStudent[]
+  assignmentStudents        AssignmentStudent[]
+  watchRecords              WatchRecord[]
+  meetingStudents           MeetingStudent[]
+  meetingParents            MeetingParent[]
+  meetingAttendances        MeetingAttendance[]
+  classAttendancesAsTeacher ClassAttendance[]   @relation("ClassAttendanceTeacher")
+  assignmentsCreated        Assignment[]        @relation("AssignmentCreatedByTeacher")
 
-  testAssetsCreated      TestAsset[]         @relation("TestAssetTeacher")
-  helpRequestsAsStudent  HelpRequest[]       @relation("HelpRequestStudent")
-  helpRequestsAsTeacher  HelpRequest[]       @relation("HelpRequestTeacher")
-  helpResponsesAsTeacher HelpResponse[]      @relation("HelpResponseTeacher")
-  complaintsCreated      Complaint[]         @relation("ComplaintFromUser")
-  complaintsAboutTeacher Complaint[]         @relation("ComplaintAboutTeacher")
-  coachingSessionsAsStudent CoachingSession[] @relation("CoachingSessionsStudent")
-  coachingSessionsAsTeacher CoachingSession[] @relation("CoachingSessionsTeacher")
-  coachingGoalsAsStudent   CoachingGoal[]     @relation("CoachingGoalsStudent")
-  coachingGoalsAsCoach     CoachingGoal[]     @relation("CoachingGoalsCoach")
-  coachingNotesAsStudent   CoachingNote[]     @relation("CoachingNotesStudent")
-  coachingNotesAsCoach     CoachingNote[]     @relation("CoachingNotesCoach")
-  studentBadges            StudentBadge[]
-  focusSessions            StudentFocusSession[]
+  testAssetsCreated              TestAsset[]           @relation("TestAssetTeacher")
+  helpRequestsAsStudent          HelpRequest[]         @relation("HelpRequestStudent")
+  helpRequestsAsTeacher          HelpRequest[]         @relation("HelpRequestTeacher")
+  helpResponsesAsTeacher         HelpResponse[]        @relation("HelpResponseTeacher")
+  complaintsCreated              Complaint[]           @relation("ComplaintFromUser")
+  complaintsAboutTeacher         Complaint[]           @relation("ComplaintAboutTeacher")
+  coachingSessionsAsStudent      CoachingSession[]     @relation("CoachingSessionsStudent")
+  coachingSessionsAsTeacher      CoachingSession[]     @relation("CoachingSessionsTeacher")
+  coachingGoalsAsStudent         CoachingGoal[]        @relation("CoachingGoalsStudent")
+  coachingGoalsAsCoach           CoachingGoal[]        @relation("CoachingGoalsCoach")
+  coachingNotesAsStudent         CoachingNote[]        @relation("CoachingNotesStudent")
+  coachingNotesAsCoach           CoachingNote[]        @relation("CoachingNotesCoach")
+  studentBadges                  StudentBadge[]
+  focusSessions                  StudentFocusSession[]
   /// Bireysel öğrenci ödevleri – öğrenci rolü için
-  homeworksAsStudent       Homework[]         @relation("HomeworkStudent")
+  homeworksAsStudent             Homework[]            @relation("HomeworkStudent")
   /// Bireysel öğrenci ödevleri – öğretmen rolü için
-  homeworksAsTeacher       Homework[]         @relation("HomeworkTeacher")
-  examResults              ExamResult[]
+  homeworksAsTeacher             Homework[]            @relation("HomeworkTeacher")
+  examResults                    ExamResult[]
+  lessonScheduleEntriesAsTeacher LessonScheduleEntry[]
+  classAttendances               ClassAttendance[]     @relation("ClassAttendanceStudent")
 
   @@unique([email, role])
   @@map("users")
@@ -280,8 +283,9 @@ model Subject {
 model ClassGroup {
   id         String      @id @default(cuid())
   name       String
-  gradeLevel String      @map("grade_level")  // "4", "5", ..., "12", "MEZUN"
+  gradeLevel String      @map("grade_level") // "4", "5", ..., "12", "MEZUN"
   stream     StreamType? // Sadece 11, 12, MEZUN için
+  section    String?     @map("section") // Şube: "A", "B", "C", "D"...
   teacherId  String      @map("teacher_id")
 
   teacher         User                @relation("ClassGroupTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
@@ -289,6 +293,7 @@ model ClassGroup {
   assignments     Assignment[]
   contentGroups   ContentClassGroup[]
   examAssignments ExamAssignment[]
+  attendances     ClassAttendance[]
 
   @@map("class_groups")
 }
@@ -316,20 +321,20 @@ model ContentItem {
   url             String
   createdAt       DateTime    @default(now())
 
-  subject        Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  classGroups    ContentClassGroup[]
-  students       ContentStudent[]
-  watchRecords   WatchRecord[]
-  assignments    Assignment[]
+  subject      Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classGroups  ContentClassGroup[]
+  students     ContentStudent[]
+  watchRecords WatchRecord[]
+  assignments  Assignment[]
 
   @@map("contents")
 }
 
 model ContentClassGroup {
-  contentId   String
+  contentId    String
   classGroupId String
-  content    ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  classGroup ClassGroup  @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+  content      ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  classGroup   ClassGroup  @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
 
   @@id([contentId, classGroupId])
   @@map("content_class_groups")
@@ -346,14 +351,14 @@ model ContentStudent {
 }
 
 model Test {
-  id                  String   @id @default(cuid())
-  title               String
-  subjectId           String   @map("subject_id")
-  topic               String
-  createdByTeacherId  String   @map("created_by_teacher_id")
-  createdAt           DateTime @default(now())
+  id                 String   @id @default(cuid())
+  title              String
+  subjectId          String   @map("subject_id")
+  topic              String
+  createdByTeacherId String   @map("created_by_teacher_id")
+  createdAt          DateTime @default(now())
 
-  subject     Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subject     Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   questions   Question[]
   assignments Assignment[]
   testResults TestResult[]
@@ -365,43 +370,44 @@ model Question {
   id                  String       @id @default(cuid())
   testId              String       @map("test_id")
   text                String
+  imageUrl            String?      @map("image_url")
   type                QuestionType
-  choices             Json?        // string[]
+  choices             Json? // string[]
   correctAnswer       String?      @map("correct_answer")
   solutionExplanation String?      @map("solution_explanation")
   topic               String
-  difficulty          String       // easy | medium | hard
+  difficulty          String // easy | medium | hard
   orderIndex          Int          @default(0) @map("order_index")
 
-  test        Test          @relation(fields: [testId], references: [id], onDelete: Cascade)
-  testResults TestResultAnswer[]
+  test         Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
+  testResults  TestResultAnswer[]
   helpRequests HelpRequest[]
 
   @@map("questions")
 }
 
 model Assignment {
-  id          String    @id @default(cuid())
-  title       String
-  description String?
-  testId      String?   @map("test_id")
-  contentId   String?   @map("content_id")
-  testAssetId String?   @map("test_asset_id")
-  classId     String?   @map("class_id")
-  dueDate     DateTime  @map("due_date")
-  points      Int       @default(100)
-  timeLimitMinutes Int? @map("time_limit_minutes")
-  createdByTeacherId String? @map("created_by_teacher_id")
-  createdAt   DateTime  @default(now())
+  id                 String   @id @default(cuid())
+  title              String
+  description        String?
+  testId             String?  @map("test_id")
+  contentId          String?  @map("content_id")
+  testAssetId        String?  @map("test_asset_id")
+  classId            String?  @map("class_id")
+  dueDate            DateTime @map("due_date")
+  points             Int      @default(100)
+  timeLimitMinutes   Int?     @map("time_limit_minutes")
+  createdByTeacherId String?  @map("created_by_teacher_id")
+  createdAt          DateTime @default(now())
 
-  test       Test?           @relation(fields: [testId], references: [id], onDelete: SetNull)
-  content    ContentItem?    @relation(fields: [contentId], references: [id], onDelete: SetNull)
-  testAsset  TestAsset?      @relation(fields: [testAssetId], references: [id], onDelete: SetNull)
-  classGroup ClassGroup?     @relation(fields: [classId], references: [id], onDelete: SetNull)
-  createdByTeacher User?     @relation("AssignmentCreatedByTeacher", fields: [createdByTeacherId], references: [id], onDelete: SetNull)
-  students   AssignmentStudent[]
-  testResults TestResult[]
-  helpRequests HelpRequest[]
+  test             Test?               @relation(fields: [testId], references: [id], onDelete: SetNull)
+  content          ContentItem?        @relation(fields: [contentId], references: [id], onDelete: SetNull)
+  testAsset        TestAsset?          @relation(fields: [testAssetId], references: [id], onDelete: SetNull)
+  classGroup       ClassGroup?         @relation(fields: [classId], references: [id], onDelete: SetNull)
+  createdByTeacher User?               @relation("AssignmentCreatedByTeacher", fields: [createdByTeacherId], references: [id], onDelete: SetNull)
+  students         AssignmentStudent[]
+  testResults      TestResult[]
+  helpRequests     HelpRequest[]
 
   @@map("assignments")
 }
@@ -419,8 +425,8 @@ model TestAsset {
   answerKeyJson String?  @map("answer_key_json")
   createdAt     DateTime @default(now())
 
-  teacher   User     @relation("TestAssetTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
-  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher     User         @relation("TestAssetTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  subject     Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   assignments Assignment[]
 
   @@map("test_assets")
@@ -436,14 +442,14 @@ model HelpRequest {
   imageUrl      String?           @map("image_url")
   message       String?
   status        HelpRequestStatus @default(open)
-  createdAt   DateTime          @default(now())
-  resolvedAt  DateTime?         @map("resolved_at")
+  createdAt     DateTime          @default(now())
+  resolvedAt    DateTime?         @map("resolved_at")
 
-  student     User              @relation("HelpRequestStudent", fields: [studentId], references: [id], onDelete: Cascade)
-  teacher     User              @relation("HelpRequestTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
-  assignment  Assignment?       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  question    Question?         @relation(fields: [questionId], references: [id], onDelete: SetNull)
-  response    HelpResponse?
+  student    User          @relation("HelpRequestStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  teacher    User          @relation("HelpRequestTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  assignment Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  question   Question?     @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  response   HelpResponse?
 
   @@index([teacherId, status, createdAt])
   @@index([studentId, status, createdAt])
@@ -460,8 +466,8 @@ model HelpResponse {
   createdAt     DateTime         @default(now())
   playedAt      DateTime?        @map("played_at")
 
-  helpRequest   HelpRequest      @relation(fields: [helpRequestId], references: [id], onDelete: Cascade)
-  teacher       User             @relation("HelpResponseTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  helpRequest HelpRequest @relation(fields: [helpRequestId], references: [id], onDelete: Cascade)
+  teacher     User        @relation("HelpResponseTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
 
   @@map("help_responses")
 }
@@ -478,8 +484,8 @@ model Complaint {
   reviewedAt     DateTime?         @map("reviewed_at")
   closedAt       DateTime?         @map("closed_at")
 
-  fromUser       User              @relation("ComplaintFromUser", fields: [fromUserId], references: [id], onDelete: Cascade)
-  aboutTeacher   User?             @relation("ComplaintAboutTeacher", fields: [aboutTeacherId], references: [id], onDelete: SetNull)
+  fromUser     User  @relation("ComplaintFromUser", fields: [fromUserId], references: [id], onDelete: Cascade)
+  aboutTeacher User? @relation("ComplaintAboutTeacher", fields: [aboutTeacherId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@map("complaints")
@@ -491,40 +497,40 @@ model AssignmentStudent {
   status               AssignmentStatus @default(pending)
   completedAt          DateTime?        @map("completed_at")
   submittedInLiveClass Boolean          @default(false) @map("submitted_in_live_class")
-  
-  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  student      User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student    User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@id([assignmentId, studentId])
   @@map("assignment_students")
 }
 
 model TestResult {
-  id             String   @id @default(cuid())
-  assignmentId   String   @map("assignment_id")
-  studentId      String   @map("student_id")
-  testId         String   @map("test_id")
-  correctCount   Int      @map("correct_count")
-  incorrectCount Int      @map("incorrect_count")
-  blankCount     Int      @map("blank_count")
-  scorePercent   Float    @map("score_percent")
-  durationSeconds Int     @map("duration_seconds")
-  completedAt    DateTime @map("completed_at")
-  createdAt      DateTime @default(now())
+  id              String   @id @default(cuid())
+  assignmentId    String   @map("assignment_id")
+  studentId       String   @map("student_id")
+  testId          String   @map("test_id")
+  correctCount    Int      @map("correct_count")
+  incorrectCount  Int      @map("incorrect_count")
+  blankCount      Int      @map("blank_count")
+  scorePercent    Float    @map("score_percent")
+  durationSeconds Int      @map("duration_seconds")
+  completedAt     DateTime @map("completed_at")
+  createdAt       DateTime @default(now())
 
-  assignment Assignment           @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  test       Test                 @relation(fields: [testId], references: [id], onDelete: Cascade)
+  assignment Assignment         @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  test       Test               @relation(fields: [testId], references: [id], onDelete: Cascade)
   answers    TestResultAnswer[]
 
   @@map("test_results")
 }
 
 model TestResultAnswer {
-  id           String   @id @default(cuid())
-  testResultId String   @map("test_result_id")
-  questionId   String   @map("question_id")
-  answer       String
-  isCorrect    Boolean  @map("is_correct")
+  id                  String  @id @default(cuid())
+  testResultId        String  @map("test_result_id")
+  questionId          String  @map("question_id")
+  answer              String
+  isCorrect           Boolean @map("is_correct")
   scratchpadImageData String? @map("scratchpad_image_data")
 
   testResult TestResult @relation(fields: [testResultId], references: [id], onDelete: Cascade)
@@ -535,12 +541,12 @@ model TestResultAnswer {
 }
 
 model WatchRecord {
-  id            String   @id @default(cuid())
-  contentId     String   @map("content_id")
-  studentId     String   @map("student_id")
-  watchedSeconds Int     @map("watched_seconds")
-  completed     Boolean  @default(false)
-  lastWatchedAt DateTime @map("last_watched_at")
+  id             String   @id @default(cuid())
+  contentId      String   @map("content_id")
+  studentId      String   @map("student_id")
+  watchedSeconds Int      @map("watched_seconds")
+  completed      Boolean  @default(false)
+  lastWatchedAt  DateTime @map("last_watched_at")
 
   content ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
   student User        @relation(fields: [studentId], references: [id], onDelete: Cascade)
@@ -550,32 +556,32 @@ model WatchRecord {
 }
 
 model Meeting {
-  id               String     @id @default(cuid())
-  type             MeetingType
-  title            String
-  teacherId        String     @map("teacher_id")
-  scheduledAt      DateTime   @map("scheduled_at")
-  durationMinutes  Int        @map("duration_minutes")
-  meetingUrl       String     @map("meeting_url")
+  id                 String      @id @default(cuid())
+  type               MeetingType
+  title              String
+  teacherId          String      @map("teacher_id")
+  scheduledAt        DateTime    @map("scheduled_at")
+  durationMinutes    Int         @map("duration_minutes")
+  meetingUrl         String      @map("meeting_url")
   /// Canlı dersin hedef sınıf seviyesi (örn. "4", "5", ..., "12")
-  targetGrade      String?    @map("target_grade")
+  targetGrade        String?     @map("target_grade")
   /// Canlı ders sağlayıcısı (ör. internal_webrtc, zoom, meet)
-  provider         String?    @default("internal_webrtc")
+  provider           String?     @default("internal_webrtc")
   /// Katılım modu: platform içi oda mı, harici link mi
-  joinMode         String?    @default("internal")
+  joinMode           String?     @default("internal")
   /// Canlı ders odası kimliği (örn. LiveKit room)
-  roomId           String?
+  roomId             String?
   /// Kayıt URL'i (LiveKit Egress ile üretilir)
-  recordingUrl     String?    @map("recording_url")
+  recordingUrl       String?     @map("recording_url")
   /// Kayıt başlangıç zamanı
-  recordingStartedAt DateTime? @map("recording_started_at")
+  recordingStartedAt DateTime?   @map("recording_started_at")
   /// Kayıt bitiş zamanı
-  recordingEndedAt   DateTime? @map("recording_ended_at")
-  createdAt        DateTime   @default(now())
+  recordingEndedAt   DateTime?   @map("recording_ended_at")
+  createdAt          DateTime    @default(now())
 
-  students     MeetingStudent[]
-  parents      MeetingParent[]
-  attendances  MeetingAttendance[]
+  students         MeetingStudent[]
+  parents          MeetingParent[]
+  attendances      MeetingAttendance[]
   coachingSessions CoachingSession[]
 
   @@map("meetings")
@@ -617,190 +623,213 @@ model MeetingAttendance {
   @@map("meeting_attendances")
 }
 
+/// Sınıf bazlı devamsızlık kaydı – öğretmen normal derslerde yoklama aldığında oluşturulur
+model ClassAttendance {
+  id           String   @id @default(cuid())
+  teacherId    String   @map("teacher_id")
+  classGroupId String   @map("class_group_id")
+  studentId    String   @map("student_id")
+  date         DateTime // Yoklama tarihi
+  present      Boolean  @default(true) // Geldi/Gelmedi
+  notes        String? // İsteğe bağlı not
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  teacher    User       @relation("ClassAttendanceTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  classGroup ClassGroup @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
+  student    User       @relation("ClassAttendanceStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([classGroupId, studentId, date], name: "classGroupId_studentId_date")
+  @@index([teacherId, date])
+  @@index([studentId, date])
+  @@index([classGroupId, date])
+  @@map("class_attendances")
+}
+
 model Message {
-  id         String   @id @default(cuid())
-  fromUserId String   @map("from_user_id")
-  toUserId   String   @map("to_user_id")
-  studentId  String?  @map("student_id")
-  subject    String?
-  text       String
-  attachments Json?   // array of { id, fileName, fileType, fileSize, url }
-  read       Boolean  @default(false)
-  readAt     DateTime? @map("read_at")
-  createdAt  DateTime @default(now())
+  id          String    @id @default(cuid())
+  fromUserId  String    @map("from_user_id")
+  toUserId    String    @map("to_user_id")
+  studentId   String?   @map("student_id")
+  subject     String?
+  text        String
+  attachments Json? // array of { id, fileName, fileType, fileSize, url }
+  read        Boolean   @default(false)
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime  @default(now())
 
   @@map("messages")
 }
 
 model Notification {
-  id                String            @id @default(cuid())
-  userId            String            @map("user_id")
+  id                String             @id @default(cuid())
+  userId            String             @map("user_id")
   type              NotificationType
   title             String
   body              String
-  read              Boolean           @default(false)
+  read              Boolean            @default(false)
   relatedEntityType RelatedEntityType? @map("related_entity_type")
-  relatedEntityId   String?           @map("related_entity_id")
-  readAt            DateTime?         @map("read_at")
-  createdAt         DateTime          @default(now())
+  relatedEntityId   String?            @map("related_entity_id")
+  readAt            DateTime?          @map("read_at")
+  createdAt         DateTime           @default(now())
 
   @@map("notifications")
 }
 
 model TodoItem {
-  id                    String        @id @default(cuid())
-  studentId             String        @map("student_id")
-  title                 String
-  description           String?
-  status                TodoStatus    @default(pending)
-  priority              TodoPriority  @default(medium)
-  plannedDate           DateTime?     @map("planned_date")
-  completedAt           DateTime?     @map("completed_at")
-  relatedAssignmentId   String?       @map("related_assignment_id")
-  relatedContentId      String?       @map("related_content_id")
-  createdAt             DateTime      @default(now())
+  id                  String       @id @default(cuid())
+  studentId           String       @map("student_id")
+  title               String
+  description         String?
+  status              TodoStatus   @default(pending)
+  priority            TodoPriority @default(medium)
+  plannedDate         DateTime?    @map("planned_date")
+  completedAt         DateTime?    @map("completed_at")
+  relatedAssignmentId String?      @map("related_assignment_id")
+  relatedContentId    String?      @map("related_content_id")
+  createdAt           DateTime     @default(now())
 
   @@map("todos")
 }
 
 model Goal {
-  id          String    @id @default(cuid())
-  studentId   String    @map("student_id")
+  id          String     @id @default(cuid())
+  studentId   String     @map("student_id")
   type        GoalType
-  targetValue Int       @map("target_value")
+  targetValue Int        @map("target_value")
   topic       String?
-  startDate   DateTime  @map("start_date")
-  endDate     DateTime  @map("end_date")
+  startDate   DateTime   @map("start_date")
+  endDate     DateTime   @map("end_date")
   status      GoalStatus @default(active)
-  createdAt   DateTime  @default(now())
+  createdAt   DateTime   @default(now())
 
   @@map("goals")
 }
 
 model ParentGoal {
-  id                String    @id @default(cuid())
-  studentId         String    @map("student_id")
-  createdByParentId String    @map("created_by_parent_id")
+  id                String     @id @default(cuid())
+  studentId         String     @map("student_id")
+  createdByParentId String     @map("created_by_parent_id")
   type              GoalType
-  targetValue       Int       @map("target_value")
+  targetValue       Int        @map("target_value")
   topic             String?
-  startDate         DateTime  @map("start_date")
-  endDate           DateTime  @map("end_date")
+  startDate         DateTime   @map("start_date")
+  endDate           DateTime   @map("end_date")
   status            GoalStatus @default(active)
   reward            String?
-  completedAt       DateTime? @map("completed_at")
-  createdAt         DateTime  @default(now())
+  completedAt       DateTime?  @map("completed_at")
+  createdAt         DateTime   @default(now())
 
   @@map("parent_goals")
 }
 
 model TeacherAnnouncement {
-  id            String                   @id @default(cuid())
-  teacherId     String                   @map("teacher_id")
+  id            String                    @id @default(cuid())
+  teacherId     String                    @map("teacher_id")
   title         String
   message       String
   status        TeacherAnnouncementStatus @default(draft)
-  scheduledDate DateTime?                @map("scheduled_date")
-  createdAt     DateTime                 @default(now())
+  scheduledDate DateTime?                 @map("scheduled_date")
+  createdAt     DateTime                  @default(now())
 
   @@map("teacher_announcements")
 }
 
 model TeacherFeedback {
-  id                  String   @id @default(cuid())
-  studentId           String   @map("student_id")
-  teacherId           String   @map("teacher_id")
-  teacherName         String   @map("teacher_name")
-  type                String   // test_feedback | general_feedback | performance_note
-  relatedTestId       String?  @map("related_test_id")
-  relatedAssignmentId String?  @map("related_assignment_id")
+  id                  String    @id @default(cuid())
+  studentId           String    @map("student_id")
+  teacherId           String    @map("teacher_id")
+  teacherName         String    @map("teacher_name")
+  type                String // test_feedback | general_feedback | performance_note
+  relatedTestId       String?   @map("related_test_id")
+  relatedAssignmentId String?   @map("related_assignment_id")
   title               String
   content             String
-  read                Boolean  @default(false)
+  read                Boolean   @default(false)
   readAt              DateTime? @map("read_at")
-  createdAt           DateTime @default(now())
+  createdAt           DateTime  @default(now())
 
   @@map("teacher_feedbacks")
 }
 
 model Alert {
-  id          String       @id @default(cuid())
-  studentId   String       @map("student_id")
+  id          String        @id @default(cuid())
+  studentId   String        @map("student_id")
   type        AlertType
   severity    AlertSeverity
   title       String
   description String
-  status      AlertStatus  @default(active)
-  relatedData Json?        @map("related_data")
-  resolvedAt  DateTime?    @map("resolved_at")
-  detectedAt  DateTime     @map("detected_at")
+  status      AlertStatus   @default(active)
+  relatedData Json?         @map("related_data")
+  resolvedAt  DateTime?     @map("resolved_at")
+  detectedAt  DateTime      @map("detected_at")
 
   @@map("alerts")
 }
 
 model WeeklyReport {
-  id            String   @id @default(cuid())
-  studentId     String   @map("student_id")
-  weekStartDate DateTime @map("week_start_date")
-  weekEndDate   DateTime @map("week_end_date")
-  generatedAt   DateTime @map("generated_at")
-  summary       Json
-  comparison    Json?
-  topicPerformance Json? @map("topic_performance")
-  teacherFeedback String? @map("teacher_feedback")
-  recommendations Json?
+  id               String   @id @default(cuid())
+  studentId        String   @map("student_id")
+  weekStartDate    DateTime @map("week_start_date")
+  weekEndDate      DateTime @map("week_end_date")
+  generatedAt      DateTime @map("generated_at")
+  summary          Json
+  comparison       Json?
+  topicPerformance Json?    @map("topic_performance")
+  teacherFeedback  String?  @map("teacher_feedback")
+  recommendations  Json?
 
   @@map("weekly_reports")
 }
 
 model MonthlyReport {
-  id           String   @id @default(cuid())
-  studentId    String   @map("student_id")
-  month        Int
-  year         Int
-  generatedAt  DateTime @map("generated_at")
-  summary      Json
-  weeklyBreakdown Json? @map("weekly_breakdown")
-  topicAnalysis Json?   @map("topic_analysis")
-  teacherEvaluation Json? @map("teacher_evaluation")
+  id                String   @id @default(cuid())
+  studentId         String   @map("student_id")
+  month             Int
+  year              Int
+  generatedAt       DateTime @map("generated_at")
+  summary           Json
+  weeklyBreakdown   Json?    @map("weekly_breakdown")
+  topicAnalysis     Json?    @map("topic_analysis")
+  teacherEvaluation Json?    @map("teacher_evaluation")
 
   @@map("monthly_reports")
 }
 
 model CustomReport {
-  id         String   @id @default(cuid())
-  studentId  String   @map("student_id")
-  startDate  DateTime @map("start_date")
-  endDate    DateTime @map("end_date")
-  reportType String   @map("report_type")
+  id          String   @id @default(cuid())
+  studentId   String   @map("student_id")
+  startDate   DateTime @map("start_date")
+  endDate     DateTime @map("end_date")
+  reportType  String   @map("report_type")
   generatedAt DateTime @map("generated_at")
-  status     String   // pending | completed | failed
-  data       Json?
-  error      String?
+  status      String // pending | completed | failed
+  data        Json?
+  error       String?
 
   @@map("custom_reports")
 }
 
 // Soru Bankası - Bağımsız soru havuzu
 model QuestionBank {
-  id                  String         @id @default(cuid())
-  subjectId           String         @map("subject_id")
-  gradeLevel          String         @map("grade_level")  // "4", "5", ... "12"
-  topic               String
-  subtopic            String?
-  kazanimKodu         String?        @map("kazanim_kodu")  // MEB kazanım: 11.2.1.3
-  
-  text                String         // Soru metni
+  id          String  @id @default(cuid())
+  subjectId   String  @map("subject_id")
+  gradeLevel  String  @map("grade_level") // "4", "5", ... "12"
+  topic       String
+  subtopic    String?
+  kazanimKodu String? @map("kazanim_kodu") // MEB kazanım: 11.2.1.3
+
+  text                String // Soru metni
+  imageUrl            String? @map("image_url") // Görsel URL (opsiyonel)
   type                QuestionType
-  choices             Json?          // string[] - Şıklar
-  correctAnswer       String         @map("correct_answer")
-  distractorReasons   Json?          @map("distractor_reasons") // Çeldiricilerin neden yanlış olduğu
-  solutionExplanation String?        @map("solution_explanation")
-  
-  difficulty          String         // easy | medium | hard
-  bloomLevel          BloomLevel?    @map("bloom_level")
-  estimatedMinutes    Int?           @map("estimated_minutes")
-  
+  choices             Json? // string[] - Şıklar
+  correctAnswer       String       @map("correct_answer")
+  distractorReasons   Json?        @map("distractor_reasons") // Çeldiricilerin neden yanlış olduğu
+  solutionExplanation String?      @map("solution_explanation")
+
+  difficulty       String // easy | medium | hard
+  bloomLevel       BloomLevel? @map("bloom_level")
+  estimatedMinutes Int?        @map("estimated_minutes")
+
   // Kaynak ve kalite
   source              QuestionSource @default(teacher)
   createdByTeacherId  String?        @map("created_by_teacher_id")
@@ -808,12 +837,12 @@ model QuestionBank {
   approvedByTeacherId String?        @map("approved_by_teacher_id")
   qualityScore        Float?         @map("quality_score")
   usageCount          Int            @default(0)
-  
-  tags                String[]       @default([])
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
 
-  subject             Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  tags      String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
   @@index([subjectId, gradeLevel, topic])
   @@index([difficulty, bloomLevel])
@@ -823,16 +852,16 @@ model QuestionBank {
 
 // Konu-Kazanım Haritası (MEB Müfredatı)
 model CurriculumTopic {
-  id          String   @id @default(cuid())
-  subjectId   String   @map("subject_id")
-  gradeLevel  String   @map("grade_level")
-  unitNumber  Int      @map("unit_number")
-  topicName   String   @map("topic_name")
-  kazanimKodu String   @map("kazanim_kodu")
-  kazanimText String   @map("kazanim_text")
-  orderIndex  Int      @map("order_index")
-  
-  subject     Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  id          String @id @default(cuid())
+  subjectId   String @map("subject_id")
+  gradeLevel  String @map("grade_level")
+  unitNumber  Int    @map("unit_number")
+  topicName   String @map("topic_name")
+  kazanimKodu String @map("kazanim_kodu")
+  kazanimText String @map("kazanim_text")
+  orderIndex  Int    @map("order_index")
+
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
   @@unique([subjectId, gradeLevel, kazanimKodu])
   @@index([subjectId, gradeLevel])
@@ -840,21 +869,21 @@ model CurriculumTopic {
 }
 
 model CoachingSession {
-  id              String   @id @default(cuid())
-  studentId       String   @map("student_id")
-  teacherId       String   @map("teacher_id")
-  meetingId       String?  @map("meeting_id")
+  id              String       @id @default(cuid())
+  studentId       String       @map("student_id")
+  teacherId       String       @map("teacher_id")
+  meetingId       String?      @map("meeting_id")
   date            DateTime
-  durationMinutes Int?     @map("duration_minutes")
+  durationMinutes Int?         @map("duration_minutes")
   title           String
   notes           String
   mode            CoachingMode @default(audio)
-  meetingUrl      String?  @map("meeting_url")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  meetingUrl      String?      @map("meeting_url")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
-  student User @relation("CoachingSessionsStudent", fields: [studentId], references: [id], onDelete: Cascade)
-  teacher User @relation("CoachingSessionsTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  student User     @relation("CoachingSessionsStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  teacher User     @relation("CoachingSessionsTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
   meeting Meeting? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
 
   @@index([studentId, date])
@@ -882,12 +911,12 @@ model CoachingGoal {
 }
 
 model CoachingNote {
-  id        String                @id @default(cuid())
-  studentId String                @map("student_id")
-  coachId   String                @map("coach_id")
-  content   String
+  id         String                 @id @default(cuid())
+  studentId  String                 @map("student_id")
+  coachId    String                 @map("coach_id")
+  content    String
   visibility CoachingNoteVisibility @default(shared_with_parent)
-  date      DateTime              @default(now())
+  date       DateTime               @default(now())
 
   student User @relation("CoachingNotesStudent", fields: [studentId], references: [id], onDelete: Cascade)
   coach   User @relation("CoachingNotesCoach", fields: [coachId], references: [id], onDelete: Cascade)
@@ -912,32 +941,32 @@ model StudyPlan {
 }
 
 model BadgeDefinition {
-  id           String        @id @default(cuid())
-  code         String        @unique
-  title        String
-  description  String
-  category     BadgeCategory
-  targetValue  Int           @map("target_value")
-  metricKey    String        @map("metric_key")
-  icon         String?
-  color        String?
-  orderIndex   Int           @default(0) @map("order_index")
-  createdAt    DateTime      @default(now()) @map("created_at")
+  id          String        @id @default(cuid())
+  code        String        @unique
+  title       String
+  description String
+  category    BadgeCategory
+  targetValue Int           @map("target_value")
+  metricKey   String        @map("metric_key")
+  icon        String?
+  color       String?
+  orderIndex  Int           @default(0) @map("order_index")
+  createdAt   DateTime      @default(now()) @map("created_at")
 
-  students     StudentBadge[]
+  students StudentBadge[]
 
   @@map("badge_definitions")
 }
 
 model StudentBadge {
-  id         String   @id @default(cuid())
-  studentId  String   @map("student_id")
-  badgeId    String   @map("badge_id")
-  earnedAt   DateTime @default(now()) @map("earned_at")
+  id         String    @id @default(cuid())
+  studentId  String    @map("student_id")
+  badgeId    String    @map("badge_id")
+  earnedAt   DateTime  @default(now()) @map("earned_at")
   notifiedAt DateTime? @map("notified_at")
 
-  student  User            @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  badge    BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  student User            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  badge   BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, badgeId])
   @@map("student_badges")
@@ -967,8 +996,8 @@ model Homework {
   subjectId   String         @map("subject_id")
   createdAt   DateTime       @default(now()) @map("created_at")
 
-  student User   @relation("HomeworkStudent", fields: [studentId], references: [id], onDelete: Cascade)
-  teacher User   @relation("HomeworkTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  student User    @relation("HomeworkStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  teacher User    @relation("HomeworkTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
   subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
   @@index([studentId, dueDate])
@@ -988,7 +1017,7 @@ enum StreamType {
 enum ExamType {
   LGS
   TYT
-  AYT          // Geriye dönük uyumluluk için
+  AYT // Geriye dönük uyumluluk için
   AYT_SAY
   AYT_SOZ
   AYT_EA
@@ -1015,17 +1044,17 @@ model Exam {
 }
 
 model ExamResult {
-  id          Int     @id @default(autoincrement())
-  studentId   String  @map("student_id")
-  examId      Int     @map("exam_id")
-  totalNet    Float   @map("total_net")
-  score       Float
-  percentile  Float
-  answers     Json?   @map("answers")
+  id            Int    @id @default(autoincrement())
+  studentId     String @map("student_id")
+  examId        Int    @map("exam_id")
+  totalNet      Float  @map("total_net")
+  score         Float
+  percentile    Float
+  answers       Json?  @map("answers")
   gradingStatus String @default("graded") @map("grading_status")
 
-  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  exam    Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student User               @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  exam    Exam               @relation(fields: [examId], references: [id], onDelete: Cascade)
   details ExamResultDetail[]
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -1037,17 +1066,17 @@ model ExamResult {
 }
 
 model ExamResultDetail {
-  id            Int     @id @default(autoincrement())
-  examResultId  Int     @map("exam_result_id")
-  lessonId      String  @map("lesson_id")
-  lessonName    String  @map("lesson_name")  // "Matematik", "Fizik" vb.
-  correct       Int
-  wrong         Int
-  empty         Int
-  net           Float
+  id           Int    @id @default(autoincrement())
+  examResultId Int    @map("exam_result_id")
+  lessonId     String @map("lesson_id")
+  lessonName   String @map("lesson_name") // "Matematik", "Fizik" vb.
+  correct      Int
+  wrong        Int
+  empty        Int
+  net          Float
 
-  examResult    ExamResult       @relation(fields: [examResultId], references: [id], onDelete: Cascade)
-  lesson        Subject          @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  examResult    ExamResult      @relation(fields: [examResultId], references: [id], onDelete: Cascade)
+  lesson        Subject         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   topicAnalyses TopicAnalysis[]
 
   @@index([examResultId])
@@ -1074,7 +1103,7 @@ model TopicAnalysis {
   id                 Int           @id @default(autoincrement())
   examResultDetailId Int           @map("exam_result_detail_id")
   topicId            String        @map("topic_id")
-  topicName          String        @map("topic_name")  // "Üslü Sayılar" vb.
+  topicName          String        @map("topic_name") // "Üslü Sayılar" vb.
   totalQuestion      Int           @map("total_question")
   correct            Int
   wrong              Int
@@ -1093,10 +1122,10 @@ model TopicAnalysis {
 }
 
 model ExamAssignment {
-  id           String     @id @default(cuid())
-  examId       Int        @map("exam_id")
-  classGroupId String     @map("class_group_id")
-  assignedAt   DateTime   @default(now()) @map("assigned_at")
+  id           String   @id @default(cuid())
+  examId       Int      @map("exam_id")
+  classGroupId String   @map("class_group_id")
+  assignedAt   DateTime @default(now()) @map("assigned_at")
 
   exam       Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
   classGroup ClassGroup @relation(fields: [classGroupId], references: [id], onDelete: Cascade)
@@ -1108,15 +1137,35 @@ model ExamAssignment {
 }
 
 model RankingScale {
-  id              Int      @id @default(autoincrement())
-  year            Int      // 2024, 2025
-  examType        String   @map("exam_type") // Using String instead of enum for compatibility
-  scoreRangeMin   Float    @map("score_range_min")
-  scoreRangeMax   Float    @map("score_range_max")
-  estimatedRank   Int      @map("estimated_rank")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id            Int      @id @default(autoincrement())
+  year          Int // 2024, 2025
+  examType      String   @map("exam_type") // Using String instead of enum for compatibility
+  scoreRangeMin Float    @map("score_range_min")
+  scoreRangeMax Float    @map("score_range_max")
+  estimatedRank Int      @map("estimated_rank")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   @@unique([year, examType, scoreRangeMin, scoreRangeMax], name: "year_examType_scoreRangeMin_scoreRangeMax")
   @@index([year, examType])
   @@map("ranking_scales")
+}
+
+/// Öğretmenin oluşturduğu ders programı satırları (sınıf / ders / öğrenci kapsamında)
+model LessonScheduleEntry {
+  id          String   @id @default(cuid())
+  teacherId   String   @map("teacher_id")
+  scope       String // "class" | "subject" | "student"
+  gradeLevel  String?  @map("grade_level")
+  subjectId   String?  @map("subject_id")
+  studentId   String?  @map("student_id")
+  dayOfWeek   Int      @map("day_of_week") // 0-6 (Pzt-Paz)
+  hour        Int
+  subjectName String   @map("subject_name")
+  topic       String?  @map("topic")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  teacher User @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([teacherId, scope, gradeLevel, subjectId, studentId])
+  @@map("lesson_schedule_entries")
 }

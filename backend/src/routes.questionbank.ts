@@ -295,33 +295,88 @@ router.post(
 
         // AI prompt – görselli sorular dahil, bazı sorular görsel içermeli
         const visualQuestionCount = Math.max(1, Math.floor(data.count * 0.3)); // %30'u görselli olsun, en az 1
+
+        let typeSpecificRules = '';
+        let jsonExample = '';
+
+        if (data.questionType === 'multiple_choice') {
+            typeSpecificRules = `
+- Her soruda TAM 5 ŞIK olmalı: A, B, C, D, E.
+- "choices" dizisinde sadece şık metinleri strings olarak yer almalı (A) B) gibi ön ekler KOYMA).
+- "correctAnswer" alanı "A", "B", "C", "D" veya "E" olmalı.
+- "distractorReasons" dizisinde her yanlış şık için kısa bir açıklama olmalı.`;
+            jsonExample = `
+  {
+    "text": "Soru metni...",
+    "imageDescription": null,
+    "choices": ["Şık 1", "Şık 2", "Şık 3", "Şık 4", "Şık 5"],
+    "correctAnswer": "A",
+    "distractorReasons": ["B yanlış çünkü...", "C yanlış çünkü...", "D yanlış çünkü...", "E yanlış çünkü..."],
+    "solutionExplanation": "Çözüm açıklaması..."
+  }`;
+        } else if (data.questionType === 'true_false') {
+            typeSpecificRules = `
+- "choices" dizisi tam olarak ["Doğru", "Yanlış"] olmalı.
+- "correctAnswer" alanı "Doğru" veya "Yanlış" olmalı.
+- "distractorReasons" boş dizi [] olabilir.`;
+            jsonExample = `
+  {
+    "text": "Soru metni...",
+    "imageDescription": null,
+    "choices": ["Doğru", "Yanlış"],
+    "correctAnswer": "Doğru",
+    "distractorReasons": [],
+    "solutionExplanation": "Neden doğru olduğuna dair açıklama..."
+  }`;
+        } else if (data.questionType === 'open_ended') {
+            typeSpecificRules = `
+- Açık uçlu sorudur, ŞIK YOKTUR.
+- "choices" alanı boş dizi [] olmalı.
+- "correctAnswer" alanına örnek/beklenen cevabı yaz.
+- "distractorReasons" alanı boş dizi [] olmalı.`;
+            jsonExample = `
+  {
+    "text": "Soru metni...",
+    "imageDescription": null,
+    "choices": [],
+    "correctAnswer": "Beklenen cevap metni...",
+    "distractorReasons": [],
+    "solutionExplanation": "Çözüm açıklaması..."
+  }`;
+        }
+
         const prompt = `Sen bir Türk eğitim uzmanı ve soru yazarısın. İstediğim tam ${data.count} adet ${typeLabel} soru üret.
 
 Parametreler: Ders=${subject.name}, Sınıf=${data.gradeLevel}, Konu=${data.topic}, Zorluk=${difficultyLabel}, Bloom=${bloomLabel}.
 
-Kurallar:
+Genel Kurallar:
 - Sorular MEB müfredatına uygun, sade dil, ${data.gradeLevel}. sınıf seviyesinde olsun.
-- ${data.questionType === 'multiple_choice' ? 'Her soruda tam 5 şık: A, B, C, D, E. choices dizisinde sadece şık metinleri (A) B) ön eki olmadan) ver.' : ''}
-- Çeldiriciler yaygın öğrenci hatalarına dayansın; distractorReasons ile kısa gerekçe ver.
-- solutionExplanation tek paragraf, okunaklı ve net olsun; gereksiz tekrar veya dev cümleler yazma.
+- solutionExplanation tek paragraf, okunaklı ve net olsun.
 
-ÖNEMLİ - Görselli Sorular:
-- Toplam ${data.count} sorudan en az ${visualQuestionCount} tanesi görsel gerektiren soru olsun (grafik, şekil, tablo, diyagram).
-- Görsel gerektiren sorularda "imageDescription" alanına görselin ne göstermesi gerektiğini kısa metinle yaz (örn: "x² parabolünün tepe noktası (2,4) olan grafiği", "3x4'lük veri tablosu: satırlar A,B,C; sütunlar 1,2,3,4").
-- Görsel gerektirmeyen sorularda "imageDescription": null yaz.
-- "image" veya görsel URL alanı EKLEME – yapay zeka görsel oluşturamaz, sadece imageDescription yaz.
+Soru Tipi Kuralları (${typeLabel}):
+${typeSpecificRules}
 
-Yanıtın SADECE aşağıdaki JSON dizisi olsun, başında/sonunda açıklama veya markdown kodu olmasın:
-[
-  {"text":"Görselli soru metni (örn: Grafikte verilen fonksiyonun...)","imageDescription":"Parabol grafiği, tepe (2,4)","choices":["şık1","şık2","şık3","şık4","şık5"],"correctAnswer":"A","distractorReasons":["B neden yanlış","C neden yanlış","D neden yanlış","E neden yanlış"],"solutionExplanation":"Kısa çözüm paragrafı."},
-  {"text":"Normal soru metni","imageDescription":null,"choices":["şık1","şık2","şık3","şık4","şık5"],"correctAnswer":"B","distractorReasons":["A neden yanlış","C neden yanlış","D neden yanlış","E neden yanlış"],"solutionExplanation":"Kısa çözüm paragrafı."}
+Görselli Sorular:
+- Toplam ${data.count} sorudan en az ${visualQuestionCount} tanesi görsel gerektiren soru olsun (grafik, şekil, tablo).
+- Bu sorularda "imageDescription" alanına görseli tarif et (örn: "x² parabolü..."). Diğerlerinde null yap.
+- ASLA "image" veya URL alanı ekleme.
+
+ÇIKTI FORMATI:
+- Yanıtın SADECE ve SADECE geçerli bir JSON array olmalı.
+- Başında/sonunda hiçbir açıklama, "düşünüyorum...", "işte sorular...", markdown (\`\`\`json) vb. OLMAMALI.
+- JSON formatı dışına çıkma.
+
+Beklenen JSON Formatı:
+[${jsonExample}, ...
 ]
-${referenceQuestions.length > 0 ? `\nÖrnek stil:\n${referenceQuestions.slice(0, 1).join('\n')}` : ''}`;
+
+${referenceQuestions.length > 0 ? `\nReferans Sorular:\n${referenceQuestions.slice(0, 1).join('\n')}` : ''}`;
 
         try {
             const response = await callGemini(prompt, {
                 temperature: 0.7,
-                maxOutputTokens: 4096,
+                maxOutputTokens: 8192,
+                responseMimeType: 'application/json',
             });
 
             // JSON parse için temizlik
@@ -363,9 +418,9 @@ ${referenceQuestions.length > 0 ? `\nÖrnek stil:\n${referenceQuestions.slice(0,
 
             // Debug: AI'dan gelen image alanlarını logla
             console.log('[QUESTIONBANK] Generated questions count:', generatedQuestions.length);
-            console.log('[QUESTIONBANK] Generated questions with image fields:', generatedQuestions.map((q: any, idx: number) => ({ 
-                index: idx + 1, 
-                hasImage: !!(q as any).image, 
+            console.log('[QUESTIONBANK] Generated questions with image fields:', generatedQuestions.map((q: any, idx: number) => ({
+                index: idx + 1,
+                hasImage: !!(q as any).image,
                 image: (q as any).image,
                 textPreview: (q.text || '').substring(0, 50) + '...'
             })));
@@ -413,13 +468,13 @@ ${referenceQuestions.length > 0 ? `\nÖrnek stil:\n${referenceQuestions.slice(0,
             const errorMessage = error instanceof Error ? error.message : String(error);
             const errorStack = error instanceof Error ? error.stack : undefined;
             const errorName = error instanceof Error ? error.name : 'UnknownError';
-            console.error('[QUESTIONBANK] Error details:', { 
+            console.error('[QUESTIONBANK] Error details:', {
                 name: errorName,
-                message: errorMessage, 
+                message: errorMessage,
                 stack: errorStack,
                 body: req.body
             });
-            return res.status(500).json({ 
+            return res.status(500).json({
                 error: 'Soru üretiminde hata oluştu',
                 details: process.env.NODE_ENV === 'development' ? `${errorName}: ${errorMessage}` : undefined
             });
@@ -626,6 +681,7 @@ router.post(
                 subtopic: data.subtopic,
                 kazanimKodu: data.kazanimKodu,
                 text: data.text,
+                imageUrl: data.imageUrl,
                 type: data.type as QuestionType,
                 ...(data.choices && { choices: data.choices }),
                 correctAnswer: data.correctAnswer,
@@ -672,6 +728,7 @@ router.put(
                 ...(data.subtopic !== undefined && { subtopic: data.subtopic }),
                 ...(data.kazanimKodu !== undefined && { kazanimKodu: data.kazanimKodu }),
                 ...(data.text && { text: data.text }),
+                ...(data.imageUrl !== undefined && { imageUrl: data.imageUrl }),
                 ...(data.type && { type: data.type as QuestionType }),
                 ...(data.choices !== undefined && { choices: data.choices }),
                 ...(data.correctAnswer && { correctAnswer: data.correctAnswer }),

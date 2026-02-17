@@ -45,6 +45,8 @@ export interface ClassGroup {
   id: string;
   name: string;
   gradeLevel: string;
+  stream?: string | null;
+  section?: string | null;
   teacherId: string;
   studentIds: string[];
 }
