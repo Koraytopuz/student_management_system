@@ -12,4 +12,8 @@ export declare function hasParticipantsInRoom(roomName: string): Promise<boolean
 export declare function muteAllParticipantsInRoom(roomName: string): Promise<{
     muted: number;
 }>;
+/** Tüm katılımcıların mikrofonlarını aç (öğretmen için). TrackType.AUDIO = 0 */
+export declare function unmuteAllParticipantsInRoom(roomName: string): Promise<{
+    unmuted: number;
+}>;
 //# sourceMappingURL=livekit.d.ts.map

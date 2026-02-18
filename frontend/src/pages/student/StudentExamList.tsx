@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '../../components/DashboardPrimitives';
-import { FileText, Calendar, TrendingUp, ChevronRight, Clock } from 'lucide-react';
-import ExamAnalysisReport from './ExamAnalysisReport';
+import { FileText, Calendar, Clock, PlayCircle } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
 
@@ -37,10 +37,10 @@ interface ExamResultSummary {
 }
 
 export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, onSolveExam }) => {
+  const navigate = useNavigate();
   const [assignedExams, setAssignedExams] = useState<AssignedExam[]>([]);
   const [examResults, setExamResults] = useState<ExamResultSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedExam, setSelectedExam] = useState<ExamResultSummary | null>(null);
 
   useEffect(() => {
     fetchExamResults();
@@ -84,33 +84,8 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
     }
   };
 
-  if (selectedExam) {
-    return (
-      <div className="space-y-4">
-        <button 
-          onClick={() => setSelectedExam(null)}
-          className="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-        >
-          <ChevronRight className="rotate-180" size={16} />
-          Sınav Listesine Dön
-        </button>
-        {/* Pass user.id directly since we are viewing the logged-in student's report */}
-        <ExamAnalysisReport 
-          token={token} 
-          examId={selectedExam.exam.id.toString()} 
-          studentId={user.id} 
-        />
-      </div>
-    );
-  }
-
   return (
-    <GlassCard
-      className="exam-list-card"
-      title="Sınav Sonuçlarım ve Analizler"
-      subtitle="Girdiğin sınavların sonuçlarını ve analizlerini burada görebilirsin"
-    >
-      <div className="space-y-6">
+    <div className="space-y-6">
 
       {/* Bekleyen Sınavlar - Sınıfa atanmış, henüz sonuç girilmemiş */}
       {assignedExams.length > 0 && (
@@ -139,13 +114,9 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
                       {onSolveExam && (
                         <button
                           onClick={() => onSolveExam(exam.id)}
-                          className="primary-btn"
-                          style={{
-                            flex: 1,
-                            fontSize: '0.75rem',
-                            height: '2rem',
-                          }}
+                          className="flex items-center justify-center gap-2 w-full rounded-xl bg-linear-to-r from-indigo-600 to-indigo-500 px-4 py-2 text-xs font-bold text-white shadow-md shadow-indigo-500/20 transition hover:from-indigo-500 hover:to-violet-500 active:scale-95"
                         >
+                          <PlayCircle size={14} />
                           Sınavı Başlat
                         </button>
                       )}
@@ -172,18 +143,25 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {examResults.map((result) => (
-            <div key={result.id} onClick={() => setSelectedExam(result)} className="cursor-pointer hover:border-blue-500/50 transition-colors">
+            <div
+              key={result.id}
+              onClick={() => navigate(`/student/analysis/${result.exam.id}`)}
+              className="cursor-pointer hover:border-blue-500/50 transition-colors"
+            >
               <GlassCard>
                 <div className="flex justify-between items-start mb-4">
                   <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                     <FileText className="h-6 w-6 text-blue-600 dark:text-blue-400" />
                   </div>
-                  <span className="text-xs font-medium px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded-full text-gray-600 dark:text-gray-300">
+                  <span className="text-xs font-semibold" style={{ color: 'var(--accent-color)' }}>
                     {result.exam.type.replace('_', ' ')}
                   </span>
                 </div>
-                
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-1 line-clamp-1">
+
+                <h3
+                  className="text-lg font-bold mb-1 line-clamp-1"
+                  style={{ color: 'color-mix(in srgb, var(--accent-color) 70%, var(--color-text-main))' }}
+                >
                   {result.exam.name}
                 </h3>
                 
@@ -192,22 +170,24 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
                   <span>{new Date(result.exam.date).toLocaleDateString('tr-TR')}</span>
                 </div>
                 
-                <div className="grid grid-cols-3 gap-2 pt-4 border-t border-gray-100 dark:border-gray-700">
+                <div className="grid grid-cols-2 gap-2 pt-4 border-t border-gray-100 dark:border-gray-700">
                   <div className="text-center">
-                    <div className="text-xs text-gray-500 mb-1">Net</div>
-                    <div className="font-bold text-gray-900 dark:text-white">{result.totalNet}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs text-gray-500 mb-1">Puan</div>
-                    <div className="font-bold text-blue-600">{result.score.toFixed(1)}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs text-gray-500 mb-1">Sıralama</div>
-                    <div className="font-bold text-purple-600 flex items-center justify-center gap-1">
-                      <TrendingUp size={12} />
-                      {result.percentile.toFixed(1)}%
+                    <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                      Net
+                    </div>
+                    <div className="font-bold" style={{ color: 'var(--color-text-main)' }}>
+                      {result.totalNet}
                     </div>
                   </div>
+                  <div className="text-center">
+                    <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                      Puan
+                    </div>
+                    <div className="font-bold" style={{ color: 'var(--accent-color)' }}>
+                      {result.score.toFixed(1)}
+                    </div>
+                  </div>
+                  {/* Sıralama kutucuğu kaldırıldı */}
                 </div>
               </GlassCard>
             </div>
@@ -215,7 +195,6 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
         </div>
       )}
       </div>
-      </div>
-    </GlassCard>
+    </div>
   );
 };

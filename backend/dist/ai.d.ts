@@ -2,6 +2,7 @@ export interface CallGeminiOptions {
     systemInstruction?: string;
     temperature?: number;
     maxOutputTokens?: number;
+    responseMimeType?: string;
 }
 /**
  * Gemini API ile tek seferlik metin üretimi

@@ -729,7 +729,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                     className="w-full px-4 py-2 bg-slate-900/50 border border-white/10 rounded-xl text-white text-xs focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all appearance-none"
                   >
                     {[10, 20, 30, 40].map((n) => (
-                      <option key={n} value={n} className="text-black">{n} Soru</option>
+                      <option key={n} value={n}>{n} Soru</option>
                     ))}
                   </select>
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">
@@ -803,7 +803,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                     >
                       <option value="" className="bg-slate-900">Seçin</option>
                       {availableSubjectsForForm.map((s) => (
-                        <option key={s.id} value={s.id} className="text-black">{s.name}</option>
+                        <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">
@@ -823,7 +823,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                     >
                       <option value="" className="bg-slate-900">Seçin</option>
                       {displayGradeLevels.map((g) => (
-                        <option key={g} value={g} className="text-black">{g}. Sınıf</option>
+                        <option key={g} value={g}>{g}. Sınıf</option>
                       ))}
                     </select>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">
@@ -856,7 +856,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                       className="w-full px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-white text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none"
                     >
                       {QUESTION_TYPES.map((t) => (
-                        <option key={t.value} value={t.value} className="text-black">{t.label}</option>
+                        <option key={t.value} value={t.value}>{t.label}</option>
                       ))}
                     </select>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/30">
@@ -994,7 +994,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
       {generatedPreview && generatedPreview.length > 0 && (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <h3 className="text-lg font-semibold qb-text-main flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-purple-400" />
               Üretilen Sorular ({generatedPreview.length})
             </h3>
@@ -1013,7 +1013,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
               const choicesList = Array.isArray(q.choices) ? q.choices : [];
               return (
                 <GlassCard key={q.id} className="p-6 border border-white/10 rounded-2xl overflow-hidden flex flex-col shadow-xl">
-                  <p className="text-white/95 text-[15px] leading-relaxed mb-4 whitespace-pre-wrap">{q.text}</p>
+                  <p className="qb-text-main text-[15px] leading-relaxed mb-4 whitespace-pre-wrap">{q.text}</p>
                   {q.imageUrl && q.imageUrl.trim() !== '' && (
                     <div className="mb-4 rounded-xl overflow-hidden border border-white/10 bg-black/20 shadow-lg min-h-[120px] flex items-center justify-center">
                       <img 
@@ -1041,24 +1041,17 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                     <ul className="space-y-2 mb-4">
                       {choicesList.map((c, i) => {
                         const letter = String.fromCharCode(65 + i);
-                        const isCorrect = (q.correctAnswer || '').toUpperCase().replace(/[^A-E]/g, '') === letter;
                         return (
                           <li
                             key={i}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${isCorrect ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-white/5 text-white/80 border border-white/10'}`}
+                            className="qb-choice-item"
                           >
                             <span className="font-medium shrink-0">{letter})</span>
                             <span>{c}</span>
-                            {isCorrect && <Check className="w-4 h-4 shrink-0 text-emerald-400" />}
                           </li>
                         );
                       })}
                     </ul>
-                  )}
-                  {q.correctAnswer && !choicesList.length && (
-                    <p className="text-sm text-white/70 mb-4">
-                      Doğru cevap: <span className="font-medium text-emerald-400">{q.correctAnswer}</span>
-                    </p>
                   )}
                   {q.solutionExplanation && (
                     <div className="mt-auto pt-4 border-t border-white/10">
@@ -1078,7 +1071,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                         <span>Çözüm Açıklaması</span>
                       </button>
                       {isSolutionOpen && (
-                        <p className="mt-3 text-sm text-white/70 leading-relaxed whitespace-pre-wrap rounded-lg bg-white/5 p-3 border border-white/10">
+                        <p className="mt-3 text-sm qb-text-muted leading-relaxed whitespace-pre-wrap rounded-lg qb-surface-soft p-3 qb-border-subtle">
                           {q.solutionExplanation}
                         </p>
                       )}
@@ -1200,13 +1193,13 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
           </div>
         </div>
       ) : (
-        <GlassCard className="p-4">
+        <GlassCard className="p-4 qb-list-card">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
           </div>
         ) : questions.length === 0 ? (
-          <div className="text-center py-12 text-white/60">
+          <div className="text-center py-12 qb-text-muted">
             <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
             {(stats?.total ?? 0) > 0 && (filters.gradeLevel || filters.subjectId || filters.topic) ? (
               <>
@@ -1237,10 +1230,10 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                 <div className="flex items-center gap-3">
                   <CheckCircle className="w-5 h-5 text-emerald-400" />
                   <div>
-                    <p className="text-white font-medium text-sm">
+                    <p className="qb-text-main font-medium text-sm">
                       {questions.filter((q) => !q.isApproved && q.source === 'ai').length} onaylanmamış AI sorusu var
                     </p>
-                    <p className="text-white/60 text-xs mt-0.5">Tümünü tek seferde onaylayabilirsiniz</p>
+                    <p className="qb-text-muted text-xs mt-0.5">Tümünü tek seferde onaylayabilirsiniz</p>
                   </div>
                 </div>
                 <button
@@ -1254,7 +1247,7 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
               </div>
             )}
             {questions.map((q) => (
-              <div key={q.id} className="p-4 bg-white/5 rounded-lg border border-white/10 hover:border-white/20 transition">
+              <div key={q.id} className="qb-question-item">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -1276,17 +1269,17 @@ export function QuestionBankTab({ token, allowedGrades = [], allowedSubjectNames
                         />
                       </div>
                     )}
-                    <p className="text-white font-medium whitespace-pre-wrap">{q.text || '(Soru metni yok)'}</p>
+                    <p className="qb-text-main font-medium whitespace-pre-wrap">{q.text || '(Soru metni yok)'}</p>
                     {Array.isArray(q.choices) && q.choices.length > 0 && (
-                      <div className="mt-2 grid grid-cols-2 gap-1 text-sm text-white/70">
+                      <div className="mt-2 grid grid-cols-2 gap-1 text-sm qb-text-muted">
                         {(q.choices as string[]).map((c, i) => (
-                          <div key={i} className={`${c === q.correctAnswer || String.fromCharCode(65 + i) === q.correctAnswer ? 'text-green-400' : ''}`}>
+                          <div key={i} className="qb-choice">
                             {String.fromCharCode(65 + i)}) {c || '\u00A0'}
                           </div>
                         ))}
                       </div>
                     )}
-                    <div className="mt-2 text-sm text-white/50">
+                    <div className="mt-2 text-sm qb-text-muted">
                       Konu: {q.topic || '\u00A0'}
                     </div>
                   </div>

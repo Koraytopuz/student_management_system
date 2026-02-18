@@ -18,7 +18,8 @@ export const NotificationDetailModal: React.FC<{
   notification: NotificationDetailModalData | null;
   onClose: () => void;
   actions?: React.ReactNode;
-}> = ({ open, notification, onClose, actions }) => {
+  details?: React.ReactNode;
+}> = ({ open, notification, onClose, actions, details }) => {
   if (!open || !notification) return null;
 
   return (
@@ -63,7 +64,6 @@ export const NotificationDetailModal: React.FC<{
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <TagChip label={notification.read ? 'Okundu' : 'Yeni'} tone={notification.read ? 'success' : 'warning'} />
-              {notification.type && <TagChip label={notification.type} tone="info" />}
             </div>
             <h3 style={{ margin: '0.55rem 0 0', fontSize: '1.1rem', fontWeight: 800 }}>
               {notification.title}
@@ -94,6 +94,8 @@ export const NotificationDetailModal: React.FC<{
         >
           {notification.body}
         </div>
+
+        {details ? <div style={{ marginTop: '0.85rem' }}>{details}</div> : null}
       </div>
     </div>
   );

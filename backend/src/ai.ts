@@ -13,8 +13,12 @@ const FALLBACK_MODELS = [
 ];
 
 function getModelCandidates(): string[] {
-  if (USER_CONFIGURED_MODEL) return [USER_CONFIGURED_MODEL];
-  return FALLBACK_MODELS;
+  // If the user-configured model is invalid/disabled, we should still fall back
+  // to known-good models instead of failing the whole feature.
+  const candidates = USER_CONFIGURED_MODEL
+    ? [USER_CONFIGURED_MODEL, ...FALLBACK_MODELS]
+    : FALLBACK_MODELS;
+  return Array.from(new Set(candidates.map((m) => m.trim()).filter(Boolean)));
 }
 
 function extractResponseText(response: unknown): string | null {

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from './db';
 import { Prisma, NotificationType } from '@prisma/client';
+import { authenticate, AuthenticatedRequest } from './auth';
 import {
     calculateRankSimulation,
     analyzePriority,
@@ -11,10 +12,18 @@ import {
 const router = Router();
 // const prisma = new PrismaClient(); // Removed: Using centralized prisma client from src/db
 
-// POST /api/exams - Sınav oluştur
-router.post('/exams', async (req: Request, res: Response) => {
+// Yardımcı: kurum adı
+function getInstitutionName(req: AuthenticatedRequest): string | undefined {
+    const raw = (req.user as any)?.institutionName;
+    const trimmed = raw ? String(raw).trim() : '';
+    return trimmed || undefined;
+}
+
+// POST /api/exams - Sınav oluştur (kurum bazlı)
+router.post('/exams', authenticate('admin'), async (req: AuthenticatedRequest, res: Response) => {
     try {
         const { name, type, date, questionCount, description, classGroupIds, fileUrl, fileName } = req.body;
+        const institutionName = getInstitutionName(req);
 
         console.log('📥 Received exam creation request:', {
             name,
@@ -32,6 +41,7 @@ router.post('/exams', async (req: Request, res: Response) => {
             date: new Date(date),
             questionCount: questionCount || 0,
             description,
+            institutionName,
         };
         // Eğer admin PDF kitapçığı yükleyip URL bilgisini gönderdiyse, kayda ekle
         if (typeof fileUrl === 'string' && fileUrl.trim()) {
@@ -41,11 +51,16 @@ router.post('/exams', async (req: Request, res: Response) => {
             examData.fileName = fileName.trim();
         }
 
-        // Sınıf gruplarını güvenli hale getir (sadece gerçekten var olan id'ler)
+        // Sınıf gruplarını güvenli hale getir (sadece gerçekten var olan ve aynı kurumdaki id'ler)
         let validClassGroupIds: string[] = [];
         if (Array.isArray(classGroupIds) && classGroupIds.length > 0) {
             const existingClassGroups = await prisma.classGroup.findMany({
-                where: { id: { in: classGroupIds as string[] } },
+                where: institutionName
+                    ? ({
+                          id: { in: classGroupIds as string[] },
+                          teacher: { institutionName },
+                      } as any)
+                    : { id: { in: classGroupIds as string[] } },
                 select: { id: true },
             });
             validClassGroupIds = existingClassGroups.map((g) => g.id);
@@ -157,12 +172,21 @@ router.post('/exams', async (req: Request, res: Response) => {
     }
 });
 
-// PUT /api/exams/:id - Sınav güncelle
-router.put('/exams/:id', async (req: Request, res: Response) => {
+// PUT /api/exams/:id - Sınav güncelle (kurum bazlı)
+router.put('/exams/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: Response) => {
     try {
         const { id } = req.params;
         const examId = parseInt(id as string);
         const { name, type, date, questionCount, description, classGroupIds, fileUrl, fileName } = req.body;
+        const institutionName = getInstitutionName(req);
+
+        const existing = await prisma.exam.findUnique({
+            where: { id: examId },
+            select: { id: true, institutionName: true },
+        });
+        if (!existing || (institutionName && (existing as any).institutionName !== institutionName)) {
+            return res.status(404).json({ error: 'Exam not found' });
+        }
 
         console.log('📝 Updating exam:', examId, {
             name,
@@ -260,11 +284,20 @@ router.put('/exams/:id', async (req: Request, res: Response) => {
     }
 });
 
-// DELETE /api/exams/:id - Sınav sil
-router.delete('/exams/:id', async (req: Request, res: Response) => {
+// DELETE /api/exams/:id - Sınav sil (kurum bazlı)
+router.delete('/exams/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: Response) => {
     try {
         const { id } = req.params;
         const examId = parseInt(id as string);
+
+        const institutionName = getInstitutionName(req);
+        const existing = await prisma.exam.findUnique({
+            where: { id: examId },
+            select: { id: true, institutionName: true },
+        });
+        if (!existing || (institutionName && (existing as any).institutionName !== institutionName)) {
+            return res.status(404).json({ error: 'Exam not found' });
+        }
 
         // Önce atamaları ve sonuçları sil (FK kısıtları için)
         await prisma.examAssignment.deleteMany({ where: { examId } });
@@ -279,10 +312,12 @@ router.delete('/exams/:id', async (req: Request, res: Response) => {
     }
 });
 
-// GET /api/exams - Tüm sınavları listele
-router.get('/exams', async (req: Request, res: Response) => {
+// GET /api/exams - Tüm sınavları listele (kurum bazlı)
+router.get('/exams', authenticate('admin'), async (req: AuthenticatedRequest, res: Response) => {
     try {
+        const institutionName = getInstitutionName(req);
         const exams = await prisma.exam.findMany({
+            where: institutionName ? ({ institutionName } as any) : undefined,
             orderBy: { date: 'desc' },
             include: {
                 examAssignments: {
@@ -305,14 +340,15 @@ router.get('/exams', async (req: Request, res: Response) => {
     }
 });
 
-// GET /api/exams/:id - Sınav detayı
-router.get('/exams/:id', async (req: Request, res: Response) => {
+// GET /api/exams/:id - Sınav detayı (kurum bazlı - admin)
+router.get('/exams/:id', authenticate('admin'), async (req: AuthenticatedRequest, res: Response) => {
     try {
         const { id } = req.params;
         const examId = parseInt(id as string);
+        const institutionName = getInstitutionName(req);
 
-        const exam = await prisma.exam.findUnique({
-            where: { id: examId },
+        const exam = await prisma.exam.findFirst({
+            where: { id: examId, institutionName } as any,
             include: {
                 examAssignments: {
                     include: {
@@ -358,20 +394,47 @@ router.get('/exams/:id', async (req: Request, res: Response) => {
     }
 });
 
-// POST /api/exams/:id/assign - Sınavı sınıflara ata (çoklu)
-router.post('/exams/:id/assign', async (req: Request, res: Response) => {
+// POST /api/exams/:id/assign - Sınavı sınıflara ata (çoklu, kurum bazlı)
+router.post('/exams/:id/assign', authenticate('admin'), async (req: AuthenticatedRequest, res: Response) => {
     try {
         const { id } = req.params;
         const examId = parseInt(id as string);
         const { classGroupIds } = req.body; // string[]
+        const institutionName = getInstitutionName(req);
 
         if (!Array.isArray(classGroupIds) || classGroupIds.length === 0) {
             return res.status(400).json({ error: 'classGroupIds must be a non-empty array' });
         }
 
-        // Mevcut atamaları kontrol et ve yeni atamaları oluştur
+        // Sınavın bu kuruma ait olduğunu doğrula
+        const existingExam = await prisma.exam.findUnique({
+            where: { id: examId },
+            select: { id: true, institutionName: true },
+        });
+        if (!existingExam || (institutionName && (existingExam as any).institutionName !== institutionName)) {
+            return res.status(404).json({ error: 'Exam not found' });
+        }
+
+        // Mevcut atamaları kontrol et ve yeni atamaları oluştur (yalnızca aynı kurumdaki sınıflar için)
+        const allowedClassGroups = await prisma.classGroup.findMany({
+            where: institutionName
+                ? ({
+                      id: { in: classGroupIds },
+                      teacher: { institutionName },
+                  } as any)
+                : { id: { in: classGroupIds } },
+            select: { id: true },
+        });
+        const allowedIds = allowedClassGroups.map((g) => g.id);
+
+        if (allowedIds.length === 0) {
+            return res
+                .status(400)
+                .json({ error: 'Bu kuruma ait geçerli bir sınıf bulunamadı. Sınav atanmadı.' });
+        }
+
         const assignments = await Promise.all(
-            classGroupIds.map((classGroupId: string) =>
+            allowedIds.map((classGroupId: string) =>
                 prisma.examAssignment.upsert({
                     where: {
                         examId_classGroupId: {
@@ -704,6 +767,269 @@ router.post('/ranking-scales', async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Error creating ranking scale:', error);
         res.status(500).json({ error: 'Failed to create ranking scale' });
+    }
+});
+
+// GET /api/exams/:id/all-results - Bir sınava ait tüm öğrenci cevaplarını listele (admin)
+router.get('/exams/:id/all-results', async (req: Request, res: Response) => {
+    try {
+        const examId = Number(req.params.id);
+        if (isNaN(examId)) {
+            return res.status(400).json({ error: 'Geçersiz sınav ID' });
+        }
+        const results = await (prisma as any).examResult.findMany({
+            where: { examId },
+            include: {
+                student: { select: { id: true, name: true, email: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        return res.json(results.map((r: any) => ({
+            id: r.id,
+            studentId: r.studentId,
+            studentName: r.student?.name ?? '',
+            studentEmail: r.student?.email ?? '',
+            score: r.score,
+            totalNet: r.totalNet,
+            percentile: r.percentile,
+            gradingStatus: r.gradingStatus,
+            createdAt: r.createdAt,
+        })));
+    } catch (error) {
+        console.error('Error fetching exam all-results:', error);
+        return res.status(500).json({ error: 'Sonuçlar alınamadı.' });
+    }
+});
+
+// Yardımcı: Optik metnini { soruNo: 'A' } map'ine çevir
+function parseOpticInput(raw: string): Record<number, string> {
+    const map: Record<number, string> = {};
+    const text = (raw || '').toUpperCase();
+
+    // Örnek desteklenen formatlar:
+    // 1-A 2-B 3-C
+    // 1 A, 2 C, 3 D
+    // 1)A  2) B  3)C
+    const pairRegex = /(\d+)\s*[-:.)]?\s*([A-E])/g;
+    let match: RegExpExecArray | null;
+    while ((match = pairRegex.exec(text)) !== null) {
+        const g1 = match[1];
+        const g2 = match[2];
+        if (g1 != null && g2 != null) {
+            const qNum = parseInt(g1, 10);
+            if (!Number.isNaN(qNum)) {
+                map[qNum] = g2;
+            }
+        }
+    }
+
+    // Eğer hiç eşleşme yoksa, sadece harflerden oluşan sıralı optik kabul et (örn. ABCDE...)
+    if (Object.keys(map).length === 0) {
+        const letters = text.replace(/[^A-E]/g, '');
+        letters.split('').forEach((ch, idx) => {
+            const qNum = idx + 1;
+            map[qNum] = ch;
+        });
+    }
+
+    return map;
+}
+
+/**
+ * POST /api/exams/:examId/manual-grade/:studentId
+ * Admin'in girdiği cevap anahtarı ve öğrenci optiğine göre sonucu hesaplar.
+ */
+router.post(
+    '/exams/:examId/manual-grade/:studentId',
+    authenticate('admin'),
+    async (req: Request, res: Response) => {
+        try {
+            const examId = Number(req.params.examId);
+            const studentId = String(req.params.studentId);
+            if (Number.isNaN(examId)) {
+                return res.status(400).json({ error: 'Geçersiz sınav ID' });
+            }
+            const { answerKey, studentAnswers } = req.body as {
+                answerKey?: string;
+                studentAnswers?: string;
+            };
+
+            if (!answerKey || !studentAnswers) {
+                return res.status(400).json({
+                    error: 'answerKey ve studentAnswers alanları zorunludur.',
+                });
+            }
+
+            const keyMap = parseOpticInput(answerKey);
+            const ansMap = parseOpticInput(studentAnswers);
+
+            if (Object.keys(keyMap).length === 0) {
+                return res.status(400).json({
+                    error: 'Geçerli bir cevap anahtarı çözümlenemedi. Lütfen formatı kontrol edin.',
+                });
+            }
+
+            const questionNumbers = Array.from(
+                new Set(
+                    Object.keys(keyMap)
+                        .map((n) => parseInt(n, 10))
+                        .filter((n) => !Number.isNaN(n)),
+                ),
+            ).sort((a, b) => a - b);
+
+            let correct = 0;
+            let wrong = 0;
+            let empty = 0;
+
+            for (const q of questionNumbers) {
+                const key = keyMap[q];
+                const ansRaw = ansMap[q];
+                const ans = ansRaw ? ansRaw.replace(/[^A-E]/g, '') : '';
+
+                if (!key) continue;
+                if (!ans || ans === '-' || ans === '_') {
+                    empty += 1;
+                } else if (ans === key) {
+                    correct += 1;
+                } else {
+                    wrong += 1;
+                }
+            }
+
+            const totalQuestions = correct + wrong + empty;
+            if (totalQuestions === 0) {
+                return res.status(400).json({
+                    error: 'Hiç soru değerlendirilemedi. Lütfen optik girişlerini kontrol edin.',
+                });
+            }
+
+            // TYT tipi sınavlar için klasik net hesabı: doğru - yanlış * 0.25
+            const totalNet = correct - wrong * 0.25;
+            // Basit bir puan tahmini: 3 * net (ileride özelleştirilebilir)
+            const score = totalNet * 3;
+
+            const answersJson = {
+                answerKey: keyMap,
+                studentAnswers: ansMap,
+                summary: { correct, wrong, empty, totalQuestions },
+            };
+
+            const examResult = await prisma.examResult.upsert({
+                where: {
+                    studentId_examId: {
+                        studentId,
+                        examId,
+                    },
+                },
+                create: {
+                    studentId,
+                    examId,
+                    totalNet,
+                    score,
+                    percentile: 0,
+                    gradingStatus: 'auto_graded',
+                    answers: answersJson as Prisma.InputJsonValue,
+                },
+                update: {
+                    totalNet,
+                    score,
+                    percentile: 0,
+                    gradingStatus: 'auto_graded',
+                    answers: answersJson as Prisma.InputJsonValue,
+                },
+            });
+
+            return res.json({
+                success: true,
+                examResult: {
+                    id: examResult.id,
+                    studentId: examResult.studentId,
+                    examId: examResult.examId,
+                    totalNet: examResult.totalNet,
+                    score: examResult.score,
+                    percentile: examResult.percentile,
+                    gradingStatus: examResult.gradingStatus,
+                    summary: { correct, wrong, empty, totalQuestions },
+                },
+            });
+        } catch (error) {
+            console.error('Error in manual-grade endpoint:', error);
+            return res.status(500).json({ error: 'Sonuç hesaplanırken hata oluştu.' });
+        }
+    },
+);
+
+// POST /api/exams/:id/questions - Sınav cevap anahtarını kaydet (admin/öğretmen)
+router.post('/exams/:id/questions', async (req: Request, res: Response) => {
+    try {
+        const examId = Number(req.params.id);
+        if (isNaN(examId)) {
+            return res.status(400).json({ error: 'Geçersiz sınav ID' });
+        }
+
+        const { questions } = req.body as {
+            questions: Array<{
+                questionNumber: number;
+                correctOption?: string | null;
+                topicName?: string;
+                lessonName?: string;
+                difficulty?: string;
+                questionText?: string;
+            }>;
+        };
+
+        if (!Array.isArray(questions) || questions.length === 0) {
+            return res.status(400).json({ error: 'Soru listesi boş veya geçersiz.' });
+        }
+
+        // Upsert each question (update if exists, create if not)
+        const upserted = await Promise.all(
+            questions.map((q) =>
+                prisma.examQuestion.upsert({
+                    where: { examId_questionNumber: { examId, questionNumber: q.questionNumber } },
+                    update: {
+                        correctOption: q.correctOption ?? null,
+                        topicName: q.topicName ?? 'Genel',
+                        lessonName: q.lessonName ?? 'Genel',
+                        difficulty: q.difficulty ?? 'Orta',
+                        questionText: q.questionText ?? null,
+                    },
+                    create: {
+                        examId,
+                        questionNumber: q.questionNumber,
+                        correctOption: q.correctOption ?? null,
+                        topicName: q.topicName ?? 'Genel',
+                        lessonName: q.lessonName ?? 'Genel',
+                        difficulty: q.difficulty ?? 'Orta',
+                        questionText: q.questionText ?? null,
+                    },
+                })
+            )
+        );
+
+        return res.json({ success: true, count: upserted.length });
+    } catch (error) {
+        console.error('Error saving exam questions:', error);
+        return res.status(500).json({ error: 'Cevap anahtarı kaydedilemedi.' });
+    }
+});
+
+// GET /api/exams/:id/questions - Sınav cevap anahtarını getir
+router.get('/exams/:id/questions', async (req: Request, res: Response) => {
+    try {
+        const examId = Number(req.params.id);
+        if (isNaN(examId)) {
+            return res.status(400).json({ error: 'Geçersiz sınav ID' });
+        }
+        const questions = await prisma.examQuestion.findMany({
+            where: { examId },
+            orderBy: { questionNumber: 'asc' },
+        });
+        return res.json(questions);
+    } catch (error) {
+        console.error('Error fetching exam questions:', error);
+        return res.status(500).json({ error: 'Soru listesi alınamadı.' });
     }
 });
 

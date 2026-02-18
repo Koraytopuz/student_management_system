@@ -27,6 +27,13 @@ const storage = multer_1.default.diskStorage({
 });
 const upload = (0, multer_1.default)({ storage });
 const router = express_1.default.Router();
+function getInstitutionName(req) {
+    var _a;
+    const raw = (_a = req.user) === null || _a === void 0 ? void 0 : _a.institutionName;
+    const trimmed = raw ? String(raw).trim() : '';
+    // Geriye dönük uyumluluk: eski veriler kurum adı olmadan kalmış olabilir
+    return trimmed || 'SKYANALİZ';
+}
 // Sistem genelinde kullanılacak sabit sınıf seviyeleri
 // Öğrenci ve soru bankası tarafındaki gradeLevel alanlarıyla uyumlu tutulmalıdır.
 const ALLOWED_GRADES = ['4', '5', '6', '7', '8', '9', '10', '11', '12', 'Mezun'];
@@ -86,48 +93,91 @@ function toParent(u, studentIds) {
     return { id: u.id, name: u.name, email: u.email, role: 'parent', studentIds };
 }
 // Yönetici dashboard için özet
-router.get('/summary', (0, auth_1.authenticate)('admin'), async (_req, res) => {
-    const [teacherCount, studentCount, parentCount, assignmentCount] = await Promise.all([
-        db_1.prisma.user.count({ where: { role: 'teacher' } }),
-        db_1.prisma.user.count({ where: { role: 'student' } }),
-        db_1.prisma.user.count({ where: { role: 'parent' } }),
-        db_1.prisma.assignment.count(),
-    ]);
-    return res.json({
-        teacherCount,
-        studentCount,
-        parentCount,
-        assignmentCount,
-    });
+router.get('/summary', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
+    try {
+        const [teacherCount, studentCount, parentCount, assignmentCount] = await Promise.all([
+            db_1.prisma.user.count({ where: { role: 'teacher', institutionName } }),
+            db_1.prisma.user.count({ where: { role: 'student', institutionName } }),
+            db_1.prisma.user.count({ where: { role: 'parent', institutionName } }),
+            db_1.prisma.assignment.count({
+                where: {
+                    OR: [
+                        { createdByTeacher: { institutionName } },
+                        { students: { some: { student: { institutionName } } } },
+                    ],
+                },
+            }),
+        ]);
+        return res.json({
+            teacherCount,
+            studentCount,
+            parentCount,
+            assignmentCount,
+        });
+    }
+    catch (error) {
+        console.error('[admin/summary] Error:', error);
+        return res.status(500).json({
+            error: 'Yönetici özet verileri yüklenemedi',
+            ...(process.env.NODE_ENV !== 'production' && {
+                details: error instanceof Error ? error.message : String(error),
+            }),
+        });
+    }
 });
-router.get('/teachers', (0, auth_1.authenticate)('admin'), async (_req, res) => {
-    const list = await db_1.prisma.user.findMany({
-        where: { role: 'teacher' },
-        select: { id: true, name: true, email: true, subjectAreas: true, teacherGrades: true },
-    });
-    res.json(list.map(toTeacher));
+router.get('/teachers', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
+    try {
+        const list = await db_1.prisma.user.findMany({
+            where: { role: 'teacher', institutionName },
+            select: { id: true, name: true, email: true, subjectAreas: true, teacherGrades: true },
+        });
+        return res.json(list.map(toTeacher));
+    }
+    catch (error) {
+        console.error('[admin/teachers] Error:', error);
+        // Öğretmen listesi boş olsa bile hata döndürmeyelim, boş liste döndürelim
+        return res.json([]);
+    }
 });
-router.get('/students', (0, auth_1.authenticate)('admin'), async (_req, res) => {
-    const list = await db_1.prisma.user.findMany({
-        where: { role: 'student' },
-        select: {
-            id: true,
-            name: true,
-            email: true,
-            gradeLevel: true,
-            classId: true,
-            parentPhone: true,
-            profilePictureUrl: true,
-        },
-    });
-    res.json(list.map((u) => toStudent(u)));
+router.get('/students', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
+    try {
+        const list = await db_1.prisma.user.findMany({
+            where: { role: 'student', institutionName },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                gradeLevel: true,
+                classId: true,
+                parentPhone: true,
+                profilePictureUrl: true,
+            },
+        });
+        return res.json(list.map((u) => toStudent(u)));
+    }
+    catch (error) {
+        console.error('[admin/students] Error:', error);
+        // Öğrenci listesi boş olsa bile hata döndürmeyelim, boş liste döndürelim
+        return res.json([]);
+    }
 });
-router.get('/parents', (0, auth_1.authenticate)('admin'), async (_req, res) => {
-    const list = await db_1.prisma.user.findMany({
-        where: { role: 'parent' },
-        include: { parentStudents: { select: { studentId: true } } },
-    });
-    res.json(list.map((u) => toParent(u, u.parentStudents.map((ps) => ps.studentId))));
+router.get('/parents', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
+    try {
+        const list = await db_1.prisma.user.findMany({
+            where: { role: 'parent', institutionName },
+            include: { parentStudents: { select: { studentId: true } } },
+        });
+        return res.json(list.map((u) => toParent(u, u.parentStudents.map((ps) => ps.studentId))));
+    }
+    catch (error) {
+        console.error('[admin/parents] Error:', error);
+        // Veli listesi boş olsa bile hata döndürmeyelim, boş liste döndürelim
+        return res.json([]);
+    }
 });
 /**
  * GET /admin/exam-result-students
@@ -203,10 +253,11 @@ router.post('/debug/create-sample-exam-ali-12-say', (0, auth_1.authenticate)('ad
     var _a;
     try {
         // 1) Hedef öğrenciyi bul
+        // Önce 12. sınıf sayısal sınıflardan birinde "Ali" isimli öğrenciyi bulmaya çalış
         let student = await db_1.prisma.user.findFirst({
             where: {
                 role: 'student',
-                classId: 'c_12_say',
+                gradeLevel: '12',
                 name: { contains: 'Ali', mode: 'insensitive' },
             },
         });
@@ -449,17 +500,25 @@ router.post('/debug/create-sample-exam-ali-12-say', (0, auth_1.authenticate)('ad
  *
  * Not:
  * - `ExamManagement` ekranındaki "Sınıf Seç" çoklu seçim listesi bu endpoint'i kullanır.
- * - Sadece temel alanlar döndürülür; ilişkiler (öğrenciler vb.) gerekirse
- *   daha sonra ayrı endpoint'lerle eklenebilir.
+ * - Yalnızca ilgili kurumun (institutionName) sınıfları döndürülür.
  */
-router.get('/class-groups', (0, auth_1.authenticate)('admin'), async (_req, res) => {
+router.get('/class-groups', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const groups = await db_1.prisma.classGroup.findMany({
+        where: institutionName
+            ? {
+                teacher: {
+                    institutionName,
+                },
+            }
+            : undefined,
         orderBy: [{ gradeLevel: 'asc' }, { name: 'asc' }],
         select: {
             id: true,
             name: true,
             gradeLevel: true,
             stream: true,
+            section: true,
         },
     });
     res.json(groups.map((g) => ({
@@ -467,35 +526,48 @@ router.get('/class-groups', (0, auth_1.authenticate)('admin'), async (_req, res)
         name: g.name,
         gradeLevel: g.gradeLevel,
         stream: g.stream,
+        section: g.section,
     })));
 });
 // ========== DEVAMSIZLIK / YOKLAMA (ADMIN) ==========
 /**
  * GET /admin/attendance/classes?days=7
- * Yönetici için sınıf bazlı yoklama özetleri
+ * Yönetici için sınıf bazlı yoklama özetleri (kurum bazlı)
  */
 router.get('/attendance/classes', (0, auth_1.authenticate)('admin'), async (req, res) => {
     var _a, _b;
+    const institutionName = getInstitutionName(req);
     const daysRaw = String((_a = req.query.days) !== null && _a !== void 0 ? _a : '7');
     const days = Number.isFinite(Number(daysRaw)) ? Math.max(1, Math.min(90, Number(daysRaw))) : 7;
     const since = new Date();
     since.setDate(since.getDate() - (days - 1));
     since.setHours(0, 0, 0, 0);
     try {
-        const [classGroups, grouped] = await Promise.all([
-            db_1.prisma.classGroup.findMany({
-                orderBy: [{ gradeLevel: 'asc' }, { name: 'asc' }],
-                include: {
-                    teacher: { select: { id: true, name: true } },
-                    students: { select: { studentId: true } },
-                },
-            }),
-            db_1.prisma.classAttendance.groupBy({
+        const classGroups = await db_1.prisma.classGroup.findMany({
+            where: institutionName
+                ? {
+                    teacher: {
+                        institutionName,
+                    },
+                }
+                : undefined,
+            orderBy: [{ gradeLevel: 'asc' }, { name: 'asc' }],
+            include: {
+                teacher: { select: { id: true, name: true } },
+                students: { select: { studentId: true } },
+            },
+        });
+        const classGroupIds = classGroups.map((cg) => cg.id);
+        const grouped = classGroupIds.length === 0
+            ? []
+            : await db_1.prisma.classAttendance.groupBy({
                 by: ['classGroupId', 'present'],
-                where: { date: { gte: since } },
+                where: {
+                    date: { gte: since },
+                    classGroupId: { in: classGroupIds },
+                },
                 _count: { _all: true },
-            }),
-        ]);
+            });
         const countsByClass = new Map();
         for (const row of grouped) {
             const prev = (_b = countsByClass.get(row.classGroupId)) !== null && _b !== void 0 ? _b : { presentCount: 0, absentCount: 0, totalRecords: 0 };
@@ -529,10 +601,11 @@ router.get('/attendance/classes', (0, auth_1.authenticate)('admin'), async (req,
 });
 /**
  * GET /admin/attendance/classes/:classId/students?days=7
- * Yönetici için seçili sınıftaki öğrencilerin yoklama özeti
+ * Yönetici için seçili sınıftaki öğrencilerin yoklama özeti (kurum bazlı)
  */
 router.get('/attendance/classes/:classId/students', (0, auth_1.authenticate)('admin'), async (req, res) => {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
+    const institutionName = getInstitutionName(req);
     const classId = String(req.params.classId);
     const daysRaw = String((_a = req.query.days) !== null && _a !== void 0 ? _a : '7');
     const days = Number.isFinite(Number(daysRaw)) ? Math.max(1, Math.min(90, Number(daysRaw))) : 7;
@@ -543,7 +616,7 @@ router.get('/attendance/classes/:classId/students', (0, auth_1.authenticate)('ad
         const classGroup = await db_1.prisma.classGroup.findUnique({
             where: { id: classId },
             include: {
-                teacher: { select: { id: true, name: true } },
+                teacher: { select: { id: true, name: true, institutionName: true } },
                 students: {
                     include: {
                         student: { select: { id: true, name: true, gradeLevel: true, profilePictureUrl: true } },
@@ -551,7 +624,8 @@ router.get('/attendance/classes/:classId/students', (0, auth_1.authenticate)('ad
                 },
             },
         });
-        if (!classGroup) {
+        if (!classGroup ||
+            (institutionName && ((_b = classGroup.teacher) === null || _b === void 0 ? void 0 : _b.institutionName) !== institutionName)) {
             return res.status(404).json({ error: 'Sınıf bulunamadı.' });
         }
         const studentIds = classGroup.students.map((s) => s.studentId);
@@ -570,7 +644,7 @@ router.get('/attendance/classes/:classId/students', (0, auth_1.authenticate)('ad
         ]);
         const countsByStudent = new Map();
         for (const row of grouped) {
-            const prev = (_b = countsByStudent.get(row.studentId)) !== null && _b !== void 0 ? _b : { presentCount: 0, absentCount: 0, total: 0 };
+            const prev = (_c = countsByStudent.get(row.studentId)) !== null && _c !== void 0 ? _c : { presentCount: 0, absentCount: 0, total: 0 };
             const c = row._count._all;
             if (row.present)
                 prev.presentCount += c;
@@ -607,7 +681,7 @@ router.get('/attendance/classes/:classId/students', (0, auth_1.authenticate)('ad
                 name: classGroup.name,
                 gradeLevel: classGroup.gradeLevel,
                 teacherId: classGroup.teacherId,
-                teacherName: (_d = (_c = classGroup.teacher) === null || _c === void 0 ? void 0 : _c.name) !== null && _d !== void 0 ? _d : 'Öğretmen',
+                teacherName: (_e = (_d = classGroup.teacher) === null || _d === void 0 ? void 0 : _d.name) !== null && _e !== void 0 ? _e : 'Öğretmen',
             },
             students,
         });
@@ -619,10 +693,11 @@ router.get('/attendance/classes/:classId/students', (0, auth_1.authenticate)('ad
 });
 /**
  * GET /admin/attendance/students/:studentId/history?days=30
- * Yönetici için öğrencinin yoklama geçmişi ve istatistikleri
+ * Yönetici için öğrencinin yoklama geçmişi ve istatistikleri (kurum bazlı)
  */
 router.get('/attendance/students/:studentId/history', (0, auth_1.authenticate)('admin'), async (req, res) => {
     var _a;
+    const institutionName = getInstitutionName(req);
     const studentId = String(req.params.studentId);
     const daysRaw = String((_a = req.query.days) !== null && _a !== void 0 ? _a : '30');
     const days = Number.isFinite(Number(daysRaw)) ? Math.max(1, Math.min(180, Number(daysRaw))) : 30;
@@ -631,7 +706,7 @@ router.get('/attendance/students/:studentId/history', (0, auth_1.authenticate)('
     since.setHours(0, 0, 0, 0);
     try {
         const student = await db_1.prisma.user.findFirst({
-            where: { id: studentId, role: 'student' },
+            where: { id: studentId, role: 'student', institutionName },
             select: { id: true, name: true, gradeLevel: true, classId: true },
         });
         if (!student) {
@@ -683,6 +758,7 @@ router.get('/attendance/students/:studentId/history', (0, auth_1.authenticate)('
     }
 });
 router.post('/teachers', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const { name, email, subjectAreas, assignedGrades, password } = req.body;
     if (!name || !email) {
         return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
@@ -712,15 +788,17 @@ router.post('/teachers', (0, auth_1.authenticate)('admin'), async (req, res) => 
             passwordHash,
             subjectAreas: areasArray,
             teacherGrades: gradesArray,
+            institutionName,
         },
         select: { id: true, name: true, email: true, subjectAreas: true, teacherGrades: true },
     });
     return res.status(201).json(toTeacher(created));
 });
 router.put('/teachers/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const id = String(req.params.id);
     const existing = await db_1.prisma.user.findFirst({
-        where: { id, role: 'teacher' },
+        where: { id, role: 'teacher', institutionName },
         select: {
             id: true,
             email: true,
@@ -785,8 +863,9 @@ router.put('/teachers/:id', (0, auth_1.authenticate)('admin'), async (req, res) 
     return res.json(toTeacher(updated));
 });
 router.delete('/teachers/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const id = String(req.params.id);
-    const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'teacher' } });
+    const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'teacher', institutionName } });
     if (!existing) {
         return res.status(404).json({ error: 'Öğretmen bulunamadı' });
     }
@@ -794,6 +873,7 @@ router.delete('/teachers/:id', (0, auth_1.authenticate)('admin'), async (req, re
     return res.json(toTeacher(existing));
 });
 router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body;
     if (!name || !email) {
         return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
@@ -831,6 +911,7 @@ router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => 
             classId: classId !== null && classId !== void 0 ? classId : '',
             parentPhone,
             profilePictureUrl,
+            institutionName,
         },
         select: {
             id: true,
@@ -854,9 +935,10 @@ router.post('/students', (0, auth_1.authenticate)('admin'), async (req, res) => 
     return res.status(201).json(toStudent(created));
 });
 router.put('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const id = String(req.params.id);
     const { name, email, gradeLevel, classId, parentPhone: parentPhoneRaw, password, profilePictureUrl } = req.body;
-    const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'student' } });
+    const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'student', institutionName } });
     if (!existing) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
@@ -936,8 +1018,9 @@ router.put('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) 
     return res.json(toStudent(updated));
 });
 router.delete('/students/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const id = String(req.params.id);
-    const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'student' } });
+    const existing = await db_1.prisma.user.findFirst({ where: { id, role: 'student', institutionName } });
     if (!existing) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
@@ -946,6 +1029,7 @@ router.delete('/students/:id', (0, auth_1.authenticate)('admin'), async (req, re
     return res.json(toStudent(existing));
 });
 router.post('/parents', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const { name, email, password } = req.body;
     if (!name || !email) {
         return res.status(400).json({ error: 'İsim ve e-posta zorunludur' });
@@ -964,15 +1048,57 @@ router.post('/parents', (0, auth_1.authenticate)('admin'), async (req, res) => {
             email,
             role: 'parent',
             passwordHash,
+            institutionName,
         },
         select: { id: true, name: true, email: true },
     });
     return res.status(201).json(toParent(created, []));
 });
+router.put('/parents/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
+    const id = String(req.params.id);
+    const { name, email, password } = req.body;
+    if (!name && !email && (password === undefined || password === '')) {
+        return res.status(400).json({ error: 'Güncellenecek en az bir alan (isim, e-posta veya şifre) gereklidir' });
+    }
+    const existing = await db_1.prisma.user.findFirst({
+        where: { id, role: 'parent', institutionName },
+        include: { parentStudents: { select: { studentId: true } } },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Veli bulunamadı' });
+    }
+    if (email && email !== existing.email) {
+        const emailTaken = await db_1.prisma.user.findFirst({
+            where: { email, role: 'parent', NOT: { id } },
+        });
+        if (emailTaken) {
+            return res.status(400).json({ error: 'Bu e-posta ile kayıtlı başka bir veli var' });
+        }
+    }
+    if (password !== undefined && password.length > 0 && password.length < 4) {
+        return res.status(400).json({ error: 'Yeni şifre en az 4 karakter olmalıdır' });
+    }
+    const updateData = {};
+    if (name)
+        updateData.name = name;
+    if (email)
+        updateData.email = email;
+    if (password && password.length >= 4) {
+        updateData.passwordHash = await bcrypt_1.default.hash(password, 10);
+    }
+    const updated = await db_1.prisma.user.update({
+        where: { id },
+        data: updateData,
+        select: { id: true, name: true, email: true },
+    });
+    return res.json(toParent(updated, existing.parentStudents.map((ps) => ps.studentId)));
+});
 router.delete('/parents/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const id = String(req.params.id);
     const existing = await db_1.prisma.user.findFirst({
-        where: { id, role: 'parent' },
+        where: { id, role: 'parent', institutionName },
         include: { parentStudents: { select: { studentId: true } } },
     });
     if (!existing) {
@@ -982,20 +1108,21 @@ router.delete('/parents/:id', (0, auth_1.authenticate)('admin'), async (req, res
     return res.json(toParent(existing, existing.parentStudents.map((ps) => ps.studentId)));
 });
 router.post('/parents/:id/assign-student', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const parentId = String(req.params.id);
     const { studentId } = req.body;
     if (!studentId) {
         return res.status(400).json({ error: 'studentId zorunludur' });
     }
     const parent = await db_1.prisma.user.findFirst({
-        where: { id: parentId, role: 'parent' },
+        where: { id: parentId, role: 'parent', institutionName },
         include: { parentStudents: { select: { studentId: true } } },
     });
     if (!parent) {
         return res.status(404).json({ error: 'Veli bulunamadı' });
     }
     const studentExists = await db_1.prisma.user.findFirst({
-        where: { id: studentId, role: 'student' },
+        where: { id: studentId, role: 'student', institutionName },
     });
     if (!studentExists) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
@@ -1008,19 +1135,20 @@ router.post('/parents/:id/assign-student', (0, auth_1.authenticate)('admin'), as
         update: {},
     });
     const updated = await db_1.prisma.user.findFirst({
-        where: { id: parentId },
+        where: { id: parentId, institutionName },
         include: { parentStudents: { select: { studentId: true } } },
     });
     return res.json(toParent(updated, updated.parentStudents.map((ps) => ps.studentId)));
 });
 router.post('/parents/:id/unassign-student', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
     const parentId = String(req.params.id);
     const { studentId } = req.body;
     if (!studentId) {
         return res.status(400).json({ error: 'studentId zorunludur' });
     }
     const parent = await db_1.prisma.user.findFirst({
-        where: { id: parentId, role: 'parent' },
+        where: { id: parentId, role: 'parent', institutionName },
         include: { parentStudents: { select: { studentId: true } } },
     });
     if (!parent) {
@@ -1030,38 +1158,54 @@ router.post('/parents/:id/unassign-student', (0, auth_1.authenticate)('admin'), 
         where: { parentId, studentId },
     });
     const updated = await db_1.prisma.user.findFirst({
-        where: { id: parentId },
+        where: { id: parentId, institutionName },
         include: { parentStudents: { select: { studentId: true } } },
     });
     return res.json(toParent(updated, updated.parentStudents.map((ps) => ps.studentId)));
 });
-// Şikayet / öneriler (öğrenci + veli)
+// Şikayet / öneriler (öğrenci + veli) – kurum bazlı
 router.get('/complaints', (0, auth_1.authenticate)('admin'), async (req, res) => {
-    const status = req.query.status ? String(req.query.status) : undefined;
-    const list = await db_1.prisma.complaint.findMany({
-        where: status ? { status: status } : undefined,
-        include: {
-            fromUser: { select: { id: true, name: true, email: true, role: true } },
-            aboutTeacher: { select: { id: true, name: true, email: true, role: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-    });
-    return res.json(list.map((c) => {
-        var _a, _b, _c;
-        return ({
-            id: c.id,
-            fromRole: c.fromRole,
-            fromUser: c.fromUser,
-            aboutTeacher: (_a = c.aboutTeacher) !== null && _a !== void 0 ? _a : undefined,
-            subject: c.subject,
-            body: c.body,
-            status: c.status,
-            createdAt: c.createdAt.toISOString(),
-            reviewedAt: (_b = c.reviewedAt) === null || _b === void 0 ? void 0 : _b.toISOString(),
-            closedAt: (_c = c.closedAt) === null || _c === void 0 ? void 0 : _c.toISOString(),
+    try {
+        const institutionName = getInstitutionName(req);
+        const status = req.query.status ? String(req.query.status) : undefined;
+        const where = {};
+        if (status) {
+            where.status = status;
+        }
+        if (institutionName) {
+            // Şikayeti gönderen kullanıcının kurumuna göre filtrele
+            where.fromUser = { institutionName };
+        }
+        const list = await db_1.prisma.complaint.findMany({
+            where,
+            include: {
+                fromUser: { select: { id: true, name: true, email: true, role: true, institutionName: true } },
+                aboutTeacher: { select: { id: true, name: true, email: true, role: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 100,
         });
-    }));
+        return res.json(list.map((c) => {
+            var _a, _b, _c;
+            return ({
+                id: c.id,
+                fromRole: c.fromRole,
+                fromUser: c.fromUser,
+                aboutTeacher: (_a = c.aboutTeacher) !== null && _a !== void 0 ? _a : undefined,
+                subject: c.subject,
+                body: c.body,
+                status: c.status,
+                createdAt: c.createdAt.toISOString(),
+                reviewedAt: (_b = c.reviewedAt) === null || _b === void 0 ? void 0 : _b.toISOString(),
+                closedAt: (_c = c.closedAt) === null || _c === void 0 ? void 0 : _c.toISOString(),
+            });
+        }));
+    }
+    catch (error) {
+        console.error('[admin/complaints] Error:', error);
+        // Şikayet listesi boş olsa bile hata döndürmeyelim, boş liste döndürelim
+        return res.json([]);
+    }
 });
 // Bildirimler (şikayet/öneri vb.)
 router.get('/notifications', (0, auth_1.authenticate)('admin'), async (req, res) => {
@@ -1105,14 +1249,20 @@ router.put('/notifications/:id/read', (0, auth_1.authenticate)('admin'), async (
         readAt: (_a = updated.readAt) === null || _a === void 0 ? void 0 : _a.toISOString(),
     });
 });
+// Şikayet durum güncelleme – kurum bazlı güvenlik
 router.put('/complaints/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
     var _a, _b, _c, _d, _e;
+    const institutionName = getInstitutionName(req);
     const id = String(req.params.id);
     const { status } = req.body;
     if (!status) {
         return res.status(400).json({ error: 'status zorunludur (open|reviewed|closed)' });
     }
-    const existing = await db_1.prisma.complaint.findUnique({ where: { id } });
+    const existing = await db_1.prisma.complaint.findFirst({
+        where: institutionName
+            ? { id, fromUser: { institutionName } }
+            : { id },
+    });
     if (!existing) {
         return res.status(404).json({ error: 'Kayıt bulunamadı' });
     }
@@ -1141,6 +1291,21 @@ router.put('/complaints/:id', (0, auth_1.authenticate)('admin'), async (req, res
         reviewedAt: (_d = updated.reviewedAt) === null || _d === void 0 ? void 0 : _d.toISOString(),
         closedAt: (_e = updated.closedAt) === null || _e === void 0 ? void 0 : _e.toISOString(),
     });
+});
+// Şikayet silme – kurum bazlı güvenlik (AdminDashboard "Sil" butonu için)
+router.delete('/complaints/:id', (0, auth_1.authenticate)('admin'), async (req, res) => {
+    const institutionName = getInstitutionName(req);
+    const id = String(req.params.id);
+    const existing = await db_1.prisma.complaint.findFirst({
+        where: institutionName
+            ? { id, fromUser: { institutionName } }
+            : { id },
+    });
+    if (!existing) {
+        return res.status(404).json({ error: 'Kayıt bulunamadı' });
+    }
+    await db_1.prisma.complaint.delete({ where: { id } });
+    return res.status(204).send();
 });
 // Koçluk seansları - admin görünümü (sadece okuma)
 router.get('/coaching', (0, auth_1.authenticate)('admin'), async (req, res) => {

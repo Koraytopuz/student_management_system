@@ -86,17 +86,29 @@ const ExamAnalysisReport: React.FC<ExamAnalysisReportProps> = ({ token, examId: 
   }, [examId, studentId]);
 
   const fetchAnalysis = async () => {
+    if (!examId || !studentId) {
+      setLoading(false);
+      return;
+    }
     try {
       const response = await fetch(
-        `http://localhost:4000/api/exams/${examId}/analysis/${studentId}`,
+        `/api/exams/${examId}/analysis/${studentId}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Response is not JSON');
+      }
       const analysisData = await response.json();
       setData(analysisData);
     } catch (error) {
       console.error('Error fetching analysis:', error);
+      setData(null);
     } finally {
       setLoading(false);
     }
@@ -121,7 +133,7 @@ const ExamAnalysisReport: React.FC<ExamAnalysisReportProps> = ({ token, examId: 
   const { examResult, priorityAnalysis, rankComparison, whatIfProjections } = data;
 
   // Prepare chart data
-  const lessonChartData = examResult.details.map((detail) => ({
+  const lessonChartData = (examResult.details || []).map((detail) => ({
     name: detail.lessonName,
     net: detail.net,
     doğru: detail.correct,
@@ -226,7 +238,7 @@ const ExamAnalysisReport: React.FC<ExamAnalysisReportProps> = ({ token, examId: 
         </div>
 
         {/* What-If Projection Card */}
-        <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
+        <div className="bg-linear-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
           <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
             💡 Potansiyel Gelişim
           </h2>

@@ -5,6 +5,8 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  /** Kurum / dershane adı – tüm panellerde marka olarak kullanılır */
+  institutionName?: string;
   /** Bazı dashboard'larda default seçim için kullanılır */
   gradeLevel?: string;
   /** Öğretmenler için: atanmış branşlar */
@@ -88,6 +90,7 @@ export interface Message {
   studentId?: string;
   subject?: string;
   text: string;
+  attachments?: unknown;
   createdAt: string;
   read: boolean;
   readAt?: string;
@@ -148,6 +151,16 @@ export interface AdminNotification {
   relatedEntityId?: string;
   readAt?: string;
   createdAt: string;
+}
+
+export interface RootAdminUser {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string;
+  lastSeenAt?: string;
+  isSystemAdmin?: boolean;
+  institutionName?: string;
 }
 
 export interface TeacherNotification {
@@ -411,6 +424,10 @@ export interface TeacherStudent {
   name: string;
   gradeLevel?: string;
   classId?: string;
+  /** UI'da "Şube" olarak kullanılacak */
+  section?: string;
+  /** UI'da "Alan" olarak kullanılacak (SAYISAL, SÖZEL vb.) */
+  stream?: string;
   /** Öğrenci kaydına işlenmiş veli telefon numarası (varsa) */
   parentPhone?: string;
   lastSeenAt?: string;
@@ -759,6 +776,10 @@ export function markTeacherMessageRead(token: string, messageId: string) {
   return apiRequest(`/teacher/messages/${messageId}/read`, { method: 'PUT' }, token);
 }
 
+export function getStudentMessageById(token: string, messageId: string) {
+  return apiRequest<Message>(`/student/messages/${messageId}`, {}, token);
+}
+
 export function getParentCalendar(token: string, startDate: string, endDate: string) {
   return apiRequest<{ events: CalendarEvent[] }>(
     `/parent/calendar?startDate=${startDate}&endDate=${endDate}&viewType=week`,
@@ -789,6 +810,10 @@ export function getTeacherNotifications(token: string, limit = 5) {
 
 export function getTeacherUnreadNotificationCount(token: string) {
   return apiRequest<{ count: number }>('/teacher/notifications/unread-count', {}, token);
+}
+
+export function getStudentUnreadNotificationCount(token: string) {
+  return apiRequest<{ count: number }>('/student/notifications/unread-count', {}, token);
 }
 
 export function markTeacherNotificationRead(token: string, notificationId: string) {
@@ -828,14 +853,26 @@ export function getStudentDashboard(token: string) {
 }
 
 export function getStudentBadges(token: string) {
-  return apiRequest<StudentBadgeProgress[]>('/student/badges', {}, token).then((payload: any) => {
-    if (Array.isArray(payload)) {
-      return payload as StudentBadgeProgress[];
-    }
+  return apiRequest<any>('/student/badges', {}, token).then((payload: any) => {
+    // Backend returns { badges: [...] }
     if (payload && Array.isArray(payload.badges)) {
       return payload.badges as StudentBadgeProgress[];
     }
+    // Fallback: if payload is directly an array (shouldn't happen but handle it)
+    if (Array.isArray(payload)) {
+      return payload as StudentBadgeProgress[];
+    }
+    // If payload has an error field, log it
+    if (payload && payload.error) {
+      console.error('[getStudentBadges] API error:', payload.error);
+      throw new Error(payload.error);
+    }
+    // Empty response or unexpected format
+    console.warn('[getStudentBadges] Unexpected response format:', payload);
     return [];
+  }).catch((error) => {
+    console.error('[getStudentBadges] Request failed:', error);
+    throw error;
   });
 }
 
@@ -1308,6 +1345,16 @@ export function updateTeacherCoachingGoal(
   );
 }
 
+export function deleteTeacherCoachingGoal(token: string, goalId: string) {
+  return apiRequest<{ success: true }>(
+    `/teacher/coaching-goals/${goalId}`,
+    {
+      method: 'DELETE',
+    },
+    token,
+  );
+}
+
 export function getTeacherCoachingNotes(token: string, studentId: string) {
   return apiRequest<TeacherCoachingNote[]>(
     `/teacher/students/${studentId}/coaching-notes`,
@@ -1330,6 +1377,34 @@ export function createTeacherCoachingNote(
     {
       method: 'POST',
       body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function updateTeacherCoachingNote(
+  token: string,
+  noteId: string,
+  updates: Partial<{
+    content: string;
+    visibility: CoachingNoteVisibility;
+  }>,
+) {
+  return apiRequest<TeacherCoachingNote>(
+    `/teacher/coaching-notes/${noteId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    },
+    token,
+  );
+}
+
+export function deleteTeacherCoachingNote(token: string, noteId: string) {
+  return apiRequest<{ success: true }>(
+    `/teacher/coaching-notes/${noteId}`,
+    {
+      method: 'DELETE',
     },
     token,
   );
@@ -1596,6 +1671,14 @@ export function muteAllInMeeting(token: string, meetingId: string) {
   );
 }
 
+export function unmuteAllInMeeting(token: string, meetingId: string) {
+  return apiRequest<{ success: boolean; unmuted: number }>(
+    `/teacher/meetings/${meetingId}/unmute-all`,
+    { method: 'POST' },
+    token,
+  );
+}
+
 /** Derse kayıtlı öğrencileri getir (yoklama modalı için) */
 export function getMeetingAttendanceStudents(token: string, meetingId: string) {
   return apiRequest<{
@@ -1744,6 +1827,50 @@ export interface AdminAttendanceStudentHistoryResponse {
     teacherId: string;
     teacherName: string;
   }>;
+}
+
+// Sistem yöneticisi – sadece admin@skytechyazilim.com.tr için kontrol paneli
+export function getRootAdmins(token: string) {
+  return apiRequest<RootAdminUser[]>('/root-admin/admins', {}, token);
+}
+
+export function createRootAdmin(
+  token: string,
+  payload: { name: string; email: string; password: string },
+) {
+  return apiRequest<RootAdminUser>(
+    '/root-admin/admins',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function updateRootAdmin(
+  token: string,
+  id: string,
+  payload: { name?: string; email?: string; password?: string },
+) {
+  return apiRequest<RootAdminUser>(
+    `/root-admin/admins/${id}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function deleteRootAdmin(token: string, id: string) {
+  return apiRequest<{ id: string; deleted: boolean }>(
+    `/root-admin/admins/${id}`,
+    {
+      method: 'DELETE',
+    },
+    token,
+  );
 }
 
 /** Öğretmenin yoklama alabileceği sınıfları listele */

@@ -171,7 +171,11 @@ export const ParentOperationsTab: React.FC<ParentOperationsTabProps> = ({
                   </option>
                   {uniqueAllowedGrades.map((g) => (
                     <option key={g} value={g}>
-                      {g === 'Mezun' ? 'Mezun Sınıfı' : `${g}. Sınıf`}
+                      {g === 'TYT' || g === 'AYT' || g === 'LGS'
+                        ? g
+                        : g === 'Mezun'
+                          ? 'Mezun Sınıfı'
+                          : `${g}. Sınıf`}
                     </option>
                   ))}
                 </select>

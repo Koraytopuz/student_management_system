@@ -203,6 +203,7 @@ model User {
   passwordHash String    @map("password_hash")
   createdAt    DateTime  @default(now())
   lastSeenAt   DateTime? @map("last_seen_at")
+  institutionName String? @map("institution_name")
 
   // Teacher-specific
   subjectAreas  String[] @default([]) @map("subject_areas")
@@ -841,6 +842,7 @@ model QuestionBank {
   tags      String[] @default([])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  institutionName String? @map("institution_name")
 
   subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
@@ -1034,13 +1036,32 @@ model Exam {
   fileUrl       String?  @map("file_url")
   fileName      String?  @map("file_name")
   createdAt     DateTime @default(now()) @map("created_at")
+  institutionName String? @map("institution_name")
 
   results         ExamResult[]
   examAssignments ExamAssignment[]
+  examQuestions   ExamQuestion[]
 
   @@index([type])
   @@index([date])
   @@map("exams")
+}
+
+model ExamQuestion {
+  id             Int     @id @default(autoincrement())
+  examId         Int     @map("exam_id")
+  questionNumber Int     @map("question_number")
+  correctOption  String? @map("correct_option") // "A","B","C","D","E" or null
+  topicName      String  @default("Genel") @map("topic_name")
+  lessonName     String  @default("Genel") @map("lesson_name")
+  difficulty     String  @default("Orta")
+  questionText   String? @map("question_text") @db.Text
+
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, questionNumber])
+  @@index([examId])
+  @@map("exam_questions")
 }
 
 model ExamResult {

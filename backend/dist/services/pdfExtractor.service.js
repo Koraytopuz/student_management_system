@@ -18,7 +18,7 @@ if (typeof globalThis.DOMMatrix === 'undefined') {
 }
 // Import pdfjs-dist (use standard import, polyfills handle DOM APIs)
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfjsLib = require('pdfjs-dist');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 // For pdfjs-dist to work in Node.js, we need canvas
 // Canvas factory implementation for pdfjs-dist
 let NodeCanvasFactory = null;

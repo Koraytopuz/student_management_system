@@ -102,6 +102,9 @@ function parseAIGeneratedQuestions(text) {
  * GET /questionbank - Soru listesi (filtreli, sayfalı)
  */
 router.get('/', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (req, res) => {
+    var _a, _b;
+    const authReq = req;
+    const institutionName = (_a = authReq.user) === null || _a === void 0 ? void 0 : _a.institutionName;
     const { subjectId, gradeLevel, topic, difficulty, bloomLevel, type, isApproved, source, search, page = 1, limit = 20, } = req.query;
     const where = {};
     if (subjectId)
@@ -129,6 +132,11 @@ router.get('/', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (r
     }
     const skip = (Number(page) - 1) * Number(limit);
     const take = Number(limit);
+    // Kurum filtresi: kurum adı varsa sadece o kuruma veya kurumsuz (global) sorular
+    if (institutionName) {
+        where.OR = (_b = where.OR) !== null && _b !== void 0 ? _b : [];
+        where.OR.push({ institutionName }, { institutionName: null });
+    }
     const [questions, total] = await Promise.all([
         prisma.questionBank.findMany({
             where,
@@ -153,9 +161,10 @@ router.get('/', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (r
  * POST /questionbank/generate - AI ile soru üret
  */
 router.post('/generate', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (req, res) => {
-    var _a;
+    var _a, _b;
     const authReq = req;
     const teacherId = authReq.user.id;
+    const institutionName = (_a = authReq.user) === null || _a === void 0 ? void 0 : _a.institutionName;
     const data = req.body;
     // Validasyon
     if (!data.subjectId || !data.gradeLevel || !data.topic || !data.count) {
@@ -171,7 +180,7 @@ router.post('/generate', (0, auth_1.authenticateMultiple)(['teacher', 'admin']),
     }
     // Referans soruları al (Few-shot learning için)
     let referenceQuestions = [];
-    if ((_a = data.referenceQuestionIds) === null || _a === void 0 ? void 0 : _a.length) {
+    if ((_b = data.referenceQuestionIds) === null || _b === void 0 ? void 0 : _b.length) {
         const refs = await prisma.questionBank.findMany({
             where: { id: { in: data.referenceQuestionIds } },
             select: { text: true, choices: true, correctAnswer: true },
@@ -207,32 +216,86 @@ router.post('/generate', (0, auth_1.authenticateMultiple)(['teacher', 'admin']),
     const typeLabel = data.questionType === 'multiple_choice' ? 'çoktan seçmeli' : data.questionType === 'true_false' ? 'doğru/yanlış' : 'açık uçlu';
     // AI prompt – görselli sorular dahil, bazı sorular görsel içermeli
     const visualQuestionCount = Math.max(1, Math.floor(data.count * 0.3)); // %30'u görselli olsun, en az 1
+    let typeSpecificRules = '';
+    let jsonExample = '';
+    if (data.questionType === 'multiple_choice') {
+        typeSpecificRules = `
+- Her soruda TAM 5 ŞIK olmalı: A, B, C, D, E.
+- "choices" dizisinde sadece şık metinleri strings olarak yer almalı (A) B) gibi ön ekler KOYMA).
+- "correctAnswer" alanı "A", "B", "C", "D" veya "E" olmalı.
+- "distractorReasons" dizisinde her yanlış şık için kısa bir açıklama olmalı.`;
+        jsonExample = `
+  {
+    "text": "Soru metni...",
+    "imageDescription": null,
+    "choices": ["Şık 1", "Şık 2", "Şık 3", "Şık 4", "Şık 5"],
+    "correctAnswer": "A",
+    "distractorReasons": ["B yanlış çünkü...", "C yanlış çünkü...", "D yanlış çünkü...", "E yanlış çünkü..."],
+    "solutionExplanation": "Çözüm açıklaması..."
+  }`;
+    }
+    else if (data.questionType === 'true_false') {
+        typeSpecificRules = `
+- "choices" dizisi tam olarak ["Doğru", "Yanlış"] olmalı.
+- "correctAnswer" alanı "Doğru" veya "Yanlış" olmalı.
+- "distractorReasons" boş dizi [] olabilir.`;
+        jsonExample = `
+  {
+    "text": "Soru metni...",
+    "imageDescription": null,
+    "choices": ["Doğru", "Yanlış"],
+    "correctAnswer": "Doğru",
+    "distractorReasons": [],
+    "solutionExplanation": "Neden doğru olduğuna dair açıklama..."
+  }`;
+    }
+    else if (data.questionType === 'open_ended') {
+        typeSpecificRules = `
+- Açık uçlu sorudur, ŞIK YOKTUR.
+- "choices" alanı boş dizi [] olmalı.
+- "correctAnswer" alanına örnek/beklenen cevabı yaz.
+- "distractorReasons" alanı boş dizi [] olmalı.`;
+        jsonExample = `
+  {
+    "text": "Soru metni...",
+    "imageDescription": null,
+    "choices": [],
+    "correctAnswer": "Beklenen cevap metni...",
+    "distractorReasons": [],
+    "solutionExplanation": "Çözüm açıklaması..."
+  }`;
+    }
     const prompt = `Sen bir Türk eğitim uzmanı ve soru yazarısın. İstediğim tam ${data.count} adet ${typeLabel} soru üret.
 
 Parametreler: Ders=${subject.name}, Sınıf=${data.gradeLevel}, Konu=${data.topic}, Zorluk=${difficultyLabel}, Bloom=${bloomLabel}.
 
-Kurallar:
+Genel Kurallar:
 - Sorular MEB müfredatına uygun, sade dil, ${data.gradeLevel}. sınıf seviyesinde olsun.
-- ${data.questionType === 'multiple_choice' ? 'Her soruda tam 5 şık: A, B, C, D, E. choices dizisinde sadece şık metinleri (A) B) ön eki olmadan) ver.' : ''}
-- Çeldiriciler yaygın öğrenci hatalarına dayansın; distractorReasons ile kısa gerekçe ver.
-- solutionExplanation tek paragraf, okunaklı ve net olsun; gereksiz tekrar veya dev cümleler yazma.
+- solutionExplanation tek paragraf, okunaklı ve net olsun.
 
-ÖNEMLİ - Görselli Sorular:
-- Toplam ${data.count} sorudan en az ${visualQuestionCount} tanesi görsel gerektiren soru olsun (grafik, şekil, tablo, diyagram).
-- Görsel gerektiren sorularda "imageDescription" alanına görselin ne göstermesi gerektiğini kısa metinle yaz (örn: "x² parabolünün tepe noktası (2,4) olan grafiği", "3x4'lük veri tablosu: satırlar A,B,C; sütunlar 1,2,3,4").
-- Görsel gerektirmeyen sorularda "imageDescription": null yaz.
-- "image" veya görsel URL alanı EKLEME – yapay zeka görsel oluşturamaz, sadece imageDescription yaz.
+Soru Tipi Kuralları (${typeLabel}):
+${typeSpecificRules}
 
-Yanıtın SADECE aşağıdaki JSON dizisi olsun, başında/sonunda açıklama veya markdown kodu olmasın:
-[
-  {"text":"Görselli soru metni (örn: Grafikte verilen fonksiyonun...)","imageDescription":"Parabol grafiği, tepe (2,4)","choices":["şık1","şık2","şık3","şık4","şık5"],"correctAnswer":"A","distractorReasons":["B neden yanlış","C neden yanlış","D neden yanlış","E neden yanlış"],"solutionExplanation":"Kısa çözüm paragrafı."},
-  {"text":"Normal soru metni","imageDescription":null,"choices":["şık1","şık2","şık3","şık4","şık5"],"correctAnswer":"B","distractorReasons":["A neden yanlış","C neden yanlış","D neden yanlış","E neden yanlış"],"solutionExplanation":"Kısa çözüm paragrafı."}
+Görselli Sorular:
+- Toplam ${data.count} sorudan en az ${visualQuestionCount} tanesi görsel gerektiren soru olsun (grafik, şekil, tablo).
+- Bu sorularda "imageDescription" alanına görseli tarif et (örn: "x² parabolü..."). Diğerlerinde null yap.
+- ASLA "image" veya URL alanı ekleme.
+
+ÇIKTI FORMATI:
+- Yanıtın SADECE ve SADECE geçerli bir JSON array olmalı.
+- Başında/sonunda hiçbir açıklama, "düşünüyorum...", "işte sorular...", markdown (\`\`\`json) vb. OLMAMALI.
+- JSON formatı dışına çıkma.
+
+Beklenen JSON Formatı:
+[${jsonExample}, ...
 ]
-${referenceQuestions.length > 0 ? `\nÖrnek stil:\n${referenceQuestions.slice(0, 1).join('\n')}` : ''}`;
+
+${referenceQuestions.length > 0 ? `\nReferans Sorular:\n${referenceQuestions.slice(0, 1).join('\n')}` : ''}`;
     try {
         const response = await (0, ai_1.callGemini)(prompt, {
             temperature: 0.7,
-            maxOutputTokens: 4096,
+            maxOutputTokens: 8192,
+            responseMimeType: 'application/json',
         });
         // JSON parse için temizlik
         let cleanedResponse = response.trim();
@@ -298,6 +361,7 @@ ${referenceQuestions.length > 0 ? `\nÖrnek stil:\n${referenceQuestions.slice(0,
                 createdByTeacherId: teacherId,
                 isApproved: false,
                 tags: [],
+                institutionName: institutionName !== null && institutionName !== void 0 ? institutionName : null,
             };
             // imageUrl schema'dan kaldırıldı (migration uygulanmamış DB'ler için); sorular imageUrl olmadan kaydedilir
             return await prisma.questionBank.create({
@@ -454,8 +518,10 @@ router.get('/:id', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async
  * POST /questionbank - Yeni soru oluştur
  */
 router.post('/', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (req, res) => {
+    var _a;
     const authReq = req;
     const teacherId = authReq.user.id;
+    const institutionName = (_a = authReq.user) === null || _a === void 0 ? void 0 : _a.institutionName;
     const data = req.body;
     // Validasyon
     if (!data.subjectId || !data.gradeLevel || !data.topic || !data.text || !data.correctAnswer) {
@@ -474,6 +540,7 @@ router.post('/', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (
             subtopic: data.subtopic,
             kazanimKodu: data.kazanimKodu,
             text: data.text,
+            imageUrl: data.imageUrl,
             type: data.type,
             ...(data.choices && { choices: data.choices }),
             correctAnswer: data.correctAnswer,
@@ -487,6 +554,7 @@ router.post('/', (0, auth_1.authenticateMultiple)(['teacher', 'admin']), async (
             createdByTeacherId: teacherId,
             isApproved: true, // Öğretmen tarafından eklenen sorular otomatik onaylı
             approvedByTeacherId: teacherId,
+            institutionName: institutionName !== null && institutionName !== void 0 ? institutionName : null,
         },
         include: { subject: true },
     });
@@ -511,6 +579,7 @@ router.put('/:id', (0, auth_1.authenticate)('teacher'), async (req, res) => {
             ...(data.subtopic !== undefined && { subtopic: data.subtopic }),
             ...(data.kazanimKodu !== undefined && { kazanimKodu: data.kazanimKodu }),
             ...(data.text && { text: data.text }),
+            ...(data.imageUrl !== undefined && { imageUrl: data.imageUrl }),
             ...(data.type && { type: data.type }),
             ...(data.choices !== undefined && { choices: data.choices }),
             ...(data.correctAnswer && { correctAnswer: data.correctAnswer }),

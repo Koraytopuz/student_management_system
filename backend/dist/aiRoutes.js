@@ -2,6 +2,7 @@
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const multer_1 = __importDefault(require("multer"));
@@ -38,7 +39,49 @@ const upload = (0, multer_1.default)({
     },
 });
 const MAX_PAGES_PER_CALL = 10;
-const CHUNK_SIZE = 10; // Büyük PDF'leri CHUNK_SIZE sayfalık gruplara böl
+const CHUNK_SIZE = 3; // Büyük PDF'leri daha küçük parçalara bölerek işle (daha stabil sonuç için)
+const USER_CONFIGURED_MODEL = (_a = process.env.GEMINI_MODEL) === null || _a === void 0 ? void 0 : _a.trim();
+const FALLBACK_MODELS = [
+    // Prefer newer fast models first
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-flash-latest',
+    // Keep older but widely available fallbacks
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-pro-latest',
+];
+function resolveModelCandidates() {
+    const candidates = USER_CONFIGURED_MODEL
+        ? [USER_CONFIGURED_MODEL, ...FALLBACK_MODELS]
+        : FALLBACK_MODELS;
+    return Array.from(new Set(candidates.map((m) => m.trim()).filter(Boolean)));
+}
+function isModelNotFoundError(error) {
+    const e = error;
+    const msg = ((e === null || e === void 0 ? void 0 : e.message) ? String(e.message) : String(error !== null && error !== void 0 ? error : '')).toLowerCase();
+    const status = typeof (e === null || e === void 0 ? void 0 : e.status) === 'number' ? e.status : undefined;
+    return (status === 404 ||
+        msg.includes('not found') ||
+        msg.includes('unknown model') ||
+        msg.includes('call listmodels') ||
+        msg.includes('is not found for api version'));
+}
+function isQuotaError(error) {
+    var _a;
+    const e = error;
+    const status = typeof (e === null || e === void 0 ? void 0 : e.status) === 'number'
+        ? e.status
+        : typeof ((_a = e === null || e === void 0 ? void 0 : e.response) === null || _a === void 0 ? void 0 : _a.status) === 'number'
+            ? e.response.status
+            : undefined;
+    if (status === 429)
+        return true;
+    const msg = ((e === null || e === void 0 ? void 0 : e.message) ? String(e.message) : String(error !== null && error !== void 0 ? error : '')).toLowerCase();
+    return (msg.includes('429') ||
+        msg.includes('quota') ||
+        msg.includes('resource_exhausted') ||
+        msg.includes('rate limit'));
+}
 function mapDifficultyToQuestionBank(difficulty) {
     const value = (difficulty !== null && difficulty !== void 0 ? difficulty : '').toString().trim().toLowerCase();
     if (value.startsWith('kol'))
@@ -79,21 +122,22 @@ function extractResponseText(response) {
     var _a, _b;
     if (!response || typeof response !== 'object')
         return null;
-    const maybeText = response.text;
-    if (typeof maybeText === 'function') {
-        try {
-            const value = maybeText();
+    const r = response;
+    // @google/genai: response.text can be a getter returning string
+    try {
+        const t = r.text;
+        if (typeof t === 'string' && t.trim())
+            return t.trim();
+        if (typeof t === 'function') {
+            const value = t();
             if (typeof value === 'string' && value.trim())
                 return value.trim();
         }
-        catch {
-            // ignore
-        }
     }
-    else if (typeof maybeText === 'string' && maybeText.trim()) {
-        return maybeText.trim();
+    catch {
+        // ignore
     }
-    const candidates = response.candidates;
+    const candidates = r.candidates;
     if (Array.isArray(candidates) && candidates.length > 0) {
         const parts = (_b = (_a = candidates[0]) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.parts;
         if (Array.isArray(parts)) {
@@ -170,7 +214,7 @@ async function slicePdfBuffer(buffer, options) {
  * Admin tarafından yüklenen PDF test kitabını Gemini 1.5 Flash ile ayrıştırır.
  */
 router.post('/parse-pdf', (0, auth_1.authenticateMultiple)(['admin', 'teacher']), upload.single('file'), async (req, res) => {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     const authReq = req;
     void authReq;
     try {
@@ -201,9 +245,9 @@ router.post('/parse-pdf', (0, auth_1.authenticateMultiple)(['admin', 'teacher'])
             });
         }
         const genAi = new genai_1.GoogleGenAI({ apiKey });
-        const modelName = ((_a = process.env.GEMINI_MODEL) === null || _a === void 0 ? void 0 : _a.trim()) || 'gemini-1.5-flash-latest';
+        const modelCandidates = resolveModelCandidates();
         // Sayfa aralığı / ilk N sayfa parametreleri (multipart body'den gelir)
-        const pageModeRaw = (_b = req.body.pageMode) !== null && _b !== void 0 ? _b : undefined;
+        const pageModeRaw = (_a = req.body.pageMode) !== null && _a !== void 0 ? _a : undefined;
         const pageMode = pageModeRaw === 'firstN' || pageModeRaw === 'range' ? pageModeRaw : undefined;
         const maxPages = req.body.maxPages ? Number(req.body.maxPages) : undefined;
         const startPage = req.body.startPage ? Number(req.body.startPage) : undefined;
@@ -258,15 +302,17 @@ router.post('/parse-pdf', (0, auth_1.authenticateMultiple)(['admin', 'teacher'])
             '',
             '4. ŞIKLAR:',
             '   - Şıkları (A, B, C, D, E) ayrı ayrı `options` listesine yaz (örn: ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."]).',
+            '   - TEMİZLİK KURALI: Şık metinlerindeki tüm işaretlemeleri (koyu yazı, altı çizili, yanındaki "X", "Cevap", "(Doğru)" gibi ibareleri) KESİNLİKLE SİL. Öğrenci sadece şıkkın içeriğini görmeli.',
             '   - Şık sayısı 4 veya 5 olabilir. Mevcut şıkları olduğu gibi al.',
             '',
             '5. DOĞRU CEVAP:',
             '   - Varsa doğru cevabı `correct_option` alanına A, B, C, D veya E harfi olarak yaz.',
-            '   - Yoksa bu alanı null bırak veya hiç ekleme.',
+            '   - Eğer PDF üzerinde doğru şık işaretlenmişse (yuvarlak içine alınmış, koyu yazılmış vb.), bunu algıla ve `correct_option`\'a yaz, AMA `options` veya `question_text` içinden bu işareti temizle.',
+            '   - Yoksa bu alanı null bırak.',
             '',
-            '6. KONU BAŞLIĞI:',
-            '   - Her soru için kısa ve anlamlı bir konu başlığı tahmin et (örn: "Paragrafta Anlam", "Üslü Sayılar", "Kimya – Asit Baz", "Tarih – Osmanlı Dönemi").',
-            '   - Eğer konu başlığını kestiremiyorsan bile `topic` alanına en azından ilgili ders adını veya "Genel" yaz (asla boş bırakma).',
+            '6. KONU VE GÖRSELLER:',
+            '   - Her soru için kısa ve anlamlı bir konu başlığı tahmin et.',
+            '   - GÖRSELLİ SORULAR (Geometri, Grafik vb.): Eğer soru bir şekil içeriyorsa, bu şekli `question_text` içine metin olarak tasvir etmeye çalış (örn: "[Görsel: ABC üçgeni, A açısı 90 derece...]"). Bu sayede metin tabanlı da olsa soru anlaşılabilir olsun.',
             '',
             '7. ZORLUK SEVİYESİ:',
             '   - İstersen her soru için `difficulty` alanına "Kolay", "Orta" veya "Zor" değeri yazabilirsin; bu alan boş da olabilir.',
@@ -326,28 +372,52 @@ router.post('/parse-pdf', (0, auth_1.authenticateMultiple)(['admin', 'teacher'])
                 });
             }
             const pdfBase64 = chunkBuffer.toString('base64');
-            const response = await genAi.models.generateContent({
-                model: modelName,
-                contents: [
-                    {
-                        role: 'user',
-                        parts: [
+            let response = null;
+            let lastModelError = null;
+            for (const model of modelCandidates) {
+                try {
+                    response = await genAi.models.generateContent({
+                        model,
+                        contents: [
                             {
-                                inlineData: {
-                                    data: pdfBase64,
-                                    mimeType: req.file.mimetype || 'application/pdf',
-                                },
+                                role: 'user',
+                                parts: [
+                                    {
+                                        inlineData: {
+                                            data: pdfBase64,
+                                            mimeType: req.file.mimetype || 'application/pdf',
+                                        },
+                                    },
+                                ],
                             },
                         ],
-                    },
-                ],
-                config: {
-                    systemInstruction,
-                    temperature: 0.1,
-                    maxOutputTokens: 65536,
-                    responseMimeType: 'application/json',
-                },
-            });
+                        config: {
+                            systemInstruction,
+                            temperature: 0.1,
+                            maxOutputTokens: 65536,
+                            responseMimeType: 'application/json',
+                        },
+                    });
+                    break;
+                }
+                catch (err) {
+                    lastModelError = err;
+                    if (isModelNotFoundError(err)) {
+                        // eslint-disable-next-line no-console
+                        console.warn('[AI][parse-pdf] Model not available, trying next:', model);
+                        continue;
+                    }
+                    if (isQuotaError(err)) {
+                        // eslint-disable-next-line no-console
+                        console.warn('[AI][parse-pdf] Quota exceeded for model, trying next:', model);
+                        continue;
+                    }
+                    throw err;
+                }
+            }
+            if (!response) {
+                throw lastModelError !== null && lastModelError !== void 0 ? lastModelError : new Error('Yapay zeka modeli bulunamadı');
+            }
             const rawText = extractResponseText(response);
             if (!rawText) {
                 // eslint-disable-next-line no-console
@@ -397,6 +467,7 @@ router.post('/parse-pdf', (0, auth_1.authenticateMultiple)(['admin', 'teacher'])
                         systemInstruction: 'Sen bir JSON onarım asistanısın. Görevin sadece geçerli bir JSON array döndürmek. Doğal dil açıklaması yazma. Sadece JSON döndür.',
                         temperature: 0.1,
                         maxOutputTokens: 65536,
+                        responseMimeType: 'application/json',
                     });
                     // eslint-disable-next-line no-console
                     console.log(`[AI][parse-pdf] Repair response length for chunk ${chunkIdx + 1}:`, repaired.length);
@@ -454,7 +525,7 @@ router.post('/parse-pdf', (0, auth_1.authenticateMultiple)(['admin', 'teacher'])
             let retrySec = null;
             try {
                 const parsed = JSON.parse(raw);
-                const retryInfo = (_d = (_c = parsed === null || parsed === void 0 ? void 0 : parsed.error) === null || _c === void 0 ? void 0 : _c.details) === null || _d === void 0 ? void 0 : _d.find((d) => { var _a; return (_a = d['@type']) === null || _a === void 0 ? void 0 : _a.includes('RetryInfo'); });
+                const retryInfo = (_c = (_b = parsed === null || parsed === void 0 ? void 0 : parsed.error) === null || _b === void 0 ? void 0 : _b.details) === null || _c === void 0 ? void 0 : _c.find((d) => { var _a; return (_a = d['@type']) === null || _a === void 0 ? void 0 : _a.includes('RetryInfo'); });
                 if (retryInfo === null || retryInfo === void 0 ? void 0 : retryInfo.retryDelay) {
                     const match = retryInfo.retryDelay.match(/(\d+)/);
                     if (match && match[1])
@@ -486,8 +557,8 @@ router.post('/parse-pdf', (0, auth_1.authenticateMultiple)(['admin', 'teacher'])
  * PDF sayfalarını görsele çevirip Gemini ile soru bölgelerini tespit eder,
  * Sharp ile her soruyu kırpıp görsel olarak döndürür.
  */
-router.post('/extract-questions', (0, auth_1.authenticateMultiple)(['admin', 'teacher']), upload.single('file'), async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g;
+router.post('/extract-questions', (0, auth_1.authenticateMultiple)(['admin', 'teacher', 'student']), upload.single('file'), async (req, res) => {
+    var _a, _b, _c, _d, _e, _f;
     try {
         if (!req.file) {
             return res.status(400).json({
@@ -517,27 +588,48 @@ router.post('/extract-questions', (0, auth_1.authenticateMultiple)(['admin', 'te
         }
         // Canvas tabanlı extractor varsa onu kullan, yoksa fallback
         if (extractQuestionsFromPdf) {
-            const outputDir = path_1.default.join(__dirname, '..', 'uploads', 'question-images');
-            const questions = await extractQuestionsFromPdf(fileBuffer, {
-                apiKey,
-                modelName: ((_a = process.env.GEMINI_MODEL) === null || _a === void 0 ? void 0 : _a.trim()) || 'gemini-2.0-flash',
-                scale: 2.0,
-                skipEmptyPages: true,
-                outputDir,
-            });
-            return res.json({
-                success: true,
-                questions,
-                count: questions.length,
-            });
+            try {
+                const outputDir = path_1.default.join(__dirname, '..', 'uploads', 'question-images');
+                const questions = await extractQuestionsFromPdf(fileBuffer, {
+                    apiKey,
+                    modelName: (_a = resolveModelCandidates()[0]) !== null && _a !== void 0 ? _a : (((_b = process.env.GEMINI_MODEL) === null || _b === void 0 ? void 0 : _b.trim()) || 'gemini-2.0-flash'),
+                    scale: 2.0,
+                    skipEmptyPages: true,
+                    outputDir,
+                });
+                return res.json({
+                    success: true,
+                    questions,
+                    count: questions.length,
+                });
+            }
+            catch (err) {
+                // eslint-disable-next-line no-console
+                console.warn('[AI] Canvas extractor failed, falling back to pdf-lib:', err);
+                // Fall through to fallback
+            }
         }
         // Fallback: Canvas yok – pdf-lib ile her sayfayı ayrı PDF olarak Gemini'ye gönder
         // eslint-disable-next-line no-console
         console.log('[AI][extract-questions] Using pdf-lib fallback (no canvas)');
         const genAi = new genai_1.GoogleGenAI({ apiKey });
-        const modelName = ((_b = process.env.GEMINI_MODEL) === null || _b === void 0 ? void 0 : _b.trim()) || 'gemini-2.0-flash';
-        const srcDoc = await pdf_lib_1.PDFDocument.load(fileBuffer);
-        const numPages = srcDoc.getPageCount();
+        const modelCandidates = resolveModelCandidates();
+        let srcDoc;
+        let numPages;
+        try {
+            srcDoc = await pdf_lib_1.PDFDocument.load(fileBuffer);
+            numPages = srcDoc.getPageCount();
+        }
+        catch (pdfErr) {
+            // eslint-disable-next-line no-console
+            console.error('[AI][extract-questions] PDFDocument.load failed:', pdfErr);
+            return res.json({
+                success: true,
+                questions: [],
+                count: 0,
+                error: 'PDF okunamadı, cevap formu boş açıldı.',
+            });
+        }
         const allQuestions = [];
         let globalQNum = 1;
         for (let pageIdx = 0; pageIdx < numPages; pageIdx++) {
@@ -550,64 +642,133 @@ router.post('/extract-questions', (0, auth_1.authenticateMultiple)(['admin', 'te
                 const pageBase64 = Buffer.from(singlePageBytes).toString('base64');
                 // eslint-disable-next-line no-console
                 console.log(`[AI][extract-questions] Processing page ${pageIdx + 1}/${numPages}`);
-                const response = await genAi.models.generateContent({
-                    model: modelName,
-                    contents: [
-                        {
-                            role: 'user',
-                            parts: [
+                let response = null;
+                let lastModelError = null;
+                for (const model of modelCandidates) {
+                    try {
+                        response = await genAi.models.generateContent({
+                            model,
+                            contents: [
                                 {
-                                    inlineData: {
-                                        data: pageBase64,
-                                        mimeType: 'application/pdf',
-                                    },
-                                },
-                                {
-                                    text: `Bu PDF sayfasındaki tüm çoktan seçmeli soruları bul. Her soru için şunları döndür:
-- questionNumber: soru numarası
-- question_text: soru metni (paragraf, bağlam dahil)
-- options: şıklar dizisi ("A) ...", "B) ..." şeklinde)
-- correct_option: doğru cevap harfi (varsa, yoksa null)
-- difficulty: zorluk (Kolay/Orta/Zor)
-- topic: konu başlığı
+                                    role: 'user',
+                                    parts: [
+                                        {
+                                            inlineData: {
+                                                data: pageBase64,
+                                                mimeType: 'application/pdf',
+                                            },
+                                        },
+                                        {
+                                            text: `Bu PDF sayfasındaki tüm çoktan seçmeli soruları bul. Her soru için aşağıdaki alanları çıkar:
+- questionNumber: soru numarası (sayfa içinde 1'den başla, tam sayı)
+- question_text: soru metni (tam metin, Türkçe)
+- options: şıklar dizisi, örn. ["A) ...", "B) ...", "C) ...", "D) ...", "E) ..."]
+- correct_option: doğru şık harfi ("A", "B", "C", "D" veya "E") veya bilinmiyorsa null
+- topic: sorunun konu başlığı (örn. "Türev", "İntegral", "Osmanlı Tarihi", bilinmiyorsa "Genel")
+- difficulty: zorluk seviyesi ("Kolay", "Orta" veya "Zor")
 
-SADECE JSON array döndür. Markdown, açıklama veya başka metin YAZMA.`,
+Yanıtı SADECE geçerli bir JSON dizisi olarak ver. Başına veya sonuna hiçbir açıklama, markdown kodu veya başka metin ekleme.
+Format örneği: [{"questionNumber":1,"question_text":"...","options":["A) ...","B) ...","C) ...","D) ...","E) ..."],"correct_option":null,"topic":"Genel","difficulty":"Orta"}]
+Eğer sayfada soru yoksa tam olarak şunu döndür: []`,
+                                        },
+                                    ],
                                 },
                             ],
-                        },
-                    ],
-                    config: {
-                        temperature: 0.1,
-                        maxOutputTokens: 65536,
-                        responseMimeType: 'application/json',
-                    },
-                });
-                const rawText = extractResponseText(response);
-                if (!rawText)
-                    continue;
-                try {
-                    const cleaned = cleanJsonResponse(rawText);
-                    const pageQuestions = JSON.parse(cleaned);
-                    if (Array.isArray(pageQuestions)) {
-                        for (const q of pageQuestions) {
-                            const qNum = (_c = q.questionNumber) !== null && _c !== void 0 ? _c : globalQNum;
-                            allQuestions.push({
-                                questionNumber: typeof qNum === 'number' ? qNum : globalQNum,
-                                question_text: (_d = q.question_text) !== null && _d !== void 0 ? _d : '',
-                                options: Array.isArray(q.options) ? q.options : [],
-                                correct_option: (_e = q.correct_option) !== null && _e !== void 0 ? _e : null,
-                                difficulty: (_f = q.difficulty) !== null && _f !== void 0 ? _f : 'Orta',
-                                topic: (_g = q.topic) !== null && _g !== void 0 ? _g : 'Genel',
-                                originalPage: pageIdx + 1,
-                                imageUrl: '', // Görsel yok, metin tabanlı
-                            });
-                            globalQNum++;
+                            config: {
+                                temperature: 0.1,
+                                maxOutputTokens: 8192,
+                            },
+                        });
+                        break;
+                    }
+                    catch (err) {
+                        lastModelError = err;
+                        if (isModelNotFoundError(err)) {
+                            // eslint-disable-next-line no-console
+                            console.warn('[AI][extract-questions] Model not available, trying next:', model);
+                            continue;
                         }
+                        throw err;
                     }
                 }
-                catch (parseErr) {
+                if (!response) {
+                    throw lastModelError !== null && lastModelError !== void 0 ? lastModelError : new Error('Yapay zeka modeli bulunamadı');
+                }
+                let rawText = extractResponseText(response);
+                if (!rawText) {
                     // eslint-disable-next-line no-console
-                    console.warn(`[AI][extract-questions] Page ${pageIdx + 1} parse error, skipping`);
+                    console.warn(`[AI][extract-questions] Page ${pageIdx + 1} empty response, skipping`);
+                    continue;
+                }
+                const parsePageResponse = (text) => {
+                    try {
+                        const cleaned = cleanJsonResponse(text);
+                        const parsed = JSON.parse(cleaned);
+                        return Array.isArray(parsed) ? parsed : null;
+                    }
+                    catch {
+                        return null;
+                    }
+                };
+                let pageQuestions = parsePageResponse(rawText);
+                // Parse failed: try repair with a second Gemini call
+                if (!pageQuestions && rawText.length > 10) {
+                    try {
+                        let repairResponse = null;
+                        let lastRepairErr = null;
+                        for (const model of modelCandidates) {
+                            try {
+                                repairResponse = await genAi.models.generateContent({
+                                    model,
+                                    contents: [
+                                        {
+                                            role: 'user',
+                                            parts: [{
+                                                    text: `Aşağıdaki metni geçerli bir JSON dizisine dönüştür. Çıktı sadece soru nesnelerinden oluşan bir dizi olmalı. Her nesnede: questionNumber (sayı), question_text (metin), options (dizi), correct_option (harf veya null). Başka metin ekleme, sadece JSON:\n\n${rawText.slice(0, 12000)}`,
+                                                }],
+                                        },
+                                    ],
+                                    config: {
+                                        temperature: 0,
+                                        maxOutputTokens: 8192,
+                                    },
+                                });
+                                break;
+                            }
+                            catch (err) {
+                                lastRepairErr = err;
+                                if (isModelNotFoundError(err))
+                                    continue;
+                                throw err;
+                            }
+                        }
+                        if (!repairResponse)
+                            throw lastRepairErr !== null && lastRepairErr !== void 0 ? lastRepairErr : new Error('Yapay zeka modeli bulunamadı');
+                        const repairText = extractResponseText(repairResponse);
+                        if (repairText)
+                            pageQuestions = parsePageResponse(repairText);
+                    }
+                    catch (repairErr) {
+                        // eslint-disable-next-line no-console
+                        console.warn(`[AI][extract-questions] Page ${pageIdx + 1} repair failed:`, repairErr instanceof Error ? repairErr.message : '');
+                    }
+                }
+                if (Array.isArray(pageQuestions) && pageQuestions.length > 0) {
+                    for (const q of pageQuestions) {
+                        const qObj = q;
+                        const qNum = (_c = qObj.questionNumber) !== null && _c !== void 0 ? _c : globalQNum;
+                        allQuestions.push({
+                            questionNumber: typeof qNum === 'number' ? qNum : globalQNum,
+                            question_text: String((_d = qObj.question_text) !== null && _d !== void 0 ? _d : ''),
+                            options: Array.isArray(qObj.options) ? qObj.options.map(String) : [],
+                            correct_option: qObj.correct_option != null ? String(qObj.correct_option) : null,
+                            difficulty: String((_e = qObj.difficulty) !== null && _e !== void 0 ? _e : 'Orta'),
+                            topic: String((_f = qObj.topic) !== null && _f !== void 0 ? _f : 'Genel'),
+                            originalPage: pageIdx + 1,
+                            imageUrl: '',
+                        });
+                        globalQNum++;
+                    }
                 }
             }
             catch (pageErr) {
@@ -615,8 +776,27 @@ SADECE JSON array döndür. Markdown, açıklama veya başka metin YAZMA.`,
                 console.warn(`[AI][extract-questions] Page ${pageIdx + 1} error, skipping:`, pageErr instanceof Error ? pageErr.message : String(pageErr));
             }
         }
-        // eslint-disable-next-line no-console
-        console.log(`[AI][extract-questions] Fallback extracted ${allQuestions.length} questions`);
+        // Hiç soru çıkmadıysa sayfa sayısına göre placeholder üret (frontend boş form göstermesin)
+        if (allQuestions.length === 0 && numPages > 0) {
+            for (let i = 0; i < numPages; i++) {
+                allQuestions.push({
+                    questionNumber: i + 1,
+                    question_text: `Sayfa ${i + 1} – Soru metni otomatik çıkarılamadı. Lütfen PDF'ten okuyun.`,
+                    options: ['A)', 'B)', 'C)', 'D)', 'E)'],
+                    correct_option: null,
+                    difficulty: 'Orta',
+                    topic: 'Genel',
+                    originalPage: i + 1,
+                    imageUrl: '',
+                });
+            }
+            // eslint-disable-next-line no-console
+            console.log(`[AI][extract-questions] No questions extracted, returning ${allQuestions.length} placeholders`);
+        }
+        else {
+            // eslint-disable-next-line no-console
+            console.log(`[AI][extract-questions] Fallback extracted ${allQuestions.length} questions`);
+        }
         return res.json({
             success: true,
             questions: allQuestions,
@@ -680,6 +860,7 @@ router.post('/save-parsed-questions', (0, auth_1.authenticateMultiple)(['admin',
                 gradeLevel,
                 topic: topicValue,
                 text: (_b = q.question_text) !== null && _b !== void 0 ? _b : '',
+                imageUrl: q.imageUrl || null,
                 type: 'multiple_choice',
                 choices: normalizeChoices(q.options),
                 correctAnswer: normalizeCorrectAnswer((_c = q.correct_option) !== null && _c !== void 0 ? _c : null) || 'A',

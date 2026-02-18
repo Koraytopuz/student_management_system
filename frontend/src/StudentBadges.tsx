@@ -104,6 +104,19 @@ export const StudentBadgesTab: React.FC<StudentBadgesTabProps> = ({
 }) => {
   const earned = badges.filter((b) => b.earned);
 
+  // Debug logging
+  React.useEffect(() => {
+    console.log('[StudentBadgesTab] Props:', {
+      badgesCount: badges?.length || 0,
+      loading,
+      error,
+      earnedCount: earned.length,
+    });
+    if (badges && badges.length > 0) {
+      console.log('[StudentBadgesTab] Sample badge:', badges[0]);
+    }
+  }, [badges, loading, error, earned.length]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
@@ -122,9 +135,19 @@ export const StudentBadgesTab: React.FC<StudentBadgesTabProps> = ({
             Rozetler yükleniyor...
           </p>
         )}
-        {error && <p className="text-sm text-red-500">{error}</p>}
+        {error && (
+          <div className="text-sm text-red-500 p-3 bg-red-500/10 rounded-lg border border-red-500/20">
+            <strong>Hata:</strong> {error}
+          </div>
+        )}
 
-        {!loading && !error && earned.length === 0 && (
+        {!loading && !error && badges.length === 0 && (
+          <div className="text-sm text-white/70 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+            <strong>Bilgi:</strong> Henüz sistemde tanımlı rozet bulunmuyor. Lütfen yönetici ile iletişime geçin.
+          </div>
+        )}
+
+        {!loading && !error && badges.length > 0 && earned.length === 0 && (
           <div className="text-sm text-white/70">
             Henüz bir rozet kazanmadın. Çalışmaya devam ettikçe rozetler burada görünecek.
           </div>
@@ -205,11 +228,15 @@ export const StudentBadgesTab: React.FC<StudentBadgesTabProps> = ({
             Rozetler yükleniyor, lütfen bekle...
           </p>
         )}
-        {error && <p className="text-sm text-red-500">{error}</p>}
+        {error && (
+          <div className="text-sm text-red-500 p-3 bg-red-500/10 rounded-lg border border-red-500/20">
+            <strong>Hata:</strong> {error}
+          </div>
+        )}
 
         {!loading && !error && badges.length === 0 && (
-          <div className="text-sm text-white/70">
-            Henüz sistemde tanımlı rozet bulunmuyor.
+          <div className="text-sm text-white/70 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+            <strong>Bilgi:</strong> Henüz sistemde tanımlı rozet bulunmuyor. Lütfen yönetici ile iletişime geçin.
           </div>
         )}
 

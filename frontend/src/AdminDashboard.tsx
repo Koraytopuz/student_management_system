@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
-  Bell,
   BookOpen,
   CalendarCheck,
   ClipboardList,
@@ -153,6 +152,13 @@ export const AdminDashboard: React.FC = () => {
   const [newParent, setNewParent] = useState({
     name: '',
     email: '',
+    password: '',
+  });
+  const [editingParentId, setEditingParentId] = useState<string | null>(null);
+  const [editParent, setEditParent] = useState<{ name: string; email: string; password: string }>({
+    name: '',
+    email: '',
+    password: '',
   });
   const [assignState, setAssignState] = useState({
     parentId: '',
@@ -328,27 +334,28 @@ export const AdminDashboard: React.FC = () => {
     | 'test-center'
     | 'questionbank'
     | 'attendance';
+  const VALID_ADMIN_TABS: AdminTab[] = [
+    'overview',
+    'teachers',
+    'students',
+    'parents',
+    'notifications',
+    'complaints',
+    'reports',
+    'personalized-report',
+    'ai-question-parser',
+    'optical-scanning',
+    'exam-management',
+    'test-center',
+    'questionbank',
+    'attendance',
+  ];
+
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<AdminTab>(() => {
-    const params = new URLSearchParams(location.search);
-    const tab = params.get('tab') as AdminTab | null;
-    const validTabs: AdminTab[] = [
-      'overview',
-      'teachers',
-      'students',
-      'parents',
-      'notifications',
-      'complaints',
-      'reports',
-      'personalized-report',
-      'ai-question-parser',
-      'optical-scanning',
-      'exam-management',
-      'test-center',
-      'questionbank',
-      'attendance',
-    ];
-    return tab && validTabs.includes(tab) ? tab : 'overview';
+    const tab = (new URLSearchParams(location.search).get('tab') as AdminTab | null);
+    return tab && VALID_ADMIN_TABS.includes(tab) ? tab : 'overview';
   });
   const [adminNotifications, setAdminNotifications] = useState<AdminNotification[]>([]);
   const [adminNotificationsLoading, setAdminNotificationsLoading] = useState(false);
@@ -357,6 +364,14 @@ export const AdminDashboard: React.FC = () => {
   const activeNotification =
     adminNotifications.find((n) => n.id === activeNotificationId) ?? null;
   const [activeComplaintId, setActiveComplaintId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab') as AdminTab | null;
+    if (tab && VALID_ADMIN_TABS.includes(tab)) {
+      setActiveTab(tab);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const handleEditTeacher = (teacher: Teacher) => {
     setEditingTeacherId(teacher.id);
@@ -382,6 +397,47 @@ export const AdminDashboard: React.FC = () => {
         token,
       );
       setTeachers((prev) => prev.filter((t) => t.id !== teacher.id));
+      if (editingTeacherId === teacher.id) {
+        setEditingTeacherId(null);
+        setEditTeacher({
+          name: '',
+          email: '',
+          subjectAreas: [],
+          assignedGrades: [],
+          password: '',
+        });
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleDeleteStudent = async (student: Student) => {
+    if (!token) return;
+    const confirmed = window.confirm(
+      `"${student.name}" adlı öğrenciyi sistemden silmek istediğinize emin misiniz?`,
+    );
+    if (!confirmed) return;
+    try {
+      await apiRequest(
+        `/admin/students/${student.id}`,
+        { method: 'DELETE' },
+        token,
+      );
+      setStudents((prev) => prev.filter((s) => s.id !== student.id));
+      if (editingStudentId === student.id) {
+        setEditingStudentId(null);
+        setEditStudent({
+          name: '',
+          email: '',
+          gradeLevel: '',
+          classId: '',
+          parentPhone: '',
+          password: '',
+          profilePictureUrl: '',
+        });
+      }
+      setStudentSuccess('Öğrenci silindi');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -528,27 +584,50 @@ export const AdminDashboard: React.FC = () => {
     if (!token) return;
 
     const fetchAll = async () => {
-      try {
-        setError(null);
-        const [s, t, st, p, c] = await Promise.all([
-          apiRequest<AdminSummary>('/admin/summary', {}, token),
-          apiRequest<Teacher[]>('/admin/teachers', {}, token),
-          apiRequest<Student[]>('/admin/students', {}, token),
-          apiRequest<Parent[]>('/admin/parents', {}, token),
-          apiRequest<Complaint[]>('/admin/complaints', {}, token),
-        ]);
-        setSummary(s);
-        setTeachers(t);
-        setStudents(st);
-        setParents(p);
-        setComplaints(c);
-      } catch (e) {
-        setError((e as Error).message);
+      setError(null);
+      const [s, t, st, p, c] = await Promise.allSettled([
+        apiRequest<AdminSummary>('/admin/summary', {}, token),
+        apiRequest<Teacher[]>('/admin/teachers', {}, token),
+        apiRequest<Student[]>('/admin/students', {}, token),
+        apiRequest<Parent[]>('/admin/parents', {}, token),
+        apiRequest<Complaint[]>('/admin/complaints', {}, token),
+      ]);
+
+      if (s.status === 'fulfilled') setSummary(s.value);
+      else {
+        const msg =
+          s.reason instanceof Error ? s.reason.message : 'Admin özeti yüklenemedi.';
+        // Bazı kurulumlarda yetki/rol uyuşmazlığı "Öğretmen bulunamadı" gibi alakasız mesajlar üretebiliyor.
+        // Admin ekranlarında daha anlaşılır bir mesaj gösterelim.
+        if (msg.toLowerCase().includes('öğretmen bulunamadı')) {
+          setError('Yönetici verileri yüklenemedi. Lütfen yönetici hesabı ile giriş yaptığınızdan emin olun.');
+        } else {
+          setError(msg);
+        }
       }
+
+      // Öğretmen listesi bazı kurulumlarda 404 / "Öğretmen bulunamadı" dönebiliyor.
+      // Bu durumda panelin tamamını hata moduna sokmak yerine, boş listeyle devam edelim.
+      if (t.status === 'fulfilled') setTeachers(t.value);
+      else setTeachers([]);
+
+      if (st.status === 'fulfilled') setStudents(st.value);
+      else setStudents([]);
+
+      if (p.status === 'fulfilled') setParents(p.value);
+      else setParents([]);
+
+      if (c.status === 'fulfilled') setComplaints(c.value);
+      else setComplaints([]);
     };
 
     fetchAll();
   }, [token]);
+
+  // Sekme değişince üstteki hata bandını kalıcı bırakma
+  useEffect(() => {
+    setError(null);
+  }, [activeTab]);
 
   // Tüm dersleri listele (branş seçimi için)
   useEffect(() => {
@@ -745,6 +824,10 @@ export const AdminDashboard: React.FC = () => {
   async function handleAddParent(e: React.FormEvent) {
     e.preventDefault();
     if (!token) return;
+    if (!newParent.password || newParent.password.length < 4) {
+      setError('Veli şifresi en az 4 karakter olmalıdır');
+      return;
+    }
     try {
       const created = await apiRequest<Parent>(
         '/admin/parents',
@@ -753,13 +836,13 @@ export const AdminDashboard: React.FC = () => {
           body: JSON.stringify({
             name: newParent.name,
             email: newParent.email,
-            password: 'password123',
+            password: newParent.password,
           }),
         },
         token,
       );
       setParents((prev) => [...prev, created]);
-      setNewParent({ name: '', email: '' });
+      setNewParent({ name: '', email: '', password: '' });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -780,6 +863,53 @@ export const AdminDashboard: React.FC = () => {
       setParents((prev) =>
         prev.map((p) => (p.id === updatedParent.id ? updatedParent : p)),
       );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  function startEditParent(p: Parent) {
+    setEditingParentId(p.id);
+    setEditParent({ name: p.name, email: p.email, password: '' });
+  }
+
+  async function handleUpdateParent(e: React.FormEvent) {
+    e.preventDefault();
+    if (!token || !editingParentId) return;
+    try {
+      const updated = await apiRequest<Parent>(
+        `/admin/parents/${editingParentId}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: editParent.name,
+            email: editParent.email,
+            password: editParent.password || undefined,
+          }),
+        },
+        token,
+      );
+      setParents((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setEditingParentId(null);
+      setEditParent({ name: '', email: '', password: '' });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function handleDeleteParent(id: string) {
+    if (!token) return;
+    if (!window.confirm('Bu veliyi silmek istediğinizden emin misiniz?')) return;
+    try {
+      const deleted = await apiRequest<Parent>(
+        `/admin/parents/${id}`,
+        { method: 'DELETE' },
+        token,
+      );
+      setParents((prev) => prev.filter((p) => p.id !== deleted.id));
+      if (editingParentId === id) {
+        setEditingParentId(null);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -844,8 +974,7 @@ export const AdminDashboard: React.FC = () => {
   return (
     <DashboardLayout
       accent="slate"
-      brand="SKY"
-      brandSuffix="ANALİZ"
+      brand={user?.institutionName ?? 'SKYANALİZ'}
       tagline="Admin Paneli"
       title="Yönetim Konsolu"
       subtitle="Kullanıcılar, atamalar ve geri bildirimleri yönetin."
@@ -867,7 +996,9 @@ export const AdminDashboard: React.FC = () => {
       }}
       onLogout={logout}
     >
-      {error && <div className="error" style={{ marginBottom: '1rem' }}>{error}</div>}
+      {error && !error.toLowerCase().includes('öğretmen bulunamadı') && (
+        <div className="error" style={{ marginBottom: '1rem' }}>{error}</div>
+      )}
 
       {activeTab === 'overview' && summary && (
         <>
@@ -886,7 +1017,6 @@ export const AdminDashboard: React.FC = () => {
                   { id: 'students' as const, label: 'Öğrenciler', icon: <GraduationCap size={20} /> },
                   { id: 'parents' as const, label: 'Veliler', icon: <Users size={20} /> },
                   { id: 'attendance' as const, label: 'Devamsızlık', icon: <CalendarCheck size={20} /> },
-                  { id: 'notifications' as const, label: 'Bildirimler', icon: <Bell size={20} /> },
                   { id: 'reports' as const, label: 'Raporlar', icon: <BarChart3 size={20} /> },
                   { id: 'test-center' as const, label: 'Test & Sorular', icon: <ClipboardList size={20} /> },
                   { id: 'ai-question-parser' as const, label: 'AI PDF Ayrıştırıcı', icon: <FileSearch size={20} /> },
@@ -1460,12 +1590,12 @@ export const AdminDashboard: React.FC = () => {
                     <small className="text-xs text-slate-300 truncate">{t.email}</small>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 pl-2 flex-shrink-0">
+                <div className="flex items-center gap-2 pl-2 shrink-0">
                   <button
                     type="button"
                     onClick={() => handleEditTeacher(t)}
                     aria-label="Öğretmeni düzenle"
-                    className="rounded-full transition-transform transition-colors hover:scale-105"
+                    className="rounded-full transition-transform hover:scale-105"
                     style={{
                       padding: '0.4rem',
                       borderRadius: 999,
@@ -1482,7 +1612,7 @@ export const AdminDashboard: React.FC = () => {
                     type="button"
                     onClick={() => handleDeleteTeacher(t)}
                     aria-label="Öğretmeni sil"
-                    className="rounded-full transition-transform transition-colors hover:scale-110"
+                    className="rounded-full transition-transform hover:scale-110"
                     style={{
                       padding: '0.4rem',
                       borderRadius: 999,
@@ -1637,6 +1767,28 @@ export const AdminDashboard: React.FC = () => {
                   <button type="submit" className="primary-btn">
                     Kaydet
                   </button>
+                  {editingTeacherId && (
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => {
+                        const t = teachers.find((tt) => tt.id === editingTeacherId);
+                        if (t) handleDeleteTeacher(t);
+                      }}
+                      style={{
+                        borderColor: 'rgba(239,68,68,0.35)',
+                        color: '#b91c1c',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                      aria-label="Öğretmeni sil"
+                      title="Sil"
+                    >
+                      <Trash2 size={16} />
+                      Sil
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="ghost-btn"
@@ -2023,6 +2175,28 @@ export const AdminDashboard: React.FC = () => {
                     <button type="submit" className="primary-btn">
                       Kaydet
                     </button>
+                    {editingStudentId && (
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => {
+                          const s = students.find((ss) => ss.id === editingStudentId);
+                          if (s) handleDeleteStudent(s);
+                        }}
+                        style={{
+                          borderColor: 'rgba(239,68,68,0.35)',
+                          color: '#b91c1c',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                        aria-label="Öğrenciyi sil"
+                        title="Sil"
+                      >
+                        <Trash2 size={16} />
+                        Sil
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="ghost-btn"
@@ -2212,7 +2386,6 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'parents' && (
         <GlassCard
           title="Veliler & Öğrenci Atama"
-          subtitle="Veli hesapları oluşturun ve öğrenci atamalarını yönetin. Yeni velilerin varsayılan şifresi: password123"
         >
           <form onSubmit={handleAddParent} className="form" style={{ marginBottom: '0.75rem' }}>
             <div className="field">
@@ -2233,6 +2406,18 @@ export const AdminDashboard: React.FC = () => {
                 onChange={(e) =>
                   setNewParent((p) => ({ ...p, email: e.target.value }))
                 }
+                required
+              />
+            </div>
+            <div className="field">
+              <span>Şifre</span>
+              <input
+                type="password"
+                value={newParent.password}
+                onChange={(e) =>
+                  setNewParent((p) => ({ ...p, password: e.target.value }))
+                }
+                placeholder="En az 4 karakter"
                 required
               />
             </div>
@@ -2374,25 +2559,148 @@ export const AdminDashboard: React.FC = () => {
               <div className="empty-state">Henüz veli kaydı yok.</div>
             )}
             {parents.map((p) => {
-              const linkedStudentNames = p.studentIds
-                .map((id) => students.find((s) => s.id === id)?.name)
-                .filter((name): name is string => !!name);
+              const linkedStudentLabels = p.studentIds
+                .map((id) => {
+                  const s = students.find((st) => st.id === id);
+                  if (!s) return null;
+                  const cg = classGroups.find((g) => g.id === (s.classId ?? ''));
+                  const grade = (s.gradeLevel ?? cg?.gradeLevel ?? '').trim();
+                  const section = getClassSectionLabel(cg);
+                  const stream = (cg?.stream ?? '').trim();
+
+                  const parts: string[] = [];
+                  if (grade) {
+                    parts.push(`${grade}${section ? `/${section}` : ''}`);
+                  } else if (section) {
+                    parts.push(section);
+                  }
+                  if (stream) {
+                    parts.push(stream);
+                  }
+                  const suffix = parts.length ? ` ${parts.join(' ')}` : '';
+                  return `${s.name}${suffix}`;
+                })
+                .filter((label): label is string => !!label);
               const label =
-                linkedStudentNames.length > 0
-                  ? linkedStudentNames.join(', ')
+                linkedStudentLabels.length > 0
+                  ? linkedStudentLabels.join(', ')
                   : p.studentIds.join(', ');
 
               return (
-                <div key={p.id} className="list-row">
-                  <div>
-                    <strong>{p.name}</strong>
-                    <small>{p.email}</small>
-                    {p.studentIds.length > 0 && (
-                      <div style={{ fontSize: '0.8rem', marginTop: '0.2rem' }}>
-                        Öğrenciler: {label}
+                <div
+                  key={p.id}
+                  className="list-row"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                  }}
+                >
+                  {editingParentId === p.id ? (
+                    <form
+                      onSubmit={handleUpdateParent}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.25rem',
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                        <input
+                          value={editParent.name}
+                          onChange={(e) =>
+                            setEditParent((prev) => ({ ...prev, name: e.target.value }))
+                          }
+                          placeholder="Veli adı"
+                          style={{ fontSize: '0.9rem' }}
+                          required
+                        />
+                        <input
+                          type="email"
+                          value={editParent.email}
+                          onChange={(e) =>
+                            setEditParent((prev) => ({ ...prev, email: e.target.value }))
+                          }
+                          placeholder="E-posta"
+                          style={{ fontSize: '0.85rem' }}
+                          required
+                        />
+                        <input
+                          type="password"
+                          value={editParent.password}
+                          onChange={(e) =>
+                            setEditParent((prev) => ({ ...prev, password: e.target.value }))
+                          }
+                          placeholder="Yeni şifre (opsiyonel)"
+                          style={{ fontSize: '0.85rem' }}
+                        />
+                        {p.studentIds.length > 0 && (
+                          <div style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                            Öğrenciler: {label}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '0.4rem',
+                          marginTop: '0.25rem',
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <button type="submit" className="primary-btn" style={{ fontSize: '0.8rem' }}>
+                          Kaydet
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          style={{ fontSize: '0.8rem' }}
+                          onClick={() => setEditingParentId(null)}
+                        >
+                          İptal
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <strong>{p.name}</strong>
+                        <small>{p.email}</small>
+                        {p.studentIds.length > 0 && (
+                          <div style={{ fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                            Öğrenciler: {label}
+                          </div>
+                        )}
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '0.35rem',
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          style={{ fontSize: '0.8rem', padding: '0.25rem 0.65rem' }}
+                          onClick={() => startEditParent(p)}
+                        >
+                          Düzenle
+                        </button>
+                        <button
+                          type="button"
+                          className="danger-btn"
+                          style={{ fontSize: '0.8rem', padding: '0.25rem 0.65rem' }}
+                          onClick={() => handleDeleteParent(p.id)}
+                        >
+                          Sil
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}

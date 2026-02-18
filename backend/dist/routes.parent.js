@@ -1516,7 +1516,7 @@ router.get('/calendar', (0, auth_1.authenticate)('parent'), async (req, res) => 
 });
 // Şikayet / öneri (admin'e)
 router.post('/complaints', (0, auth_1.authenticate)('parent'), async (req, res) => {
-    var _a;
+    var _a, _b;
     const parentId = req.user.id;
     const { subject, body, aboutTeacherId } = req.body;
     if (!subject || !body) {
@@ -1538,7 +1538,16 @@ router.post('/complaints', (0, auth_1.authenticate)('parent'), async (req, res) 
             status: 'open',
         },
     });
-    const admins = await db_1.prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
+    // Aynı kurumdaki admin'lere bildirim gönder
+    const institutionName = ((_a = req.user) === null || _a === void 0 ? void 0 : _a.institutionName)
+        ? String(req.user.institutionName).trim()
+        : undefined;
+    const admins = await db_1.prisma.user.findMany({
+        where: institutionName
+            ? { role: 'admin', institutionName }
+            : { role: 'admin' },
+        select: { id: true },
+    });
     if (admins.length > 0) {
         await db_1.prisma.notification.createMany({
             data: admins.map((a) => ({
@@ -1556,7 +1565,7 @@ router.post('/complaints', (0, auth_1.authenticate)('parent'), async (req, res) 
         id: created.id,
         fromRole: created.fromRole,
         fromUserId: created.fromUserId,
-        aboutTeacherId: (_a = created.aboutTeacherId) !== null && _a !== void 0 ? _a : undefined,
+        aboutTeacherId: (_b = created.aboutTeacherId) !== null && _b !== void 0 ? _b : undefined,
         subject: created.subject,
         body: created.body,
         status: created.status,

@@ -3,23 +3,90 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import bcrypt from 'bcrypt';
 
 import { loginHandler } from './auth';
 import teacherRoutes from './routes.teacher';
 import studentRoutes from './routes.student';
 import parentRoutes from './routes.parent';
 import adminRoutes from './routes.admin';
+import rootAdminRoutes from './routes.rootAdmin';
 import questionBankRoutes from './routes.questionbank';
 import aiRoutes from './aiRoutes';
 import assignmentRoutes from './routes.assignmentRoutes';
 import analysisRoutes from './routes.analysis';
 import examRoutes from './routes.exam';
+import { prisma } from './db';
 
 // Varsayılan davranış: çalışma dizinindeki .env dosyasını yükler (backend klasörü)
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
+
+const SYSTEM_ADMIN_EMAIL = 'admin@skytechyazilim.com.tr';
+const SYSTEM_ADMIN_DEFAULT_PASSWORD = 'skytech123';
+
+async function ensureSystemAdminUser() {
+  try {
+    const existing = await prisma.user.findFirst({
+      where: { email: SYSTEM_ADMIN_EMAIL, role: 'admin' },
+      select: { id: true },
+    });
+    if (existing) {
+      return;
+    }
+    const passwordHash = await bcrypt.hash(SYSTEM_ADMIN_DEFAULT_PASSWORD, 10);
+    await prisma.user.create({
+      data: {
+        name: 'Sistem Yöneticisi',
+        email: SYSTEM_ADMIN_EMAIL,
+        role: 'admin',
+        passwordHash,
+        institutionName: 'SKYANALİZ',
+      },
+    });
+    // eslint-disable-next-line no-console
+    console.log(
+      `[bootstrap] Sistem yöneticisi kullanıcısı oluşturuldu: ${SYSTEM_ADMIN_EMAIL} / ${SYSTEM_ADMIN_DEFAULT_PASSWORD}`,
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[bootstrap] Sistem yöneticisi oluşturulamadı', err);
+  }
+}
+
+async function backfillMissingInstitutionNames() {
+  // Eski kayıtlar kurum adı olmadan kalmış olabilir; varsayılan tenant'a taşı
+  try {
+    const updated = await prisma.user.updateMany({
+      where: { institutionName: null } as any,
+      data: { institutionName: 'SKYANALİZ' } as any,
+    });
+    if (updated.count > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[bootstrap] institutionName backfill: ${updated.count} kullanıcı güncellendi`);
+    }
+
+    const examsUpdated = await prisma.exam.updateMany({
+      where: { institutionName: null } as any,
+      data: { institutionName: 'SKYANALİZ' } as any,
+    });
+    if (examsUpdated.count > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[bootstrap] exam.institutionName backfill: ${examsUpdated.count} sınav güncellendi`,
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[bootstrap] institutionName backfill başarısız', err);
+  }
+}
+
+// Arka planda sistem yöneticisi kullanıcısının varlığını garanti et
+void ensureSystemAdminUser();
+void backfillMissingInstitutionNames();
 
 // Production'da ALLOWED_ORIGINS ile izin verilen domain'ler (virgülle ayrılmış)
 // Örnek: https://www.skytechyazilim.com.tr,https://skytechyazilim.com.tr
@@ -118,6 +185,7 @@ app.post('/auth/login', loginHandler);
 
 // Rol bazlı router'lar
 app.use('/admin', adminRoutes);
+app.use('/root-admin', rootAdminRoutes);
 app.use('/teacher', teacherRoutes);
 app.use('/student', studentRoutes);
 app.use('/parent', parentRoutes);

@@ -6,9 +6,12 @@ import {
   useDataChannel,
   useLocalParticipant,
   useRoomContext,
+  useTracks,
+  VideoTrack,
 } from '@livekit/components-react';
 import '@livekit/components-styles';
 import type { Participant } from 'livekit-client';
+import { Track } from 'livekit-client';
 import {
   BarChart2,
   ClipboardList,
@@ -26,7 +29,7 @@ import {
   VideoOff,
   VolumeX,
 } from 'lucide-react';
-import { getMeetingAttendanceStudents, muteAllInMeeting, submitMeetingAttendance } from './api';
+import { getMeetingAttendanceStudents, muteAllInMeeting, unmuteAllInMeeting, submitMeetingAttendance } from './api';
 
 // (İkon tanımları kaldırıldı, lucide-react kullanılacak)
 
@@ -177,6 +180,11 @@ const LiveClassInner: React.FC<{
   } = useLocalParticipant();
   const participants = useParticipants();
   const elapsedTime = useElapsedTime();
+  
+  // Get screen share tracks from remote participants
+  const screenShareTracks = useTracks([Track.Source.ScreenShare], {
+    onlySubscribed: true,
+  });
 
   const identity = localParticipant?.identity ?? '';
   const displayName =
@@ -203,6 +211,7 @@ const LiveClassInner: React.FC<{
   const [infoToasts, setInfoToasts] = useState<Toast[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
+  const [allMuted, setAllMuted] = useState(false); // Tüm katılımcıların ses durumu
   
   // Assignment state
   const [assignmentsOpen, setAssignmentsOpen] = useState(false);
@@ -329,11 +338,22 @@ const LiveClassInner: React.FC<{
         },
       });
       if (response.ok) {
-        const data = await response.json();
-        setPendingAssignments(data);
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          setPendingAssignments(data);
+        } else {
+          // Response is not JSON, probably an error page
+          console.warn('Failed to fetch pending assignments: Response is not JSON');
+          setPendingAssignments([]);
+        }
+      } else {
+        // Non-OK response
+        setPendingAssignments([]);
       }
     } catch (error) {
       console.error('Failed to fetch pending assignments:', error);
+      setPendingAssignments([]);
     }
 
   }, [role]);
@@ -411,7 +431,12 @@ const LiveClassInner: React.FC<{
   useEffect(() => {
     if (isScreenShareEnabled !== undefined) {
       setIsScreenSharing(isScreenShareEnabled);
+      // Eğer ekran paylaşımı aktifse ve canShareScreen false ise, true yap
+      if (isScreenShareEnabled && !canShareScreen && role === 'student') {
+        setCanShareScreen(true);
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isScreenShareEnabled]);
 
   const knownParticipantIds = useRef<Set<string>>(new Set());
@@ -518,7 +543,7 @@ const LiveClassInner: React.FC<{
         if (data.targetId && data.targetId !== identity) return;
         setPendingScreenRequest(false);
         setCanShareScreen(true);
-        pushInfoToast('Öğretmen ekran paylaşımı isteğini onayladı.');
+        pushInfoToast('Öğretmen ekran paylaşımı isteğini onayladı. Ekran paylaşımı butonuna tıklayarak başlatabilirsiniz.');
         return;
       }
 
@@ -670,7 +695,11 @@ const LiveClassInner: React.FC<{
   };
 
   const toggleScreenShare = async () => {
-    if (!localParticipant) return;
+    if (!localParticipant) {
+      console.warn('[ScreenShare] localParticipant is null');
+      pushInfoToast('Bağlantı hazır değil. Lütfen bekleyin.');
+      return;
+    }
     
     if (!canShareScreen) {
       if (role === 'student' && !pendingScreenRequest) {
@@ -686,11 +715,41 @@ const LiveClassInner: React.FC<{
     
     try {
       const newState = !isScreenSharing;
-      await localParticipant.setScreenShareEnabled(newState);
-      setIsScreenSharing(newState);
+      console.log(`[ScreenShare] Attempting to ${newState ? 'start' : 'stop'} screen share`, {
+        canShareScreen,
+        isScreenSharing,
+        role,
+      });
+      
+      if (newState) {
+        // Ekran paylaşımını başlat
+        console.log('[ScreenShare] Calling setScreenShareEnabled(true)');
+        await localParticipant.setScreenShareEnabled(true);
+        console.log('[ScreenShare] setScreenShareEnabled(true) succeeded');
+        setIsScreenSharing(true);
+        pushInfoToast('Ekran paylaşımı başlatılıyor...');
+      } else {
+        // Ekran paylaşımını durdur
+        console.log('[ScreenShare] Calling setScreenShareEnabled(false)');
+        await localParticipant.setScreenShareEnabled(false);
+        console.log('[ScreenShare] setScreenShareEnabled(false) succeeded');
+        setIsScreenSharing(false);
+        pushInfoToast('Ekran paylaşımı durduruldu');
+      }
     } catch (e) {
-      console.error('Screen share error:', e);
-      pushInfoToast('Ekran paylaşımı başlatılamadı/durdurulamadı');
+      console.error('[ScreenShare] Error:', e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error('[ScreenShare] Error message:', errorMessage);
+      
+      if (errorMessage.toLowerCase().includes('permission') || errorMessage.toLowerCase().includes('izin')) {
+        pushInfoToast('Ekran paylaşımı için tarayıcı izni gerekiyor. Lütfen izin verin.');
+      } else if (errorMessage.toLowerCase().includes('not allowed') || errorMessage.toLowerCase().includes('izin verilmedi')) {
+        pushInfoToast('Ekran paylaşımı izni verilmedi. Lütfen tarayıcı ayarlarını kontrol edin.');
+      } else if (errorMessage.toLowerCase().includes('user') && errorMessage.toLowerCase().includes('cancel')) {
+        pushInfoToast('Ekran paylaşımı iptal edildi.');
+      } else {
+        pushInfoToast(`Ekran paylaşımı başlatılamadı: ${errorMessage}`);
+      }
     }
   };
 
@@ -865,21 +924,35 @@ const LiveClassInner: React.FC<{
     pushInfoToast('Mesaj iletildi.');
   };
 
-  // Mute all (teacher) – LiveKit RoomService ile gerçek muting
-  const muteAll = async () => {
+  // Mute/Unmute all (teacher) – LiveKit RoomService ile gerçek muting
+  const toggleMuteAll = async () => {
     if (!meetingId || !authToken || role !== 'teacher') {
-      pushInfoToast('Ses kapatma işlemi yapılamadı');
+      pushInfoToast('Ses işlemi yapılamadı');
       return;
     }
     try {
-      const res = await muteAllInMeeting(authToken, meetingId);
-      pushInfoToast(
-        res.muted > 0
-          ? `${res.muted} katılımcının sesi kapatıldı`
-          : 'Tüm katılımcıların sesi zaten kapalı',
-      );
-    } catch {
-      pushInfoToast('Ses kapatma işlemi başarısız oldu');
+      if (allMuted) {
+        // Sesleri aç
+        const res = await unmuteAllInMeeting(authToken, meetingId);
+        setAllMuted(false);
+        pushInfoToast(
+          res.unmuted > 0
+            ? `${res.unmuted} katılımcının sesi açıldı`
+            : 'Tüm katılımcıların sesi zaten açık',
+        );
+      } else {
+        // Sesleri kapat
+        const res = await muteAllInMeeting(authToken, meetingId);
+        setAllMuted(true);
+        pushInfoToast(
+          res.muted > 0
+            ? `${res.muted} katılımcının sesi kapatıldı`
+            : 'Tüm katılımcıların sesi zaten kapalı',
+        );
+      }
+    } catch (error) {
+      console.error('[toggleMuteAll] Error:', error);
+      pushInfoToast(allMuted ? 'Ses açma işlemi başarısız oldu' : 'Ses kapatma işlemi başarısız oldu');
     }
   };
 
@@ -949,7 +1022,47 @@ const LiveClassInner: React.FC<{
     <div className="live-class-container">
       {/* Video Area */}
       <div className="live-video-area" ref={videoAreaRef}>
-        <VideoConference />
+        {/* Screen Share Display - Show remote screen shares prominently */}
+        {screenShareTracks.length > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10,
+              backgroundColor: '#000',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {screenShareTracks.map((trackReference) => (
+              <div
+                key={trackReference.participant.identity}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                className="screen-share-container"
+              >
+                <VideoTrack
+                  {...trackReference}
+                  className="screen-share-video"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        
+        <VideoConference style={{ 
+          opacity: screenShareTracks.length > 0 ? 0.3 : 1,
+          transition: 'opacity 0.3s ease',
+        }} />
 
         {/* Top Bar */}
         <div className="live-top-bar">
@@ -1080,9 +1193,18 @@ const LiveClassInner: React.FC<{
 
             {role === 'teacher' && (
               <div className="participants-actions">
-                <button className="participants-action-btn" onClick={muteAll}>
-                  <VolumeX size={20} strokeWidth={2.5} />
-                  <span>Tümünün sesini kapat</span>
+                <button className="participants-action-btn" onClick={toggleMuteAll}>
+                  {allMuted ? (
+                    <>
+                      <Mic size={20} strokeWidth={2.5} />
+                      <span>Tümünün sesini aç</span>
+                    </>
+                  ) : (
+                    <>
+                      <VolumeX size={20} strokeWidth={2.5} />
+                      <span>Tümünün sesini kapat</span>
+                    </>
+                  )}
                 </button>
               </div>
             )}
@@ -1163,7 +1285,7 @@ const LiveClassInner: React.FC<{
 
             <div className="live-chat-messages">
               {chatMessages.length === 0 && (
-                <div style={{ color: '#9aa0a6', fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>
+                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>
                   Henüz mesaj yok
                 </div>
               )}
@@ -1226,9 +1348,9 @@ const LiveClassInner: React.FC<{
                     style={{
                       padding: '0.5rem 0.75rem',
                       borderRadius: 10,
-                      border: '1px solid rgba(51,65,85,0.9)',
-                      background: 'rgba(15,23,42,0.9)',
-                      color: '#e2e8f0',
+                      border: '1px solid var(--ui-control-border)',
+                      background: 'var(--ui-control-bg)',
+                      color: 'var(--color-text-main)',
                     }}
                   />
                   {pollCreateOptions.map((opt, i) => (
@@ -1245,9 +1367,9 @@ const LiveClassInner: React.FC<{
                       style={{
                         padding: '0.5rem 0.75rem',
                         borderRadius: 10,
-                        border: '1px solid rgba(51,65,85,0.9)',
-                        background: 'rgba(15,23,42,0.9)',
-                        color: '#e2e8f0',
+                        border: '1px solid var(--ui-control-border)',
+                        background: 'var(--ui-control-bg)',
+                        color: 'var(--color-text-main)',
                       }}
                     />
                   ))}
@@ -1266,7 +1388,7 @@ const LiveClassInner: React.FC<{
               )}
               {(activePoll || (role === 'student' && pollPanelOpen)) && activePoll && (
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#e2e8f0' }}>{activePoll.question}</div>
+                  <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: 'var(--color-text-main)' }}>{activePoll.question}</div>
                   {!myPollVote ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       {activePoll.options.map((opt) => (
@@ -1278,9 +1400,9 @@ const LiveClassInner: React.FC<{
                           style={{
                             padding: '0.6rem 1rem',
                             textAlign: 'left',
-                            border: '1px solid rgba(51,65,85,0.9)',
+                            border: '1px solid var(--ui-control-border)',
                             borderRadius: 10,
-                            color: '#e2e8f0',
+                            color: 'var(--color-text-main)',
                           }}
                         >
                           {opt.text}
@@ -1295,14 +1417,14 @@ const LiveClassInner: React.FC<{
                         const pct = total > 0 ? Math.round((count / total) * 100) : 0;
                         return (
                           <div key={opt.id}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.85rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--color-text-main)' }}>
                               <span>{opt.text}</span>
                               <span>{count} oy (%{pct})</span>
                             </div>
                             <div
                               style={{
                                 height: 8,
-                                background: 'rgba(51,65,85,0.6)',
+                                background: 'var(--color-surface-soft, rgba(0, 0, 0, 0.1))',
                                 borderRadius: 4,
                                 overflow: 'hidden',
                               }}
@@ -1311,7 +1433,7 @@ const LiveClassInner: React.FC<{
                                 style={{
                                   width: `${pct}%`,
                                   height: '100%',
-                                  background: 'rgba(59,130,246,0.8)',
+                                  background: 'var(--accent-color, #1a73e8)',
                                   transition: 'width 0.3s',
                                 }}
                               />
@@ -1329,7 +1451,7 @@ const LiveClassInner: React.FC<{
                 </div>
               )}
               {role === 'student' && !activePoll && pollPanelOpen && (
-                <div style={{ color: '#94a3b8', fontSize: '0.9rem', textAlign: 'center', padding: '1rem' }}>
+                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem', textAlign: 'center', padding: '1rem' }}>
                   Henüz aktif anket yok
                 </div>
               )}
@@ -1570,14 +1692,17 @@ const LiveClassInner: React.FC<{
         </button>
 
         <button
-          className={`control-btn ${isScreenSharing ? 'control-btn--active' : ''}`}
+          className={`control-btn ${isScreenSharing ? 'control-btn--active' : ''} ${!canShareScreen && role === 'student' ? 'control-btn--disabled' : ''}`}
           onClick={toggleScreenShare}
+          disabled={role === 'student' && !canShareScreen && !pendingScreenRequest}
           title={
-            canShareScreen
-              ? isScreenSharing
-                ? 'Ekran paylaşımını durdur'
-                : 'Ekran paylaş'
-              : 'Ekran paylaşımı izni iste'
+            role === 'student' && !canShareScreen && pendingScreenRequest
+              ? 'Ekran paylaşımı izni bekleniyor...'
+              : canShareScreen
+                ? isScreenSharing
+                  ? 'Ekran paylaşımını durdur'
+                  : 'Ekran paylaş'
+                : 'Ekran paylaşımı izni iste'
           }
         >
           <MonitorUp size={24} strokeWidth={2} />

@@ -258,8 +258,7 @@ export const ParentDashboard: React.FC = () => {
   return (
     <DashboardLayout
       accent="emerald"
-      brand="SKY"
-      brandSuffix="ANALİZ"
+      brand={user?.institutionName ?? 'SKYANALİZ'}
       tagline={selectedChild?.studentName ?? 'Veli Yönetim Paneli'}
       title="Veli Yönetim Paneli"
       subtitle="Akademik performans, takvim ve mesajları gerçek zamanlı takip edin."

@@ -1886,7 +1886,16 @@ router.post(
       },
     });
 
-    const admins = await prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
+    // Aynı kurumdaki admin'lere bildirim gönder
+    const institutionName = (req.user as any)?.institutionName
+      ? String((req.user as any).institutionName).trim()
+      : undefined;
+    const admins = await prisma.user.findMany({
+      where: institutionName
+        ? ({ role: 'admin', institutionName } as any)
+        : ({ role: 'admin' } as any),
+      select: { id: true },
+    });
     if (admins.length > 0) {
       await prisma.notification.createMany({
         data: admins.map((a: { id: string }) => ({

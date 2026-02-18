@@ -16,8 +16,20 @@ import {
   updateTeacherCoachingSession,
   deleteTeacherCoachingSession,
   createTeacherCoachingGoal,
+  updateTeacherCoachingGoal,
+  deleteTeacherCoachingGoal,
   createTeacherCoachingNote,
+  updateTeacherCoachingNote,
+  deleteTeacherCoachingNote,
 } from './api';
+
+function formatGradeLabel(gradeLevel?: string | null): string {
+  const g = String(gradeLevel ?? '').trim();
+  if (!g) return '';
+  if (g.toLowerCase() === 'mezun' || g.toLowerCase() === 'mezun.' || g.toLowerCase() === 'mezun ') return 'Mezun';
+  if (g.toUpperCase() === 'MEZUN') return 'Mezun';
+  return `${g}. Sınıf`;
+}
 
 function toLocalInputValue(iso?: string): string {
   if (!iso) return '';
@@ -48,12 +60,22 @@ function canTeacherStartSession(dateIso: string, now = Date.now()): boolean {
 export const CoachingTab: React.FC<{
   token: string | null;
   students: TeacherStudent[];
+  allowedGrades?: string[];
   selectedStudentId: string;
   onSelectStudent: (id: string) => void;
   studentProfile: TeacherStudentProfile | null;
   profileLoading: boolean;
   tests: TeacherTest[];
-}> = ({ token, students, selectedStudentId, onSelectStudent, studentProfile, profileLoading, tests }) => {
+}> = ({
+  token,
+  students,
+  allowedGrades,
+  selectedStudentId,
+  onSelectStudent,
+  studentProfile,
+  profileLoading,
+  tests,
+}) => {
   const [sessions, setSessions] = useState<TeacherCoachingSession[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +99,7 @@ export const CoachingTab: React.FC<{
   });
 
   const [activeDetailTab, setActiveDetailTab] = useState<
-    'goals' | 'notes' | 'sessions' | 'tests' | 'assignments' | 'studies'
+    'goals' | 'notes' | 'sessions' | 'tests' | 'assignments'
   >('goals');
   const [goals, setGoals] = useState<TeacherCoachingGoal[]>([]);
   const [goalsLoading, setGoalsLoading] = useState(false);
@@ -87,6 +109,7 @@ export const CoachingTab: React.FC<{
     description: '',
     deadline: '',
   });
+  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
 
   const [notes, setNotes] = useState<TeacherCoachingNote[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
@@ -95,6 +118,7 @@ export const CoachingTab: React.FC<{
     content: '',
     sharedWithParent: true,
   });
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
 
   /** Seçilen sınıf (gradeLevel); boşsa öğrenci listesi gösterilmez. */
   const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('');
@@ -129,8 +153,13 @@ export const CoachingTab: React.FC<{
     students.forEach((s) => {
       if (s.gradeLevel) set.add(s.gradeLevel);
     });
-    return Array.from(set).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
-  }, [students]);
+    let list = Array.from(set);
+    if (allowedGrades && allowedGrades.length) {
+      const allow = new Set(allowedGrades.map((g) => String(g).trim().toLowerCase()));
+      list = list.filter((g) => allow.has(String(g).trim().toLowerCase()));
+    }
+    return list.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  }, [students, allowedGrades]);
 
   /** Seçilen sınıftaki öğrenciler (sınıf seçilmediyse boş). */
   const studentsInSelectedGrade = useMemo(() => {
@@ -139,7 +168,11 @@ export const CoachingTab: React.FC<{
   }, [studentsWithPresence, selectedGradeLevel]);
 
   useEffect(() => {
-    if (selectedGradeLevel === '' && availableGradeLevels.length > 0) {
+    if (availableGradeLevels.length === 0) {
+      if (selectedGradeLevel !== '') setSelectedGradeLevel('');
+      return;
+    }
+    if (selectedGradeLevel === '' || !availableGradeLevels.includes(selectedGradeLevel)) {
       setSelectedGradeLevel(availableGradeLevels[0]);
     }
   }, [availableGradeLevels, selectedGradeLevel]);
@@ -325,7 +358,7 @@ export const CoachingTab: React.FC<{
     }
   };
 
-  const handleCreateGoal = async () => {
+  const handleUpsertGoal = async () => {
     if (!token || !selectedStudentId) return;
     const title = goalForm.title.trim();
     if (!title || !goalForm.deadline) {
@@ -336,17 +369,57 @@ export const CoachingTab: React.FC<{
     setGoalsError(null);
     setGoalsLoading(true);
     try {
-      await createTeacherCoachingGoal(token, selectedStudentId, {
-        title,
-        description: goalForm.description.trim() || undefined,
-        deadline: deadlineIso,
-      });
+      if (editingGoalId) {
+        await updateTeacherCoachingGoal(token, editingGoalId, {
+          title,
+          description: goalForm.description.trim() || undefined,
+          deadline: deadlineIso,
+        });
+      } else {
+        await createTeacherCoachingGoal(token, selectedStudentId, {
+          title,
+          description: goalForm.description.trim() || undefined,
+          deadline: deadlineIso,
+        });
+      }
       setGoalForm({ title: '', description: '', deadline: '' });
+      setEditingGoalId(null);
       await refreshGoals();
     } catch (e) {
       setGoalsError(
         e instanceof Error ? e.message : 'Hedef kaydedilirken bir hata oluştu.',
       );
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const handleEditGoal = (goal: TeacherCoachingGoal) => {
+    setGoalsError(null);
+    setEditingGoalId(goal.id);
+    setGoalForm({
+      title: goal.title ?? '',
+      description: goal.description ?? '',
+      deadline: goal.deadline ? dayjs(goal.deadline).format('YYYY-MM-DD') : '',
+    });
+  };
+
+  const handleDeleteGoal = async (goalId: string) => {
+    if (!token) return;
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm('Bu hedefi silmek istediğinize emin misiniz?');
+    if (!ok) return;
+    setGoalsError(null);
+    setGoalsLoading(true);
+    try {
+      await deleteTeacherCoachingGoal(token, goalId);
+      if (editingGoalId === goalId) {
+        setEditingGoalId(null);
+        setGoalForm({ title: '', description: '', deadline: '' });
+      }
+      await refreshGoals();
+    } catch (e) {
+      setGoalsError(e instanceof Error ? e.message : 'Hedef silinemedi.');
     } finally {
       setGoalsLoading(false);
     }
@@ -362,18 +435,56 @@ export const CoachingTab: React.FC<{
     setNotesError(null);
     setNotesLoading(true);
     try {
-      await createTeacherCoachingNote(token, selectedStudentId, {
-        content,
-        visibility: noteForm.sharedWithParent
-          ? 'shared_with_parent'
-          : 'teacher_only',
-      });
+      if (editingNoteId) {
+        await updateTeacherCoachingNote(token, editingNoteId, {
+          content,
+          visibility: noteForm.sharedWithParent ? 'shared_with_parent' : 'teacher_only',
+        });
+      } else {
+        await createTeacherCoachingNote(token, selectedStudentId, {
+          content,
+          visibility: noteForm.sharedWithParent
+            ? 'shared_with_parent'
+            : 'teacher_only',
+        });
+      }
       setNoteForm({ content: '', sharedWithParent: true });
+      setEditingNoteId(null);
       await refreshNotes();
     } catch (e) {
       setNotesError(
         e instanceof Error ? e.message : 'Not kaydedilirken bir hata oluştu.',
       );
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+
+  const handleEditNote = (note: TeacherCoachingNote) => {
+    setNotesError(null);
+    setEditingNoteId(note.id);
+    setNoteForm({
+      content: note.content ?? '',
+      sharedWithParent: note.visibility === 'shared_with_parent',
+    });
+  };
+
+  const handleDeleteNote = async (noteId: string) => {
+    if (!token) return;
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm('Bu notu silmek istediğinize emin misiniz?');
+    if (!ok) return;
+    setNotesError(null);
+    setNotesLoading(true);
+    try {
+      await deleteTeacherCoachingNote(token, noteId);
+      if (editingNoteId === noteId) {
+        setEditingNoteId(null);
+        setNoteForm({ content: '', sharedWithParent: true });
+      }
+      await refreshNotes();
+    } catch (e) {
+      setNotesError(e instanceof Error ? e.message : 'Not silinemedi.');
     } finally {
       setNotesLoading(false);
     }
@@ -424,11 +535,6 @@ export const CoachingTab: React.FC<{
 
   const activeAssignments = useMemo(
     () => studentProfile?.assignments ?? [],
-    [studentProfile],
-  );
-
-  const recentWatchRecords = useMemo(
-    () => (studentProfile?.watchRecords ?? []).slice(0, 3),
     [studentProfile],
   );
 
@@ -492,7 +598,7 @@ export const CoachingTab: React.FC<{
                         color: isActive ? 'var(--color-primary-strong)' : 'var(--color-text-main)',
                       }}
                     >
-                      {grade}. Sınıf
+                      {formatGradeLabel(grade)}
                     </button>
                   );
                 })}
@@ -526,7 +632,7 @@ export const CoachingTab: React.FC<{
                         }}
                       >
                         {student.name}{' '}
-                        {student.gradeLevel ? `(${student.gradeLevel}. Sınıf)` : ''}
+                        {student.gradeLevel ? `(${formatGradeLabel(student.gradeLevel)})` : ''}
                       </strong>
                       <small
                         style={{
@@ -578,7 +684,7 @@ export const CoachingTab: React.FC<{
                 }}
               >
                 {selectedStudent
-                  ? `${selectedStudent.name}${selectedStudent.gradeLevel ? ` (${selectedStudent.gradeLevel}. Sınıf)` : ''}`
+                  ? `${selectedStudent.name}${selectedStudent.gradeLevel ? ` (${formatGradeLabel(selectedStudent.gradeLevel)})` : ''}`
                   : 'Öğrenci seçin'}
               </div>
               <button
@@ -845,7 +951,6 @@ export const CoachingTab: React.FC<{
                 { id: 'sessions' as const, label: 'Görüşme Kaydı' },
                 { id: 'tests' as const, label: 'Ders Detayları' },
                 { id: 'assignments' as const, label: 'Aktif Ödevler' },
-                { id: 'studies' as const, label: 'Son Çalışmalar' },
               ].map((tab) => {
                 const isActive = activeDetailTab === tab.id;
                 return (
@@ -869,7 +974,6 @@ export const CoachingTab: React.FC<{
                 sessions: { title: 'Görüşme Kaydı', subtitle: 'Seanslar ve kayıtlar.' },
                 tests: { title: 'Ders Detayları', subtitle: 'Öğrenciye ait test özeti ve sonuçlar' },
                 assignments: { title: 'Aktif Ödevler', subtitle: 'Yaklaşan veya devam eden görevler' },
-                studies: { title: 'Son Çalışmalar', subtitle: 'Video ve içerik izleme' },
               };
               const { title, subtitle } = tabTitles[activeDetailTab];
               return (
@@ -971,11 +1075,29 @@ export const CoachingTab: React.FC<{
                     <button
                       type="button"
                       className="primary-btn"
-                      onClick={() => handleCreateGoal().catch(() => {})}
+                      onClick={() => handleUpsertGoal().catch(() => {})}
                       disabled={goalsLoading || !token || !selectedStudentId}
                     >
-                      {goalsLoading ? 'Kaydediliyor...' : 'Yeni Hedef Ekle'}
+                      {goalsLoading
+                        ? 'Kaydediliyor...'
+                        : editingGoalId
+                          ? 'Güncelle'
+                          : 'Yeni Hedef Ekle'}
                     </button>
+                    {editingGoalId && (
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => {
+                          setEditingGoalId(null);
+                          setGoalForm({ title: '', description: '', deadline: '' });
+                        }}
+                        disabled={goalsLoading}
+                        style={{ marginLeft: '0.5rem' }}
+                      >
+                        Vazgeç
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1027,6 +1149,26 @@ export const CoachingTab: React.FC<{
                             Bitiş: {deadlineLabel}
                             {goal.status === 'completed' ? ' · Öğrenci tamamladı' : ''}
                           </small>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            className="ghost-btn"
+                            onClick={() => handleEditGoal(goal)}
+                            title="Düzenle"
+                            style={{ height: 32, width: 36, padding: 0, borderRadius: 10 }}
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="danger-btn"
+                            onClick={() => handleDeleteGoal(goal.id).catch(() => {})}
+                            title="Sil"
+                            style={{ height: 32, width: 36, padding: 0, borderRadius: 10 }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       </div>
                     );
@@ -1104,8 +1246,26 @@ export const CoachingTab: React.FC<{
                       onClick={() => handleCreateNote().catch(() => {})}
                       disabled={notesLoading || !token || !selectedStudentId}
                     >
-                      {notesLoading ? 'Kaydediliyor...' : 'Not Ekle'}
+                      {notesLoading
+                        ? 'Kaydediliyor...'
+                        : editingNoteId
+                          ? 'Güncelle'
+                          : 'Not Ekle'}
                     </button>
+                    {editingNoteId && (
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => {
+                          setEditingNoteId(null);
+                          setNoteForm({ content: '', sharedWithParent: true });
+                        }}
+                        disabled={notesLoading}
+                        style={{ marginLeft: '0.5rem' }}
+                      >
+                        Vazgeç
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1152,6 +1312,26 @@ export const CoachingTab: React.FC<{
                             : 'warning'
                         }
                       />
+                      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() => handleEditNote(note)}
+                          title="Düzenle"
+                          style={{ height: 32, width: 36, padding: 0, borderRadius: 10 }}
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="danger-btn"
+                          onClick={() => handleDeleteNote(note.id).catch(() => {})}
+                          title="Sil"
+                          style={{ height: 32, width: 36, padding: 0, borderRadius: 10 }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1363,33 +1543,6 @@ export const CoachingTab: React.FC<{
                     </>
                   )}
 
-                  {activeDetailTab === 'studies' && (
-                    <>
-                      {recentWatchRecords.length === 0 ? (
-                        <div className="empty-state">Son çalışma kaydı bulunmuyor.</div>
-                      ) : (
-                        <div className="list-stack">
-                          {recentWatchRecords.map((w) => (
-                            <div key={w.contentId} className="list-row">
-                              <div style={{ flex: 1 }}>
-                                <strong style={{ display: 'block' }}>{w.contentId}</strong>
-                                <small
-                                  style={{
-                                    display: 'block',
-                                    marginTop: '0.15rem',
-                                    color: 'var(--color-text-muted)',
-                                  }}
-                                >
-                                  % {Math.round(w.watchedPercent)} tamamlandı ·{' '}
-                                  {w.completed ? 'Bitti' : 'Devam ediyor'}
-                                </small>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
                 </GlassCard>
               );
             })()}

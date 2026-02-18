@@ -5,6 +5,7 @@ exports.createLiveKitToken = createLiveKitToken;
 exports.getLiveKitUrl = getLiveKitUrl;
 exports.hasParticipantsInRoom = hasParticipantsInRoom;
 exports.muteAllParticipantsInRoom = muteAllParticipantsInRoom;
+exports.unmuteAllParticipantsInRoom = unmuteAllParticipantsInRoom;
 const livekit_server_sdk_1 = require("livekit-server-sdk");
 // Not: Bu örnek projede basitlik için LiveKit
 // yapılandırmasını doğrudan kod içine yazıyoruz.
@@ -57,5 +58,19 @@ async function muteAllParticipantsInRoom(roomName) {
         }
     }
     return { muted };
+}
+/** Tüm katılımcıların mikrofonlarını aç (öğretmen için). TrackType.AUDIO = 0 */
+async function unmuteAllParticipantsInRoom(roomName) {
+    const participants = await roomService.listParticipants(roomName);
+    let unmuted = 0;
+    for (const p of participants) {
+        for (const track of p.tracks) {
+            if (track.type === 0) {
+                await roomService.mutePublishedTrack(roomName, p.identity, track.sid, false);
+                unmuted += 1;
+            }
+        }
+    }
+    return { unmuted };
 }
 //# sourceMappingURL=livekit.js.map

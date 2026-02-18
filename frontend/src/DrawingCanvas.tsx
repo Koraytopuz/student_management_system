@@ -16,6 +16,8 @@ interface DrawingCanvasProps {
   lineWidth?: number;
   eraserWidth?: number;
   readonly?: boolean;
+  transparent?: boolean;
+  className?: string; // Add className prop
 }
 
 export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
@@ -26,12 +28,13 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   backgroundImageUrl,
   initialImageDataUrl,
   onChange,
-  onClearToBackground,
   tool = 'pen',
   color = '#111827',
   lineWidth,
   eraserWidth,
   readonly = false,
+  transparent = false,
+  className = '',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [ctx, setCtx] = useState<CanvasRenderingContext2D | null>(null);
@@ -182,41 +185,21 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       onChange(dataUrl);
     }
   };
-
-  const handleClear = () => {
-    const canvas = canvasRef.current;
-    if (!canvas || !ctx) return;
-    // When parent provides onClearToBackground, clear only drawings and restore PDF/question
-    if (onClearToBackground) {
-      onClearToBackground();
-      return;
-    }
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (backgroundImageUrl) {
-      const img = new Image();
-      img.src = backgroundImageUrl;
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        if (onChange) onChange(canvas.toDataURL('image/png'));
-      };
-    } else if (onChange) {
-      onChange(canvas.toDataURL('image/png'));
-    }
-  };
+ 
+  // Remove internal 'Temizle' button and container div if it's meant to be just a raw canvas component
+  // Or keep it but style it to be transparent/hidden if transparent prop logic dictates.
+  // For this refactor, I'll remove the wrapper div if transparent is true, or just ensure canvas has no bg.
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       <canvas
         ref={canvasRef}
         width={width}
         height={height}
+        className={className}
         style={{
           touchAction: 'none',
-          borderRadius: 12,
-          border: '1px solid rgba(148,163,184,0.6)',
-          background: '#ffffff',
-          boxShadow: '0 18px 40px rgba(15,23,42,0.25)',
-          maxWidth: '100%',
+          // If transparent, no background. Else white.
+          background: transparent ? 'transparent' : '#ffffff',
           pointerEvents: readonly ? 'none' : 'auto',
           ...(canvasDisplayWidth != null && canvasDisplayHeight != null
             ? { width: canvasDisplayWidth, height: canvasDisplayHeight }
@@ -227,21 +210,5 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         onPointerUp={finishDrawing}
         onPointerLeave={finishDrawing}
       />
-      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-        <button
-          type="button"
-          className="ghost-btn"
-          onClick={handleClear}
-          style={{
-            border: '1px solid rgba(148,163,184,0.9)',
-            background: 'rgba(15,23,42,0.9)',
-            color: '#e5e7eb',
-          }}
-        >
-          Temizle
-        </button>
-      </div>
-    </div>
   );
 };
-

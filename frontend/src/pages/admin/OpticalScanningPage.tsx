@@ -233,23 +233,23 @@ const OpticalScanningPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', color: '#e2e8f0' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Bölüm A: Dosya Yükleme ve Analiz */}
       <div
         style={{
           borderRadius: 16,
-          border: '1px solid rgba(71, 85, 105, 0.7)',
-          background: 'linear-gradient(135deg, #0f172a 0%, #020617 50%, #0f172a 100%)',
+          border: '1px solid var(--glass-border)',
+          background: 'var(--glass-bg)',
           padding: '1.5rem',
-          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+          boxShadow: 'var(--shadow-soft)',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#f8fafc', margin: 0 }}>
+            <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--color-text-main)', margin: 0 }}>
               Optik Form Yükleme ve Analiz
             </h1>
-            <p style={{ fontSize: '0.875rem', color: '#94a3b8', margin: '0.375rem 0 0' }}>
+            <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', margin: '0.375rem 0 0' }}>
               Cevap anahtarını ve öğrenci optik dosyalarını yükleyerek toplu sınav analizini başlatın.
             </p>
           </div>
@@ -259,12 +259,12 @@ const OpticalScanningPage: React.FC = () => {
                 display: 'inline-flex',
                 alignItems: 'center',
                 borderRadius: 9999,
-                background: 'rgba(16, 185, 129, 0.1)',
+                background: 'color-mix(in srgb, var(--success) 12%, transparent)',
                 padding: '4px 12px',
                 fontSize: 11,
                 fontWeight: 500,
-                color: '#6ee7b7',
-                border: '1px solid rgba(16, 185, 129, 0.4)',
+                color: 'color-mix(in srgb, var(--success) 75%, var(--color-text-main))',
+                border: '1px solid color-mix(in srgb, var(--success) 30%, transparent)',
               }}
             >
               <span
@@ -272,13 +272,13 @@ const OpticalScanningPage: React.FC = () => {
                   width: 6,
                   height: 6,
                   borderRadius: '50%',
-                  background: '#34d399',
+                  background: 'var(--success)',
                   marginRight: 6,
                 }}
               />
               Otomatik puanlama aktif
             </span>
-            <span style={{ fontSize: 11, color: '#64748b' }}>.txt / .dat formatında dosya yükleyin</span>
+            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>.txt / .dat formatında dosya yükleyin</span>
           </div>
         </div>
 
@@ -287,11 +287,11 @@ const OpticalScanningPage: React.FC = () => {
             style={{
               marginBottom: '1rem',
               borderRadius: 8,
-              background: 'rgba(127, 29, 29, 0.4)',
-              border: '1px solid rgba(239, 68, 68, 0.6)',
+              background: 'color-mix(in srgb, var(--error) 12%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--error) 35%, transparent)',
               padding: '8px 12px',
               fontSize: '0.875rem',
-              color: '#fecaca',
+              color: 'color-mix(in srgb, var(--error) 75%, var(--color-text-main))',
             }}
           >
             {error}
@@ -302,7 +302,11 @@ const OpticalScanningPage: React.FC = () => {
           {/* Cevap Anahtarı */}
           <div
             style={{
-              border: `2px dashed ${isAnswerKeyDragging ? 'rgba(56, 189, 248, 0.8)' : 'rgba(71, 85, 105, 0.8)'}`,
+              border: `2px dashed ${
+                isAnswerKeyDragging
+                  ? 'color-mix(in srgb, var(--accent-color) 65%, var(--glass-border))'
+                  : 'var(--glass-border)'
+              }`,
               borderRadius: 12,
               padding: '1rem',
               display: 'flex',
@@ -310,8 +314,12 @@ const OpticalScanningPage: React.FC = () => {
               alignItems: 'center',
               justifyContent: 'center',
               cursor: 'pointer',
-              background: isAnswerKeyDragging ? 'rgba(2, 6, 23, 0.3)' : 'rgba(15, 23, 42, 0.4)',
-              boxShadow: isAnswerKeyDragging ? '0 10px 40px rgba(14, 165, 233, 0.2)' : 'none',
+              background: isAnswerKeyDragging
+                ? 'color-mix(in srgb, var(--glass-bg) 82%, var(--color-surface-soft))'
+                : 'color-mix(in srgb, var(--glass-bg) 92%, transparent)',
+              boxShadow: isAnswerKeyDragging
+                ? '0 14px 45px color-mix(in srgb, var(--accent-color) 18%, transparent)'
+                : 'none',
             }}
             onDragOver={(e) => handleDragOver(e, 'answerKey')}
             onDragEnter={(e) => handleDragOver(e, 'answerKey')}
@@ -334,16 +342,16 @@ const OpticalScanningPage: React.FC = () => {
               }
             />
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}>
-              <Upload size={32} style={{ color: '#38bdf8' }} />
-              <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#f8fafc', margin: 0 }}>
+              <Upload size={32} style={{ color: 'var(--accent-color)' }} />
+              <p style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--color-text-main)', margin: 0 }}>
                 Cevap Anahtarı (.txt, .dat)
               </p>
-              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', margin: 0 }}>
                 Dosyayı buraya bırakın veya tıklayın
               </p>
               {answerKeyFile && (
-                <p style={{ marginTop: 4, fontSize: '0.75rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: 4, margin: '4px 0 0' }}>
-                  <FileText size={16} style={{ color: '#94a3b8' }} />
+                <p style={{ marginTop: 4, fontSize: '0.75rem', color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: 4, margin: '4px 0 0' }}>
+                  <FileText size={16} style={{ color: 'var(--color-text-muted)' }} />
                   <span style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {answerKeyFile.name}
                   </span>
@@ -355,7 +363,11 @@ const OpticalScanningPage: React.FC = () => {
           {/* Öğrenci Optikleri */}
           <div
             style={{
-              border: `2px dashed ${isStudentOpticsDragging ? 'rgba(56, 189, 248, 0.8)' : 'rgba(71, 85, 105, 0.8)'}`,
+              border: `2px dashed ${
+                isStudentOpticsDragging
+                  ? 'color-mix(in srgb, var(--accent-color) 65%, var(--glass-border))'
+                  : 'var(--glass-border)'
+              }`,
               borderRadius: 12,
               padding: '1rem',
               display: 'flex',
@@ -363,8 +375,12 @@ const OpticalScanningPage: React.FC = () => {
               alignItems: 'center',
               justifyContent: 'center',
               cursor: 'pointer',
-              background: isStudentOpticsDragging ? 'rgba(2, 6, 23, 0.3)' : 'rgba(15, 23, 42, 0.4)',
-              boxShadow: isStudentOpticsDragging ? '0 10px 40px rgba(14, 165, 233, 0.2)' : 'none',
+              background: isStudentOpticsDragging
+                ? 'color-mix(in srgb, var(--glass-bg) 82%, var(--color-surface-soft))'
+                : 'color-mix(in srgb, var(--glass-bg) 92%, transparent)',
+              boxShadow: isStudentOpticsDragging
+                ? '0 14px 45px color-mix(in srgb, var(--accent-color) 18%, transparent)'
+                : 'none',
             }}
             onDragOver={(e) => handleDragOver(e, 'studentOptics')}
             onDragEnter={(e) => handleDragOver(e, 'studentOptics')}
@@ -387,16 +403,16 @@ const OpticalScanningPage: React.FC = () => {
               }
             />
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' }}>
-              <Upload size={32} style={{ color: '#38bdf8' }} />
-              <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#f8fafc', margin: 0 }}>
+              <Upload size={32} style={{ color: 'var(--accent-color)' }} />
+              <p style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--color-text-main)', margin: 0 }}>
                 Öğrenci Optikleri (.dat, .txt)
               </p>
-              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: 0 }}>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', margin: 0 }}>
                 Dosyayı buraya bırakın veya tıklayın
               </p>
               {studentOpticsFile && (
-                <p style={{ marginTop: 4, fontSize: '0.75rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: 4, margin: '4px 0 0' }}>
-                  <FileText size={16} style={{ color: '#94a3b8' }} />
+                <p style={{ marginTop: 4, fontSize: '0.75rem', color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: 4, margin: '4px 0 0' }}>
+                  <FileText size={16} style={{ color: 'var(--color-text-muted)' }} />
                   <span style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {studentOpticsFile.name}
                   </span>
@@ -444,28 +460,28 @@ const OpticalScanningPage: React.FC = () => {
       {/* Bölüm B: Sonuç Tablosu */}
       <div
         style={{
-          background: 'rgba(2, 6, 23, 0.8)',
-          border: '1px solid rgba(30, 41, 59, 1)',
+          background: 'var(--glass-bg)',
+          border: '1px solid var(--glass-border)',
           borderRadius: 16,
           overflow: 'hidden',
-          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+          boxShadow: 'var(--shadow-soft)',
         }}
       >
         <div
           style={{
             padding: '1rem 1.5rem',
-            borderBottom: '1px solid rgba(30, 41, 59, 1)',
+            borderBottom: '1px solid var(--glass-border)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            background: 'rgba(2, 6, 23, 0.95)',
+            background: 'color-mix(in srgb, var(--glass-bg) 88%, var(--color-surface-soft))',
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc', margin: 0 }}>
+            <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--color-text-main)', margin: 0 }}>
               Analiz Sonuçları
             </h2>
-            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
               Öğrenci bazlı doğru / yanlış / net ve puan dağılımlarını inceleyin.
             </span>
           </div>
@@ -474,9 +490,9 @@ const OpticalScanningPage: React.FC = () => {
               fontSize: 11,
               padding: '4px 12px',
               borderRadius: 9999,
-              border: '1px solid rgba(51, 65, 85, 1)',
-              color: '#cbd5e1',
-              background: 'rgba(15, 23, 42, 0.6)',
+              border: '1px solid var(--glass-border)',
+              color: 'var(--color-text-muted)',
+              background: 'color-mix(in srgb, var(--glass-bg) 82%, var(--color-surface-soft))',
             }}
           >
             {results.length > 0
@@ -487,7 +503,7 @@ const OpticalScanningPage: React.FC = () => {
 
         <div style={{ overflowX: 'auto' }}>
           <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
-            <thead style={{ background: '#020617' }}>
+            <thead style={{ background: 'color-mix(in srgb, var(--glass-bg) 88%, var(--color-surface-soft))' }}>
               <tr>
                 {['Öğrenci Adı', 'Sınıf', 'Doğru', 'Yanlış', 'Boş', 'Puan', 'İşlemler'].map((h, i) => (
                   <th
@@ -497,10 +513,10 @@ const OpticalScanningPage: React.FC = () => {
                       textAlign: i === 0 || i === 1 ? 'left' : i === 6 ? 'right' : 'center',
                       fontSize: 11,
                       fontWeight: 600,
-                      color: '#cbd5e1',
+                      color: 'var(--color-text-muted)',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid rgba(30, 41, 59, 1)',
+                      borderBottom: '1px solid var(--glass-border)',
                     }}
                   >
                     {h}
@@ -508,18 +524,18 @@ const OpticalScanningPage: React.FC = () => {
                 ))}
               </tr>
             </thead>
-            <tbody style={{ background: 'rgba(2, 6, 23, 0.8)' }}>
+            <tbody style={{ background: 'transparent' }}>
               {results.map((result) => (
                 <tr
                   key={result.id}
                   style={{
-                    borderBottom: '1px solid rgba(30, 41, 59, 1)',
+                    borderBottom: '1px solid var(--glass-border)',
                   }}
                 >
-                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', fontWeight: 500, color: '#f8fafc' }}>
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', fontWeight: 500, color: 'var(--color-text-main)' }}>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span>{result.studentName}</span>
-                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>No: {result.studentNo}</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>No: {result.studentNo}</span>
                     </div>
                   </td>
                   <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem' }}>
@@ -527,28 +543,38 @@ const OpticalScanningPage: React.FC = () => {
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
-                        background: 'rgba(15, 23, 42, 0.6)',
-                        color: '#e2e8f0',
+                        background: 'var(--list-row-bg)',
+                        color: 'var(--color-text-main)',
                         padding: '4px 8px',
                         borderRadius: 9999,
                         fontSize: 11,
-                        border: '1px solid rgba(51, 65, 85, 1)',
+                        border: '1px solid var(--glass-border)',
                       }}
                     >
                       {result.className}
                     </span>
                   </td>
-                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: '#34d399' }}>
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: 'var(--success)' }}>
                     {result.correct}
                   </td>
-                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: '#fb7185' }}>
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: 'var(--error)' }}>
                     {result.incorrect}
                   </td>
-                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: '#cbd5e1' }}>
+                  <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', color: 'var(--color-text-main)' }}>
                     {result.blank}
                   </td>
                   <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center' }}>
-                    <span style={{ fontWeight: 600, color: result.score >= 400 ? '#16a34a' : result.score >= 300 ? '#ca8a04' : '#dc2626' }}>
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        color:
+                          result.score >= 400
+                            ? 'color-mix(in srgb, var(--success) 90%, var(--color-text-main))'
+                            : result.score >= 300
+                              ? 'color-mix(in srgb, var(--warning) 85%, var(--color-text-main))'
+                              : 'color-mix(in srgb, var(--error) 90%, var(--color-text-main))',
+                      }}
+                    >
                       {result.score}
                     </span>
                   </td>
@@ -571,7 +597,7 @@ const OpticalScanningPage: React.FC = () => {
                         background:
                           result.status === 'idle'
                             ? 'linear-gradient(90deg, #10b981, #16a34a)'
-                            : 'rgba(51, 65, 85, 0.8)',
+                            : 'color-mix(in srgb, var(--glass-bg) 85%, var(--color-surface-soft))',
                         boxShadow: result.status === 'idle' ? '0 4px 14px rgba(16, 185, 129, 0.35)' : 'none',
                       }}
                     >
@@ -595,7 +621,7 @@ const OpticalScanningPage: React.FC = () => {
                       padding: '1.5rem 1rem',
                       textAlign: 'center',
                       fontSize: '0.875rem',
-                      color: '#94a3b8',
+                      color: 'var(--color-text-muted)',
                     }}
                   >
                     Henüz analiz sonucu yok. Önce üst kısımdan optik dosyaları

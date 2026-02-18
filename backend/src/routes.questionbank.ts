@@ -170,6 +170,8 @@ router.get(
     authenticateMultiple(['teacher', 'admin']) as unknown as RequestHandler,
 
     async (req: Request, res: Response) => {
+        const authReq = req as AuthenticatedRequest;
+        const institutionName: string | undefined = (authReq.user as any)?.institutionName;
         const {
             subjectId,
             gradeLevel,
@@ -205,6 +207,15 @@ router.get(
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
 
+        // Kurum filtresi: kurum adı varsa sadece o kuruma veya kurumsuz (global) sorular
+        if (institutionName) {
+            where.OR = where.OR ?? [];
+            where.OR.push(
+                { institutionName },
+                { institutionName: null },
+            );
+        }
+
         const [questions, total] = await Promise.all([
             prisma.questionBank.findMany({
                 where,
@@ -237,6 +248,7 @@ router.post(
     async (req: Request, res: Response) => {
         const authReq = req as AuthenticatedRequest;
         const teacherId = authReq.user!.id;
+        const institutionName: string | undefined = (authReq.user as any)?.institutionName;
         const data = req.body as AIGenerateRequest;
 
         // Validasyon
@@ -448,6 +460,7 @@ ${referenceQuestions.length > 0 ? `\nReferans Sorular:\n${referenceQuestions.sli
                         createdByTeacherId: teacherId,
                         isApproved: false,
                         tags: [],
+                        institutionName: institutionName ?? null,
                     };
 
                     // imageUrl schema'dan kaldırıldı (migration uygulanmamış DB'ler için); sorular imageUrl olmadan kaydedilir
@@ -660,6 +673,7 @@ router.post(
     async (req: Request, res: Response) => {
         const authReq = req as AuthenticatedRequest;
         const teacherId = authReq.user!.id;
+        const institutionName: string | undefined = (authReq.user as any)?.institutionName;
         const data = req.body as QuestionBankCreateInput;
 
         // Validasyon
@@ -695,6 +709,7 @@ router.post(
                 createdByTeacherId: teacherId,
                 isApproved: true, // Öğretmen tarafından eklenen sorular otomatik onaylı
                 approvedByTeacherId: teacherId,
+                institutionName: institutionName ?? null,
             },
             include: { subject: true },
         });

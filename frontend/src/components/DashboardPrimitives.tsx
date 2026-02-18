@@ -434,29 +434,28 @@ export const GlassCard: React.FC<GlassCardProps> = ({
     <div className={`glass-card${className ? ` ${className}` : ''}`}>
       {(title || subtitle || actions) && (
         isCollapsible ? (
-          <div
-            className="card-header card-header--clickable"
-            role="button"
-            tabIndex={0}
-            onClick={onToggleCollapsed}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onToggleCollapsed()}
-            aria-expanded={!collapsed}
-          >
-            <div style={{ minWidth: 0 }}>
-              {title && (
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  {icon ? <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>{icon}</span> : null}
-                  <span>{title}</span>
-                </h3>
-              )}
-              {!collapsed && subtitle && <p className="card-subtitle">{subtitle}</p>}
-            </div>
-            <div className="card-actions">
-              {!collapsed ? actions : null}
+          <div className="card-header">
+            <button
+              type="button"
+              className="card-header-toggle card-header--clickable"
+              onClick={onToggleCollapsed}
+              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onToggleCollapsed()}
+              aria-expanded={!collapsed}
+            >
+              <div style={{ minWidth: 0 }}>
+                {title && (
+                  <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {icon ? <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>{icon}</span> : null}
+                    <span>{title}</span>
+                  </h3>
+                )}
+                {!collapsed && subtitle && <p className="card-subtitle">{subtitle}</p>}
+              </div>
               <span className="card-collapse-icon" aria-hidden>
                 {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
               </span>
-            </div>
+            </button>
+            {actions && <div className="card-actions">{!collapsed ? actions : null}</div>}
           </div>
         ) : (
           <div className="card-header">

@@ -11,6 +11,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "npx prisma db seed",
+    "db:seed:badges": "npx tsx prisma/seed.badges.ts",
+    "db:reseed:demo-students": "npx tsx prisma/reseed.demoStudents.ts",
     "db:migrate-to-render": "tsx scripts/migrate-local-to-render.ts",
     "postinstall": "prisma generate"
   },

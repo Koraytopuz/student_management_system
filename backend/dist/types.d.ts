@@ -4,6 +4,8 @@ export interface UserBase {
     name: string;
     email: string;
     role: UserRole;
+    /** Kurum / dershane adı – multi-tenant ayrımı için */
+    institutionName?: string;
 }
 export interface Teacher extends UserBase {
     role: 'teacher';
@@ -31,6 +33,8 @@ export interface ClassGroup {
     id: string;
     name: string;
     gradeLevel: string;
+    stream?: string | null;
+    section?: string | null;
     teacherId: string;
     studentIds: string[];
 }

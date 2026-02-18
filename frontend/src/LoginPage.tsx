@@ -17,7 +17,14 @@ const DEMO_PASSWORDS: Record<UserRole, string> = {
   admin: 'sky123',
 };
 
-const roles: { value: UserRole; label: string }[] = [
+type LoginRole = UserRole | 'system_admin';
+
+function isStandardRole(role: LoginRole): role is UserRole {
+  return role === 'teacher' || role === 'student' || role === 'parent' || role === 'admin';
+}
+
+const roles: { value: LoginRole; label: string }[] = [
+  { value: 'system_admin', label: 'Kontrol Paneli' },
   { value: 'teacher', label: 'Öğretmen' },
   { value: 'student', label: 'Öğrenci' },
   { value: 'parent', label: 'Veli' },
@@ -25,9 +32,9 @@ const roles: { value: UserRole; label: string }[] = [
 ];
 
 export const LoginPage: React.FC = () => {
-  const [selectedRole, setSelectedRole] = useState<UserRole>('teacher');
-  const [email, setEmail] = useState(DEMO_EMAILS.teacher);
-  const [password, setPassword] = useState(DEMO_PASSWORDS.teacher);
+  const [selectedRole, setSelectedRole] = useState<LoginRole>('system_admin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { loginSuccess } = useAuth();
@@ -303,9 +310,11 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await login(email, password, selectedRole);
+      const apiRole: UserRole = selectedRole === 'system_admin' ? 'admin' : selectedRole;
+      const res = await login(email, password, apiRole);
       loginSuccess(res.user, res.token);
-      if (res.user.role === 'teacher') navigate('/teacher');
+      if (selectedRole === 'system_admin') navigate('/system-admin');
+      else if (res.user.role === 'teacher') navigate('/teacher');
       else if (res.user.role === 'student') navigate('/student');
       else if (res.user.role === 'parent') navigate('/parent');
       else navigate('/admin');
@@ -316,10 +325,16 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  const handleRoleChange = (role: UserRole) => {
+  const handleRoleChange = (role: LoginRole) => {
     setSelectedRole(role);
-    setEmail(DEMO_EMAILS[role]);
-    setPassword(DEMO_PASSWORDS[role]);
+    if (isStandardRole(role)) {
+      setEmail(DEMO_EMAILS[role]);
+      setPassword(DEMO_PASSWORDS[role]);
+    } else {
+      // Kontrol paneli için giriş bilgileri her zaman manuel girilsin
+      setEmail('');
+      setPassword('');
+    }
     setError(null);
   };
 
@@ -359,7 +374,11 @@ export const LoginPage: React.FC = () => {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder={DEMO_EMAILS[selectedRole]}
+              placeholder={
+                isStandardRole(selectedRole)
+                  ? DEMO_EMAILS[selectedRole]
+                  : 'E-posta adresiniz'
+              }
               required
             />
           </label>

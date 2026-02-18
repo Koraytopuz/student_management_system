@@ -22,6 +22,7 @@ function prismaUserToApiUser(dbUser: PrismaUser, studentIds?: string[]): User {
     name: dbUser.name,
     email: dbUser.email,
     role: dbUser.role as UserRole,
+    institutionName: (dbUser as any).institutionName ?? undefined,
   };
   switch (dbUser.role) {
     case 'teacher':

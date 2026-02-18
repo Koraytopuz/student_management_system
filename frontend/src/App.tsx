@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, BookOpen, ChevronRight, Moon, Sun } from 'lucide-react';
+import { Award, Bell, BookOpen, ChevronRight, Moon, Sun } from 'lucide-react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { LoginPage } from './LoginPage';
@@ -8,6 +8,7 @@ import { StudentDashboard } from './StudentDashboard';
 import { ParentDashboard } from './ParentDashboard';
 import { AdminDashboard } from './AdminDashboard';
 import { AdminReports } from './AdminReports';
+import { SystemAdminDashboard } from './SystemAdminDashboard';
 import { QuestionParserPage } from './pages/admin/QuestionParserPage';
 import { TeacherAssignmentsPage } from './pages/teacher/Assignments';
 import { StudentMyHomeworksPage } from './pages/student/MyHomeworks';
@@ -15,7 +16,7 @@ import { AnalysisReportPage } from './pages/student/AnalysisReport';
 import { ParentChildHomeworksPage } from './pages/parent/ChildHomeworks';
 import { DashboardSidebarProvider, useDashboardSidebar } from './DashboardSidebarContext';
 import { ReadingModeProvider, useReadingMode } from './ReadingModeContext';
-import { getParentUnreadNotificationCount, getTeacherUnreadNotificationCount, getAdminNotifications } from './api';
+import { getParentUnreadNotificationCount, getTeacherUnreadNotificationCount, getStudentUnreadNotificationCount, getAdminNotifications } from './api';
 
 const ProtectedRoute: React.FC<{
   children: React.ReactElement;
@@ -55,6 +56,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         } else if (user.role === 'parent') {
           const payload = await getParentUnreadNotificationCount(token);
           if (!cancelled) setUnreadNotificationsCount(payload.count ?? 0);
+        } else if (user.role === 'student') {
+          const payload = await getStudentUnreadNotificationCount(token);
+          if (!cancelled) setUnreadNotificationsCount(payload.count ?? 0);
         } else if (user.role === 'admin') {
           const list = await getAdminNotifications(token, 50);
           if (!cancelled) {
@@ -90,7 +94,12 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (path.startsWith('/teacher')) navigate(`/teacher?tab=notifications${idParam}`);
     else if (path.startsWith('/student')) navigate(`/student?notifications=1${idParam}`);
     else if (path.startsWith('/parent')) navigate(`/parent?tab=notifications${idParam}`);
-    else if (path.startsWith('/admin')) navigate('/admin?tab=notifications');
+    else if (path.startsWith('/admin')) navigate(`/admin?tab=notifications${idParam}`);
+  };
+
+  const handleGoToBadges = () => {
+    const path = location.pathname;
+    if (path.startsWith('/student')) navigate('/student?tab=badges');
   };
   const [isDark, setIsDark] = React.useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -199,6 +208,17 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     style={{ padding: '0.5rem' }}
                   >
                     {isDark ? <Moon size={18} /> : <Sun size={18} />}
+                  </button>
+                )}
+                {panelTitle && /^\/(teacher|student|parent|admin)/.test(location.pathname) && location.pathname.startsWith('/student') && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    aria-label="Rozetler"
+                    onClick={handleGoToBadges}
+                    style={{ padding: '0.5rem' }}
+                  >
+                    <Award size={18} />
                   </button>
                 )}
                 {panelTitle && /^\/(teacher|student|parent|admin)/.test(location.pathname) && (
@@ -366,6 +386,16 @@ const AppRoutes: React.FC = () => {
           <Layout>
             <ProtectedRoute requiredRole="admin">
               <AdminDashboard />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/system-admin"
+        element={
+          <Layout>
+            <ProtectedRoute requiredRole="admin">
+              <SystemAdminDashboard />
             </ProtectedRoute>
           </Layout>
         }

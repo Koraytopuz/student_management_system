@@ -318,7 +318,7 @@ export function LessonScheduleTab({
     return list;
   }, [entries, gradeLevel, subjectId]);
 
-  const handleInlineSave = async () => {
+  const handleInlineSave = async (opts?: { keepEditing?: boolean }) => {
     if (!editingSlot) return;
     const { hour, dayIndex } = editingSlot;
     const g = gradeLevel || grades[0] || '';
@@ -342,8 +342,10 @@ export function LessonScheduleTab({
           ),
         );
       }
-      setEditingSlot(null);
-      setEditingSubjectName('');
+      if (!opts?.keepEditing) {
+        setEditingSlot(null);
+        setEditingSubjectName('');
+      }
       return;
     }
 
@@ -368,8 +370,10 @@ export function LessonScheduleTab({
           },
         ];
       });
-      setEditingSlot(null);
-      setEditingSubjectName('');
+      if (!opts?.keepEditing) {
+        setEditingSlot(null);
+        setEditingSubjectName('');
+      }
       return;
     }
     if (!token) return;
@@ -393,11 +397,13 @@ export function LessonScheduleTab({
     } catch {
       // Hata sessiz
     }
-    setEditingSlot(null);
-    setEditingSubjectName('');
+    if (!opts?.keepEditing) {
+      setEditingSlot(null);
+      setEditingSubjectName('');
+    }
   };
 
-  const handleInlineTopicSave = async () => {
+  const handleInlineTopicSave = async (opts?: { keepEditing?: boolean }) => {
     if (!editingTopicSlot) return;
     const value = editingTopicValue.trim();
     const { hour, dayIndex } = editingTopicSlot;
@@ -427,8 +433,10 @@ export function LessonScheduleTab({
           },
         ];
       });
-      setEditingTopicSlot(null);
-      setEditingTopicValue('');
+      if (!opts?.keepEditing) {
+        setEditingTopicSlot(null);
+        setEditingTopicValue('');
+      }
       return;
     }
     if (!token) return;
@@ -453,8 +461,10 @@ export function LessonScheduleTab({
     } catch {
       // Hata sessiz
     }
-    setEditingTopicSlot(null);
-    setEditingTopicValue('');
+    if (!opts?.keepEditing) {
+      setEditingTopicSlot(null);
+      setEditingTopicValue('');
+    }
   };
 
   const moveInlineCursor = (
@@ -520,6 +530,79 @@ export function LessonScheduleTab({
         e.dayOfWeek === newDayIndex,
     );
     setEditingSubjectName(existing?.subjectName ?? '');
+  };
+
+  const getSummaryEntryStyle = (text: string): React.CSSProperties => {
+    const len = (text ?? '').trim().length;
+    if (len <= 8) return { fontSize: '0.8rem' };
+    if (len <= 14) return { fontSize: '0.75rem' };
+    if (len <= 20) return { fontSize: '0.7rem' };
+    return { fontSize: '0.65rem' };
+  };
+
+  const openSummaryPdfWindow = () => {
+    // Haftalık özet tablosunu yeni bir sekmede sade bir HTML olarak aç
+    const title = 'Haftalık Program Özeti';
+    const headDays = WEEKDAYS.map((d) => `<th>${d}</th>`).join('');
+    const bodyRows = HOURS.map((hour) => {
+      const cells = WEEKDAYS.map((_, dayIndex) => {
+        const entry = entryAt(hour, dayIndex);
+        const text = entry ? entry.subjectName : '—';
+        return `<td>${text || ''}</td>`;
+      }).join('');
+      return `<tr><td>${hour}:00</td>${cells}</tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; }
+    body { margin: 0; padding: 24px; background: #f8fafc; color: #0f172a; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    .subtitle { font-size: 12px; color: #64748b; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; background: #ffffff; border-radius: 8px; overflow: hidden; }
+    thead { background: #e2e8f0; }
+    th, td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; vertical-align: top; }
+    th:first-child, td:first-child { background: #f8fafc; font-weight: 600; white-space: nowrap; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    @page { size: A4 landscape; margin: 1.2cm; }
+    @media print {
+      body { padding: 0; }
+      table { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <div class="subtitle">Saatlere göre haftalık ders programı özeti</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Saat</th>
+        ${headDays}
+      </tr>
+    </thead>
+    <tbody>
+      ${bodyRows}
+    </tbody>
+  </table>
+  <p style="margin-top:12px;font-size:11px;color:#64748b;">
+    Bu sayfayı PDF olarak kaydetmek için tarayıcınızın yazdır menüsünden (Ctrl+P) &quot;PDF olarak kaydet&quot; seçeneğini kullanabilirsiniz.
+  </p>
+</body>
+</html>`;
+    try {
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } catch {
+      // Eski tarayıcı / kısıtlı ortamlar için son çare
+      const encoded = encodeURIComponent(html);
+      window.open(`data:text/html;charset=utf-8,${encoded}`, '_blank');
+    }
   };
 
   return (
@@ -633,50 +716,54 @@ export function LessonScheduleTab({
             <span style={{ color: 'var(--color-text-muted)' }}>Yükleniyor...</span>
           </div>
         )}
-        <div className="absolute top-4 right-4 left-auto" dir="ltr">
-          <button
-            type="button"
-            onClick={() => {
-              setInlineAddMode((prev) => {
-                const next = !prev;
-                if (!next) {
-                  setEditingSlot(null);
-                  setEditingSubjectName('');
-                  return next;
-                }
-                // Tablo ekleme modu açılırken ilk hücreyi odakla
-                const baseHour = HOURS[0];
-                const baseDayIndex = period === 'daily' ? selectedDayIndex : 0;
-                setEditingSlot({ hour: baseHour, dayIndex: baseDayIndex });
-                setEditingSubjectName('');
-                return next;
-              });
-            }}
-            className="primary-btn inline-flex items-center justify-center shrink-0 w-8 h-8 p-0"
-            title={inlineAddMode ? 'Tablodan eklemeyi kapat' : 'Tablodan ders ekle'}
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-          {inlineAddMode && (
-            <button
-              type="button"
-              className="ghost-btn ml-2 text-xs px-2 py-1"
-              onClick={() => {
-                handleInlineSave();
-                setInlineAddMode(false);
-              }}
-            >
-              Kaydet
-            </button>
-          )}
-        </div>
-        <div className="pr-12 mb-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <span className="text-sm font-medium text-gray-700">
             {period === 'daily' && 'Günlük program'}
             {period === 'weekly' && 'Haftalık program'}
             {period === 'monthly' && 'Aylık program'}
             {period === 'term' && 'Dönemlik program'}
           </span>
+          {!isStudentMode && (
+            <div className="flex items-center gap-2" dir="ltr">
+              <button
+                type="button"
+                onClick={() => {
+                  setInlineAddMode((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setEditingSlot(null);
+                      setEditingSubjectName('');
+                      return next;
+                    }
+                    // Tablo ekleme modu açılırken ilk hücreyi odakla
+                    const baseHour = HOURS[0];
+                    const baseDayIndex = period === 'daily' ? selectedDayIndex : 0;
+                    setEditingSlot({ hour: baseHour, dayIndex: baseDayIndex });
+                    setEditingSubjectName('');
+                    return next;
+                  });
+                }}
+                className="primary-btn inline-flex items-center justify-center shrink-0 w-9 h-9 p-0"
+                title={inlineAddMode ? 'Tablodan eklemeyi kapat' : 'Tablodan ders ekle'}
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+              {inlineAddMode && (
+                <button
+                  type="button"
+                  className="ghost-btn text-xs px-2 py-1"
+                  onClick={() => {
+                    handleInlineSave();
+                    setEditingSlot(null);
+                    setEditingSubjectName('');
+                    setInlineAddMode(false);
+                  }}
+                >
+                  Kaydet
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden schedule-table-wrapper">
           {/* Günlük program: gün seçici + tek günün saatlik listesi */}
@@ -723,15 +810,19 @@ export function LessonScheduleTab({
                               value={editingSubjectName}
                               onChange={(e) => setEditingSubjectName(e.target.value)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleInlineSave();
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleInlineSave({ keepEditing: true });
+                                  moveInlineCursor('down', hour, selectedDayIndex);
+                                }
                                 if (e.key === 'ArrowUp') {
                                   e.preventDefault();
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   moveInlineCursor('up', hour, selectedDayIndex);
                                 }
                                 if (e.key === 'ArrowDown') {
                                   e.preventDefault();
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   moveInlineCursor('down', hour, selectedDayIndex);
                                 }
                                 if (e.key === 'ArrowLeft') {
@@ -741,7 +832,7 @@ export function LessonScheduleTab({
                                 if (e.key === 'ArrowRight') {
                                   e.preventDefault();
                                   // Aynı satırdaki "Konu / Not" hücresine geç
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   setEditingTopicSlot({
                                     hour,
                                     dayIndex: selectedDayIndex,
@@ -780,7 +871,46 @@ export function LessonScheduleTab({
                                 className="schedule-inline-input"
                                 value={editingTopicValue}
                                 onChange={(e) => setEditingTopicValue(e.target.value)}
-                                onBlur={handleInlineTopicSave}
+                                onBlur={() => handleInlineTopicSave()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    // Aynı satırda ders hücresine geri dön
+                                    setEditingTopicSlot(null);
+                                    setEditingTopicValue('');
+                                    setEditingSlot({ hour, dayIndex: selectedDayIndex });
+                                    setEditingSubjectName(entry?.subjectName ?? '');
+                                  }
+                                  if (e.key === 'ArrowUp') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    const newHour = HOURS[Math.max(0, HOURS.indexOf(hour) - 1)];
+                                    setEditingTopicSlot({ hour: newHour, dayIndex: selectedDayIndex });
+                                    const aboveEntry = entryAt(newHour, selectedDayIndex);
+                                    setEditingTopicValue(aboveEntry?.topic ?? '');
+                                  }
+                                  if (e.key === 'ArrowDown') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    const newHour = HOURS[Math.min(HOURS.length - 1, HOURS.indexOf(hour) + 1)];
+                                    setEditingTopicSlot({ hour: newHour, dayIndex: selectedDayIndex });
+                                    const belowEntry = entryAt(newHour, selectedDayIndex);
+                                    setEditingTopicValue(belowEntry?.topic ?? '');
+                                  }
+                                  if (e.key === 'ArrowLeft') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    setEditingTopicSlot(null);
+                                    setEditingTopicValue('');
+                                    setEditingSlot({ hour, dayIndex: selectedDayIndex });
+                                    setEditingSubjectName(entry?.subjectName ?? '');
+                                  }
+                                  if (e.key === 'Escape') {
+                                    setEditingTopicSlot(null);
+                                    setEditingTopicValue('');
+                                  }
+                                }}
                                 autoFocus
                                 placeholder="Konu / not"
                               />
@@ -803,7 +933,47 @@ export function LessonScheduleTab({
                                 className="schedule-inline-input"
                                 value={editingTopicValue}
                                 onChange={(e) => setEditingTopicValue(e.target.value)}
-                                onBlur={handleInlineTopicSave}
+                                onBlur={() => handleInlineTopicSave()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    setEditingTopicSlot(null);
+                                    setEditingTopicValue('');
+                                    setEditingSlot({ hour, dayIndex: selectedDayIndex });
+                                    const currentEntry = entryAt(hour, selectedDayIndex);
+                                    setEditingSubjectName(currentEntry?.subjectName ?? '');
+                                  }
+                                  if (e.key === 'ArrowUp') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    const newHour = HOURS[Math.max(0, HOURS.indexOf(hour) - 1)];
+                                    setEditingTopicSlot({ hour: newHour, dayIndex: selectedDayIndex });
+                                    const aboveEntry = entryAt(newHour, selectedDayIndex);
+                                    setEditingTopicValue(aboveEntry?.topic ?? '');
+                                  }
+                                  if (e.key === 'ArrowDown') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    const newHour = HOURS[Math.min(HOURS.length - 1, HOURS.indexOf(hour) + 1)];
+                                    setEditingTopicSlot({ hour: newHour, dayIndex: selectedDayIndex });
+                                    const belowEntry = entryAt(newHour, selectedDayIndex);
+                                    setEditingTopicValue(belowEntry?.topic ?? '');
+                                  }
+                                  if (e.key === 'ArrowLeft') {
+                                    e.preventDefault();
+                                    handleInlineTopicSave({ keepEditing: true });
+                                    setEditingTopicSlot(null);
+                                    setEditingTopicValue('');
+                                    setEditingSlot({ hour, dayIndex: selectedDayIndex });
+                                    const currentEntry = entryAt(hour, selectedDayIndex);
+                                    setEditingSubjectName(currentEntry?.subjectName ?? '');
+                                  }
+                                  if (e.key === 'Escape') {
+                                    setEditingTopicSlot(null);
+                                    setEditingTopicValue('');
+                                  }
+                                }}
                                 autoFocus
                                 placeholder="Konu / not"
                               />
@@ -830,7 +1000,7 @@ export function LessonScheduleTab({
 
           {/* Haftalık program: sol tarafta günler, üstte saatler */}
           {period === 'weekly' && (
-            <table className="w-full text-sm text-left border-collapse schedule-table">
+            <table className="w-full text-sm text-left border-collapse schedule-table schedule-table--weekly">
               <thead>
                 <tr>
                   <th className="schedule-table-day-header">Gün</th>
@@ -871,28 +1041,28 @@ export function LessonScheduleTab({
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                   e.preventDefault();
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   // Enter ile bir sonraki hücreye geç
                                   moveInlineCursorWeekly('right', hour, dayIndex);
                                 }
                                 if (e.key === 'ArrowUp') {
                                   e.preventDefault();
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   moveInlineCursorWeekly('up', hour, dayIndex);
                                 }
                                 if (e.key === 'ArrowDown') {
                                   e.preventDefault();
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   moveInlineCursorWeekly('down', hour, dayIndex);
                                 }
                                 if (e.key === 'ArrowLeft') {
                                   e.preventDefault();
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   moveInlineCursorWeekly('left', hour, dayIndex);
                                 }
                                 if (e.key === 'ArrowRight') {
                                   e.preventDefault();
-                                  handleInlineSave();
+                                  handleInlineSave({ keepEditing: true });
                                   moveInlineCursorWeekly('right', hour, dayIndex);
                                 }
                                 if (e.key === 'Escape') {
@@ -981,11 +1151,9 @@ export function LessonScheduleTab({
                 <thead>
                   <tr>
                     <th className="schedule-table-hour-header">Saat</th>
-                    <th className="schedule-table-day-header">Pazartesi</th>
-                    <th className="schedule-table-day-header">Salı</th>
-                    <th className="schedule-table-day-header">Çarşamba</th>
-                    <th className="schedule-table-day-header">Perşembe</th>
-                    <th className="schedule-table-day-header">Cuma</th>
+                    {WEEKDAYS.map((d) => (
+                      <th key={d} className="schedule-table-day-header">{d}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -1057,14 +1225,14 @@ export function LessonScheduleTab({
 
       {summaryOpen && (
         <div className="schedule-modal-overlay" onClick={() => setSummaryOpen(false)}>
-          <div className="schedule-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="schedule-modal schedule-modal--wide" onClick={(e) => e.stopPropagation()}>
             <div className="schedule-modal-header">
               <h3 className="schedule-modal-title">Haftalık Program Özeti</h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
                   type="button"
                   className="ghost-btn"
-                  onClick={() => window.print()}
+                  onClick={openSummaryPdfWindow}
                 >
                   PDF ile indir
                 </button>
@@ -1078,15 +1246,13 @@ export function LessonScheduleTab({
               </div>
             </div>
             <div className="schedule-modal-body">
-              <table className="w-full text-sm text-left border-collapse schedule-table">
+              <table className="w-full text-sm text-left border-collapse schedule-table schedule-table--summary">
                 <thead>
                   <tr>
                     <th className="schedule-table-hour-header">Saat</th>
-                    <th className="schedule-table-day-header">Pazartesi</th>
-                    <th className="schedule-table-day-header">Salı</th>
-                    <th className="schedule-table-day-header">Çarşamba</th>
-                    <th className="schedule-table-day-header">Perşembe</th>
-                    <th className="schedule-table-day-header">Cuma</th>
+                    {WEEKDAYS.map((d) => (
+                      <th key={d} className="schedule-table-day-header">{d}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -1104,8 +1270,9 @@ export function LessonScheduleTab({
                           <td key={dayIndex} className="schedule-table-cell">
                             {entry ? (
                               <span
-                                className="schedule-table-entry"
+                                className="schedule-table-entry schedule-table-entry--summary"
                                 title={entry.topic}
+                                style={getSummaryEntryStyle(entry.subjectName)}
                               >
                                 {entry.subjectName}
                               </span>

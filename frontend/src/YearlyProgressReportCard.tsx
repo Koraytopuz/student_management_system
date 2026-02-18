@@ -43,14 +43,20 @@ export const YearlyProgressReportCard: React.FC<YearlyProgressReportCardProps> =
             />
           ) : (
             <div
-              className="bg-slate-800 flex items-center justify-center"
+              className="flex items-center justify-center"
               style={{
                 width: 100,
                 height: 100,
                 borderRadius: 16,
+                background:
+                  'linear-gradient(145deg, color-mix(in srgb, var(--accent-color) 18%, var(--glass-bg)), color-mix(in srgb, var(--glass-bg) 92%, var(--color-surface-soft)))',
+                border: '1px solid var(--glass-border)',
               }}
             >
-              <span className="text-xl font-semibold tracking-tight text-slate-50">
+              <span
+                className="text-xl font-semibold tracking-tight"
+                style={{ color: 'var(--color-text-main)' }}
+              >
                 {student.name
                   .split(' ')
                   .map((p) => p[0])
@@ -67,13 +73,16 @@ export const YearlyProgressReportCard: React.FC<YearlyProgressReportCardProps> =
             <p className="text-[11px] font-semibold tracking-[0.2em] text-sky-400 uppercase mb-1">
               Yıllık Gelişim Raporu
             </p>
-            <h1 className="text-xl md:text-2xl font-semibold tracking-tight text-slate-50">
+            <h1
+              className="text-xl md:text-2xl font-semibold tracking-tight"
+              style={{ color: 'var(--color-text-main)' }}
+            >
               Yıl Sonu Gelişim Raporu
             </h1>
-            <p className="text-sm text-slate-300 mt-1">
+            <p className="text-sm mt-1" style={{ color: 'var(--color-text-main)' }}>
               {student.name} · {student.className}
             </p>
-            <p className="text-xs md:text-sm text-slate-400 mt-2">
+            <p className="text-xs md:text-sm mt-2" style={{ color: 'var(--color-text-muted)' }}>
               Yıl boyu performansının kişiselleştirilmiş özeti.
             </p>
           </div>
@@ -112,52 +121,65 @@ export const YearlyProgressReportCard: React.FC<YearlyProgressReportCardProps> =
       </div>
 
       {/* GENEL BAŞARI PUANI + yüzdelik dilim metni */}
-      <div className="pt-2 border-t border-slate-800/80 mt-2 flex flex-col gap-1.5">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-slate-400 uppercase">
+      <div
+        className="pt-2 mt-2 flex flex-col gap-1.5"
+        style={{ borderTop: '1px solid var(--glass-border)' }}
+      >
+        <p
+          className="text-[11px] font-semibold tracking-[0.18em] uppercase"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
           Genel Başarı Puanı
         </p>
-        <p className="text-xs md:text-sm text-slate-300">
+        <p className="text-xs md:text-sm" style={{ color: 'var(--color-text-main)' }}>
           Tahmini yüzdelik dilim:{' '}
-          <span className="font-semibold text-emerald-300">
+          <span
+            className="font-semibold"
+            style={{ color: 'color-mix(in srgb, var(--success) 85%, var(--color-text-main))' }}
+          >
             %{student.annualRankPercentile}
           </span>
         </p>
-        <p className="text-[11px] text-slate-400 leading-snug">
+        <p className="text-[11px] leading-snug" style={{ color: 'var(--color-text-muted)' }}>
           Bu skor; ders başarıları, dijital efor ve odaklanma metriklerinin birleşimiyle
           hesaplanmış yıllık genel performans indeksidir. Yüzdelik değer, benzer
           öğrenciler arasında yaklaşık konumunu gösteren tahmini bir dilimdir.
         </p>
         {/* Özet seviye etiketi + yatay ilerleme çubuğu */}
         <div className="mt-3 space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] text-slate-400">
+          <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
             <span>Genel seviye</span>
             <span
               className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
               style={{
                 backgroundColor:
                   qualitativeLevel === 'Üst Düzey'
-                    ? 'rgba(16,185,129,0.18)'
+                    ? 'color-mix(in srgb, var(--success) 18%, transparent)'
                     : qualitativeLevel === 'İyi'
-                      ? 'rgba(56,189,248,0.15)'
-                      : 'rgba(248,113,113,0.18)',
+                      ? 'color-mix(in srgb, var(--accent-color) 16%, transparent)'
+                      : 'color-mix(in srgb, var(--error) 14%, transparent)',
                 color:
                   qualitativeLevel === 'Üst Düzey'
-                    ? '#6ee7b7'
+                    ? 'color-mix(in srgb, var(--success) 85%, var(--color-text-main))'
                     : qualitativeLevel === 'İyi'
-                      ? '#7dd3fc'
-                      : '#fecaca',
+                      ? 'color-mix(in srgb, var(--accent-color) 85%, var(--color-text-main))'
+                      : 'color-mix(in srgb, var(--error) 85%, var(--color-text-main))',
+                border: '1px solid var(--glass-border)',
               }}
             >
               {qualitativeLevel}
             </span>
           </div>
-          <div className="w-full h-2 rounded-full bg-slate-900/80 overflow-hidden">
+          <div
+            className="w-full h-2 rounded-full overflow-hidden"
+            style={{ background: 'var(--list-row-bg)', border: '1px solid var(--glass-border)' }}
+          >
             <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-sky-400 to-indigo-500"
+              className="h-full rounded-full bg-linear-to-r from-emerald-400 via-sky-400 to-indigo-500"
               style={{ width: `${scorePercent}%` }}
             />
           </div>
-          <p className="text-[10px] text-slate-500">
+          <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
             Çubuk, 10 üzerinden genel başarı puanını görsel olarak temsil eder; sağa yaklaştıkça
             öğrencinin yıl sonu performansı artar.
           </p>

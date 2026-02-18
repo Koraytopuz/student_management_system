@@ -107,7 +107,9 @@ export const AdminAttendanceTab: React.FC<{ token: string }> = ({ token }) => {
     } else if (attendanceFilter === 'absent') {
       list = list.filter((s) => s.absentCount > 0);
     }
-    return list;
+    return [...list].sort((a, b) =>
+      a.studentName.localeCompare(b.studentName, 'tr-TR', { sensitivity: 'base' }),
+    );
   }, [classStudents, searchTerm, attendanceFilter]);
 
   const selectedStudent = useMemo(() => {
@@ -159,11 +161,7 @@ export const AdminAttendanceTab: React.FC<{ token: string }> = ({ token }) => {
                 gridTemplateColumns: '1fr 1fr',
                 gap: '0.5rem',
                 alignItems: 'center',
-                justifyContent: 'end',
-                minWidth: 170,
               }}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
             >
               <button
                 type="button"
@@ -319,7 +317,6 @@ export const AdminAttendanceTab: React.FC<{ token: string }> = ({ token }) => {
 
         <GlassCard
           title="Öğrenciler"
-          subtitle="Devamsızlık sayısına göre sıralı"
           icon={<Users size={18} />}
           className="attendance-card"
           collapsible
@@ -330,7 +327,6 @@ export const AdminAttendanceTab: React.FC<{ token: string }> = ({ token }) => {
               className="attendance-students-actions"
               style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}
             >
-              <TagChip label={`Son ${days} gün`} tone="info" />
               {classStudents && (
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   <TagChip label={`Toplam: ${classStudents.students.length}`} tone="neutral" />

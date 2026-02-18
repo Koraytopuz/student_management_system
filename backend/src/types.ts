@@ -5,6 +5,8 @@ export interface UserBase {
   name: string;
   email: string;
   role: UserRole;
+  /** Kurum / dershane adı – multi-tenant ayrımı için */
+  institutionName?: string;
 }
 
 export interface Teacher extends UserBase {

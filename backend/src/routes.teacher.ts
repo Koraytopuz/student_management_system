@@ -16,13 +16,19 @@ import {
   TestResult,
   Notification as AppNotification,
 } from './types';
-import { buildRoomName, createLiveKitToken, getLiveKitUrl, muteAllParticipantsInRoom } from './livekit';
+import { buildRoomName, createLiveKitToken, getLiveKitUrl, muteAllParticipantsInRoom, unmuteAllParticipantsInRoom } from './livekit';
 import { notifyParentsOfStudent } from './services/notificationService';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { sendSMS } = require('./services/smsService');
 import { callGemini } from './ai';
 
 const router = express.Router();
+
+function getInstitutionName(req: AuthenticatedRequest): string | undefined {
+  const raw = (req.user as any)?.institutionName;
+  const trimmed = raw ? String(raw).trim() : '';
+  return trimmed || undefined;
+}
 
 const USER_CONFIGURED_GEMINI_MODEL = process.env.GEMINI_MODEL?.trim();
 const DEFAULT_MODEL = 'gemini-2.5-flash';
@@ -253,10 +259,11 @@ router.get(
       c.students.map((s) => s.studentId),
     );
 
-    // Eğer henüz sınıf/öğrenci ilişkilendirilmemişse, sistemdeki tüm öğrencileri kullan
+    // Eğer henüz sınıf/öğrenci ilişkilendirilmemişse, sistemdeki tüm öğrencileri kullan (aynı kurum içinde)
     if (teacherStudentIds.length === 0) {
+      const institutionName = getInstitutionName(req);
       const allStudents = await prisma.user.findMany({
-        where: { role: 'student' },
+        where: { role: 'student', ...(institutionName ? { institutionName } : {}) } as any,
         select: { id: true },
       });
       teacherStudentIds = allStudents.map((s) => s.id);
@@ -877,6 +884,7 @@ router.delete(
 );
 
 // Öğrenci listesi
+// Öğrenci listesinden sınıf/branş bilgisi de dönsün
 router.get(
   '/students',
   authenticate('teacher'),
@@ -886,14 +894,30 @@ router.get(
       where: { teacherId },
       include: { students: { include: { student: true } } },
     });
+
+    // Öğrenci ID -> { section, stream } haritası
+    const studentClassInfo = new Map<string, { section?: string; stream?: string }>();
+    teacherClasses.forEach((cg) => {
+      cg.students.forEach((s) => {
+        // Öncelikli olarak dolu olan bilgiyi alalım
+        if (!studentClassInfo.has(s.studentId) || (!studentClassInfo.get(s.studentId)?.section && cg.section)) {
+          studentClassInfo.set(s.studentId, {
+            section: cg.section ?? undefined,
+            stream: cg.stream ?? undefined,
+          });
+        }
+      });
+    });
+
     const studentIds = new Set(
       teacherClasses.flatMap((c) => c.students.map((s) => s.studentId)),
     );
     const idsArray = [...studentIds];
+    const institutionName = getInstitutionName(req);
     const whereClause =
       idsArray.length > 0
-        ? { id: { in: idsArray }, role: 'student' as const }
-        : { role: 'student' as const };
+        ? ({ id: { in: idsArray }, role: 'student', ...(institutionName ? { institutionName } : {}) } as const)
+        : ({ role: 'student', ...(institutionName ? { institutionName } : {}) } as const);
     const teacherStudents = await prisma.user.findMany({
       where: whereClause,
       // Veli işlemleri ekranında da kullanılmak üzere parentPhone bilgisini de seçiyoruz
@@ -909,17 +933,23 @@ router.get(
       } as any,
     });
     return res.json(
-      teacherStudents.map((s) => ({
-        id: s.id,
-        name: s.name,
-        email: s.email,
-        role: 'student' as const,
-        gradeLevel: s.gradeLevel ?? '',
-        classId: s.classId ?? '',
-        lastSeenAt: s.lastSeenAt ? new Date(s.lastSeenAt as any).toISOString() : undefined,
-        profilePictureUrl: (s as any).profilePictureUrl ?? undefined,
-        parentPhone: (s as any).parentPhone ?? undefined,
-      })),
+      teacherStudents.map((s) => {
+        const id = String((s as any).id);
+        const info = studentClassInfo.get(id);
+        return {
+          id,
+          name: s.name,
+          email: s.email,
+          role: 'student' as const,
+          gradeLevel: s.gradeLevel ?? '',
+          classId: s.classId ?? '',
+          section: info?.section, // UI'da "Şube" olarak kullanılacak
+          stream: info?.stream,   // UI'da "Alan" olarak kullanılacak
+          lastSeenAt: s.lastSeenAt ? new Date(s.lastSeenAt as any).toISOString() : undefined,
+          profilePictureUrl: (s as any).profilePictureUrl ?? undefined,
+          parentPhone: (s as any).parentPhone ?? undefined,
+        };
+      }),
     );
   },
 );
@@ -937,8 +967,18 @@ router.get(
     const teacherId = req.user!.id;
 
     try {
+      // Öğretmenin kendi sınıf düzeyi varsa, sadece o sınıf düzeyindeki sınıfları göster
+      const teacher = await prisma.user.findUnique({
+        where: { id: teacherId },
+        select: { gradeLevel: true },
+      });
+      const teacherGradeLevel = teacher?.gradeLevel?.trim() || null;
+
       const classGroups = await prisma.classGroup.findMany({
-        where: { teacherId },
+        where: {
+          teacherId,
+          ...(teacherGradeLevel ? { gradeLevel: teacherGradeLevel } : {}),
+        },
         include: {
           students: {
             include: {
@@ -1265,8 +1305,9 @@ router.get(
       include: { parent: { select: { id: true, name: true, email: true } } },
     });
     const parentIds = [...new Set(parentStudents.map((ps) => ps.parentId))];
+    const institutionName = getInstitutionName(req);
     const parentsData = await prisma.user.findMany({
-      where: { id: { in: parentIds }, role: 'parent' },
+      where: { id: { in: parentIds }, role: 'parent', ...(institutionName ? { institutionName } : {}) } as any,
       include: { parentStudents: { select: { studentId: true } } },
     });
     return res.json(
@@ -1287,8 +1328,9 @@ router.get(
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res: express.Response) => {
     const id = String(req.params.id);
+    const institutionName = getInstitutionName(req);
     const student = await prisma.user.findFirst({
-      where: { id, role: 'student' },
+      where: { id, role: 'student', ...(institutionName ? { institutionName } : {}) } as any,
       select: { id: true, name: true, email: true, gradeLevel: true, classId: true },
     });
     if (!student) {
@@ -2162,8 +2204,9 @@ router.post(
       });
       targetStudentIds = classStudents.map((s) => s.studentId);
     } else {
+      const institutionName = getInstitutionName(req);
       const allStudents = await prisma.user.findMany({
-        where: { role: 'student' },
+        where: { role: 'student', ...(institutionName ? { institutionName } : {}) } as any,
         select: { id: true },
       });
       targetStudentIds = allStudents.map((s) => s.id);
@@ -2574,17 +2617,19 @@ router.post(
       : [];
 
     if (effectiveStudentIds.length === 0 && targetGrade) {
+      const institutionName = getInstitutionName(req);
       const grade = String(targetGrade);
       const gradeStudents = await prisma.user.findMany({
-        where: { role: 'student', gradeLevel: grade },
+        where: { role: 'student', gradeLevel: grade, ...(institutionName ? { institutionName } : {}) } as any,
         select: { id: true },
       });
       effectiveStudentIds = gradeStudents.map((s) => s.id);
     }
 
     if (effectiveStudentIds.length === 0) {
+      const institutionName = getInstitutionName(req);
       const allStudents = await prisma.user.findMany({
-        where: { role: 'student' },
+        where: { role: 'student', ...(institutionName ? { institutionName } : {}) } as any,
         select: { id: true },
       });
       effectiveStudentIds = allStudents.map((s) => s.id);
@@ -2745,6 +2790,41 @@ router.post(
       console.error('[mute-all]', err);
       return res.status(500).json({
         error: 'Ses kapatma işlemi başarısız oldu. Odada canlı ders devam ediyor mu kontrol edin.',
+      });
+    }
+  },
+);
+
+// Tüm katılımcıların sesini aç (öğretmen)
+router.post(
+  '/meetings/:id/unmute-all',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const teacherId = req.user!.id;
+    const meetingId = String(req.params.id);
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ error: 'Toplantı bulunamadı' });
+    }
+
+    if (meeting.teacherId !== teacherId) {
+      return res.status(403).json({ error: 'Bu işlem için yetkiniz yok' });
+    }
+
+    const roomName = buildRoomName(meeting.id);
+
+    try {
+      const { unmuted } = await unmuteAllParticipantsInRoom(roomName);
+      return res.json({ success: true, unmuted });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[unmute-all]', err);
+      return res.status(500).json({
+        error: 'Ses açma işlemi başarısız oldu. Odada canlı ders devam ediyor mu kontrol edin.',
       });
     }
   },
@@ -3444,6 +3524,33 @@ router.patch(
   },
 );
 
+// Koçluk hedefi silme
+router.delete(
+  '/coaching-goals/:goalId',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const teacherId = req.user!.id;
+    const goalId = String(req.params.goalId);
+
+    const existing = await (prisma as any).coachingGoal.findUnique({
+      where: { id: goalId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Koçluk hedefi bulunamadı' });
+    }
+    if (existing.coachId !== teacherId) {
+      return res
+        .status(403)
+        .json({ error: 'Bu koçluk hedefini silme yetkiniz yok' });
+    }
+
+    await (prisma as any).coachingGoal.delete({
+      where: { id: goalId },
+    });
+    return res.json({ success: true });
+  },
+);
+
 // Koçluk notları - öğretmen view (tüm notlar)
 router.get(
   '/students/:studentId/coaching-notes',
@@ -3488,6 +3595,85 @@ router.get(
         date: n.date.toISOString(),
       })),
     );
+  },
+);
+
+// Koçluk notu güncelleme
+router.patch(
+  '/coaching-notes/:noteId',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const teacherId = req.user!.id;
+    const noteId = String(req.params.noteId);
+    const { content, visibility } = req.body as Partial<{
+      content: string;
+      visibility: 'teacher_only' | 'shared_with_parent';
+    }>;
+
+    const existing = await (prisma as any).coachingNote.findUnique({
+      where: { id: noteId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Koçluk notu bulunamadı' });
+    }
+    if (existing.coachId !== teacherId) {
+      return res
+        .status(403)
+        .json({ error: 'Bu koçluk notunu düzenleme yetkiniz yok' });
+    }
+
+    const data: Record<string, unknown> = {};
+    if (typeof content === 'string') {
+      const trimmed = content.trim();
+      if (!trimmed) {
+        return res.status(400).json({ error: 'content alanı zorunludur' });
+      }
+      data.content = trimmed;
+    }
+    if (visibility === 'teacher_only' || visibility === 'shared_with_parent') {
+      data.visibility = visibility;
+    }
+
+    const updated = await (prisma as any).coachingNote.update({
+      where: { id: noteId },
+      data,
+    });
+
+    return res.json({
+      id: updated.id,
+      studentId: updated.studentId,
+      coachId: updated.coachId,
+      content: updated.content,
+      visibility: updated.visibility,
+      date: updated.date.toISOString(),
+    });
+  },
+);
+
+// Koçluk notu silme
+router.delete(
+  '/coaching-notes/:noteId',
+  authenticate('teacher'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const teacherId = req.user!.id;
+    const noteId = String(req.params.noteId);
+
+    const existing = await (prisma as any).coachingNote.findUnique({
+      where: { id: noteId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Koçluk notu bulunamadı' });
+    }
+    if (existing.coachId !== teacherId) {
+      return res
+        .status(403)
+        .json({ error: 'Bu koçluk notunu silme yetkiniz yok' });
+    }
+
+    await (prisma as any).coachingNote.delete({
+      where: { id: noteId },
+    });
+    return res.json({ success: true });
   },
 );
 
@@ -4085,8 +4271,8 @@ router.get(
             correctPercent:
               totalCorrect + totalIncorrect + totalBlank > 0
                 ? Math.round(
-                    (totalCorrect / (totalCorrect + totalIncorrect + totalBlank)) * 100,
-                  )
+                  (totalCorrect / (totalCorrect + totalIncorrect + totalBlank)) * 100,
+                )
                 : 0
           },
           topics: topicsList

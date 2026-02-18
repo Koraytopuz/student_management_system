@@ -51,7 +51,11 @@ export const AdminReports: React.FC = () => {
   }, [token, selectedStudentId]);
 
   if (!token) {
-    return <div className="p-8 text-center text-slate-400">Önce yönetici olarak giriş yapmalısınız.</div>;
+    return (
+      <div className="p-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+        Önce yönetici olarak giriş yapmalısınız.
+      </div>
+    );
   }
 
   // Benzersiz sınıf listesi (örn. "9", "10", "11", "12", "Mezun")
@@ -76,13 +80,18 @@ export const AdminReports: React.FC = () => {
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="glass-card p-4 flex flex-col gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-slate-50">Yıllık Gelişim Raporları</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text-main)' }}>
+            Yıllık Gelişim Raporları
+          </h1>
+          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
             Bir öğrenci seçerek yıllık performans kartını ve radar grafiğini görüntüleyin.
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-          <label className="text-sm text-slate-300 flex flex-col gap-1 w-full sm:w-48">
+          <label
+            className="text-sm flex flex-col gap-1 w-full sm:w-48"
+            style={{ color: 'var(--color-text-main)' }}
+          >
             Sınıf Seçin
             <select
               value={selectedGrade}
@@ -94,7 +103,12 @@ export const AdminReports: React.FC = () => {
                   : students;
                 setSelectedStudentId(byGrade[0]?.id ?? '');
               }}
-              className="rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+              style={{
+                border: '1px solid var(--ui-control-border)',
+                background: 'var(--ui-control-bg)',
+                color: 'var(--color-text-main)',
+              }}
             >
               {gradeOptions.length === 0 && <option value="">Sınıf bulunamadı</option>}
               {gradeOptions.length > 0 && !selectedGrade && (
@@ -108,12 +122,20 @@ export const AdminReports: React.FC = () => {
             </select>
           </label>
 
-          <label className="text-sm text-slate-300 flex flex-col gap-1 w-full sm:w-80">
+          <label
+            className="text-sm flex flex-col gap-1 w-full sm:w-80"
+            style={{ color: 'var(--color-text-main)' }}
+          >
             Öğrenci Seçin
             <select
               value={selectedStudentId}
               onChange={(e) => setSelectedStudentId(e.target.value)}
-              className="rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+              style={{
+                border: '1px solid var(--ui-control-border)',
+                background: 'var(--ui-control-bg)',
+                color: 'var(--color-text-main)',
+              }}
             >
               {filteredStudents.length === 0 && <option value="">Bu sınıfta öğrenci yok</option>}
               {filteredStudents.length > 0 && !selectedStudentId && (
@@ -131,7 +153,9 @@ export const AdminReports: React.FC = () => {
       </div>
 
       {loading && (
-        <div className="glass-card p-6 text-sm text-slate-300">Rapor verileri yükleniyor...</div>
+        <div className="glass-card p-6 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+          Rapor verileri yükleniyor...
+        </div>
       )}
 
       {!loading && reportData && (

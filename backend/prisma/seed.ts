@@ -1076,7 +1076,10 @@ function generateRandomQuestionStats(totalQuestions: number) {
 }
 
 async function main() {
+  console.log('Seed işlemi başlatılıyor...');
+  console.log('Şifre hash\'i oluşturuluyor...');
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
+  console.log('Admin kullanıcısı oluşturuluyor...');
 
   // Admin
   const admin = await prisma.user.upsert({
@@ -1162,12 +1165,19 @@ async function main() {
   const matematikTeacherId = branchTeachers['sub_matematik'];
 
   // Sınıfları (şube dahil) oluştur ve her sınıfa 5 öğrenci ekle
+  console.log('Sınıflar ve öğrenciler oluşturuluyor...');
   const classGroupsMap: Record<string, { classGroup: any; students: any[] }> = {};
 
   const SECTIONS = ['A', 'B', 'C', 'D'];
+  let classCount = 0;
+  const totalClasses = CLASS_DEFINITIONS.length * SECTIONS.length;
 
   for (const cls of CLASS_DEFINITIONS) {
     for (const section of SECTIONS) {
+      classCount++;
+      if (classCount % 5 === 0) {
+        console.log(`  ${classCount}/${totalClasses} sınıf işleniyor...`);
+      }
       const compositeId = `${cls.id}_${section}`;
       const compositeName = `${cls.name} ${section}`;
 
@@ -1219,6 +1229,7 @@ async function main() {
       classGroupsMap[compositeId] = { classGroup, students };
     }
   }
+  console.log(`Sınıflar ve öğrenciler tamamlandı (${classCount} sınıf)`);
 
   // Parent-Student links (9. sınıf A şubesinin ilk 2 öğrencisi)
   const nineClassStudents = classGroupsMap['c_9_A']!.students;
@@ -1231,6 +1242,8 @@ async function main() {
   }
 
   // Müfredat konularını CurriculumTopic tablosuna işle
+  console.log('Müfredat konuları oluşturuluyor...');
+  let topicCount = 0;
   for (const grade of CURRICULUM_SEED_DATA) {
     const gradeLevelStr = String(grade.grade_level);
 
@@ -1248,6 +1261,10 @@ async function main() {
       let orderIndex = 1;
 
       for (const topic of lesson.topics) {
+        topicCount++;
+        if (topicCount % 50 === 0) {
+          console.log(`  ${topicCount} konu işlendi...`);
+        }
         const kazanimKodu = `${gradeLevelStr}.${unitNumber}.1`;
 
         await prisma.curriculumTopic.upsert({
@@ -1292,10 +1309,16 @@ async function main() {
   });
 
   // Her sınıf (şube) için 1 sınav oluştur ve öğrencilere random sonuç ata
+  console.log('Sınavlar ve sonuçlar oluşturuluyor...');
   let examIdCounter = 1;
+  let examCount = 0;
 
   for (const cls of CLASS_DEFINITIONS) {
     for (const section of SECTIONS) {
+      examCount++;
+      if (examCount % 5 === 0) {
+        console.log(`  ${examCount}/${totalClasses} sınav işleniyor...`);
+      }
       const compositeId = `${cls.id}_${section}`;
       const { classGroup, students } = classGroupsMap[compositeId]!;
       const questionCount = 20;
@@ -1587,7 +1610,8 @@ async function main() {
     update: {},
   });
 
-  const class10 = classGroupsMap['c_10']!;
+  // classGroupsMap keys include section suffix (e.g. c_10_A)
+  const class10 = classGroupsMap['c_10_A']!;
   const assignment2 = await prisma.assignment.upsert({
     where: { id: 'a2' },
     create: {
@@ -1905,7 +1929,13 @@ async function main() {
   // Prisma client tipleri henüz güncellenmemiş olabilir; runtime'da model mevcut.
   const badgeClient = prisma as any;
 
+  console.log(`Badge tanımları oluşturuluyor... (${badgeDefinitions.length} adet)`);
+  let badgeCount = 0;
   for (const def of badgeDefinitions) {
+    badgeCount++;
+    if (badgeCount % 5 === 0) {
+      console.log(`  ${badgeCount}/${badgeDefinitions.length} badge işleniyor...`);
+    }
     await badgeClient.badgeDefinition.upsert({
       where: { code: def.code },
       create: {
@@ -1933,6 +1963,7 @@ async function main() {
       },
     });
   }
+  console.log(`Badge tanımları tamamlandı (${badgeCount} adet)`);
 
   // Ranking Scales (Sıralama Ölçekleri) - 2024 ve 2025 verileri
   console.log('Ranking scales oluşturuluyor...');

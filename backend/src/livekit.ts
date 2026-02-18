@@ -66,4 +66,19 @@ export async function muteAllParticipantsInRoom(roomName: string): Promise<{ mut
   return { muted };
 }
 
+/** Tüm katılımcıların mikrofonlarını aç (öğretmen için). TrackType.AUDIO = 0 */
+export async function unmuteAllParticipantsInRoom(roomName: string): Promise<{ unmuted: number }> {
+  const participants = await roomService.listParticipants(roomName);
+  let unmuted = 0;
+  for (const p of participants) {
+    for (const track of p.tracks) {
+      if (track.type === 0) {
+        await roomService.mutePublishedTrack(roomName, p.identity, track.sid, false);
+        unmuted += 1;
+      }
+    }
+  }
+  return { unmuted };
+}
+
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Check, X, Save, Loader2, Calendar } from 'lucide-react';
 import { GlassCard, TagChip } from './components/DashboardPrimitives';
 import {
@@ -13,9 +13,11 @@ import {
 
 interface AttendanceTabProps {
   token: string | null;
+  /** Öğretmenin admin panelinden atanmış sınıf seviyeleri (örn. ['12']) */
+  allowedGrades?: string[];
 }
 
-export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
+export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token, allowedGrades }) => {
   const [classes, setClasses] = useState<ClassGroupForAttendance[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [classStudents, setClassStudents] = useState<AttendanceClassGroupData | null>(null);
@@ -27,6 +29,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [showRecords, setShowRecords] = useState(false);
 
@@ -37,9 +40,6 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
     getAttendanceClasses(token)
       .then((data) => {
         setClasses(data);
-        if (data.length > 0 && !selectedClassId) {
-          setSelectedClassId(data[0].id);
-        }
       })
       .catch((err) => {
         console.error('Sınıflar yüklenemedi:', err);
@@ -47,6 +47,30 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
       })
       .finally(() => setLoading(false));
   }, [token]);
+
+  // Admin panelinden atanmış sınıf seviyelerine göre görünür sınıflar
+  const visibleClasses: ClassGroupForAttendance[] = useMemo(() => {
+    if (!allowedGrades || allowedGrades.length === 0) return classes;
+    const set = new Set(allowedGrades);
+    return classes.filter((c) => set.has(c.gradeLevel));
+  }, [classes, allowedGrades?.join(',')]);
+
+  // İlk uygun sınıfı otomatik seç
+  useEffect(() => {
+    if (!selectedClassId && visibleClasses.length > 0) {
+      setSelectedClassId(visibleClasses[0].id);
+    } else if (
+      selectedClassId &&
+      visibleClasses.length > 0 &&
+      !visibleClasses.some((c) => c.id === selectedClassId)
+    ) {
+      // Seçili sınıf görünür listede değilse (yetkiler değişmiş olabilir), ilkine düş
+      setSelectedClassId(visibleClasses[0].id);
+    } else if (visibleClasses.length === 0 && selectedClassId) {
+      // Hiç görünür sınıf yoksa seçimi temizle
+      setSelectedClassId('');
+    }
+  }, [visibleClasses, selectedClassId]);
 
   // Seçili sınıfın öğrencilerini yükle
   useEffect(() => {
@@ -93,6 +117,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
 
     setSaving(true);
     setError(null);
+    setSaveSuccessMessage(null);
 
     try {
       const attendanceList = classStudents.students.map((s) => ({
@@ -103,7 +128,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
 
       await submitClassAttendance(token, selectedClassId, attendanceDate, attendanceList);
       setError(null);
-      alert('Yoklama başarıyla kaydedildi!');
+      setSaveSuccessMessage('Yoklama başarıyla kaydedildi.');
       loadRecords();
     } catch (err: any) {
       console.error('Yoklama kaydedilemedi:', err);
@@ -114,6 +139,13 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
       setSaving(false);
     }
   };
+
+  // Başarı mesajını otomatik gizle
+  useEffect(() => {
+    if (!saveSuccessMessage) return;
+    const t = window.setTimeout(() => setSaveSuccessMessage(null), 3500);
+    return () => window.clearTimeout(t);
+  }, [saveSuccessMessage]);
 
   const toggleStudentAttendance = (studentId: string) => {
     setAttendance((prev) => ({
@@ -156,7 +188,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
           <select
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
-            disabled={loading || !token}
+            disabled={loading || !token || visibleClasses.length === 0}
             style={{
               width: '100%',
               padding: '0.6rem 0.9rem',
@@ -171,8 +203,10 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
               backdropFilter: 'blur(18px)',
             }}
           >
-            <option value="">Sınıf seçin...</option>
-            {classes.map((c) => (
+            <option value="">
+              {visibleClasses.length === 0 ? 'Yetkili sınıf bulunamadı' : 'Sınıf seçin...'}
+            </option>
+            {visibleClasses.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name} ({c.gradeLevel}. sınıf) - {c.studentCount} öğrenci
               </option>
@@ -200,15 +234,16 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
               onChange={(e) => setAttendanceDate(e.target.value)}
               style={{
                 width: '100%',
-                padding: '0.6rem 0.8rem',
+                padding: '0.6rem 0.9rem',
                 borderRadius: 999,
                 border:
-                  '1px solid color-mix(in srgb, var(--accent-color) 35%, rgba(148, 163, 184, 0.6))',
+                  '1px solid color-mix(in srgb, var(--accent-color) 48%, var(--ui-control-border))',
                 background:
-                  'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.16), transparent 55%), rgba(15,23,42,0.96)',
+                  'radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent-color) 18%, transparent), transparent 55%), var(--glass-bg)',
                 color: 'var(--color-text-main)',
                 fontSize: '0.9rem',
-                boxShadow: '0 12px 32px rgba(15,23,42,0.45)',
+                boxShadow: '0 16px 42px rgba(15,23,42,0.18)',
+                backdropFilter: 'blur(18px)',
               }}
             />
           </div>
@@ -309,10 +344,10 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
                   gap: '0.5rem',
                   padding: '0.55rem 1.15rem',
                   borderRadius: 999,
-                  border: '1px solid rgba(148, 163, 184, 0.65)',
-                  background:
-                    'linear-gradient(135deg, rgba(15,23,42,0.96), rgba(15,23,42,0.9))',
-                  boxShadow: '0 12px 30px rgba(15,23,42,0.5)',
+                  border: '1px solid rgba(37, 99, 235, 0.6)',
+                  background: 'var(--color-primary, #2563eb)',
+                  color: '#fff',
+                  boxShadow: '0 14px 32px rgba(37,99,235,0.45)',
                 }}
               >
                 <Calendar size={16} />
@@ -331,10 +366,10 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
                   justifyContent: 'center',
                   padding: '0.6rem 1.6rem',
                   borderRadius: 999,
-                  border: 'none',
-                  background:
-                    'linear-gradient(135deg, var(--accent-color), #22c55e)',
-                  boxShadow: '0 18px 45px rgba(34,197,94,0.55)',
+                  border: '1px solid rgba(37, 99, 235, 0.6)',
+                  background: 'var(--color-primary, #2563eb)',
+                  color: '#fff',
+                  boxShadow: '0 14px 32px rgba(37,99,235,0.45)',
                 }}
               >
                 {saving ? (
@@ -350,6 +385,20 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token }) => {
                 )}
               </button>
             </div>
+
+            {saveSuccessMessage && (
+              <div
+                style={{
+                  marginTop: '0.75rem',
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                }}
+              >
+                <div style={{ color: 'var(--success)', fontSize: '0.85rem', fontWeight: 700 }}>
+                  {saveSuccessMessage}
+                </div>
+              </div>
+            )}
           </>
         )}
       </GlassCard>

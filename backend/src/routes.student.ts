@@ -467,7 +467,7 @@ router.get(
   },
 );
 
-// Sınav cevaplarını kaydet
+// Sınav cevaplarını kaydet + cevap anahtarı varsa otomatik puanla
 router.post(
   '/exams/:id/submit',
   authenticate('student'),
@@ -481,40 +481,163 @@ router.post(
         return res.status(400).json({ error: 'Eksik parametreler' });
       }
 
-      // Check if result already exists
-      const existing = await prisma.examResult.findUnique({
-        where: {
-          studentId_examId: { studentId, examId },
-        },
+      // Check for answer key
+      const examQuestions = await prisma.examQuestion.findMany({
+        where: { examId },
+        orderBy: { questionNumber: 'asc' },
       });
 
+      const hasAnswerKey = examQuestions.length > 0 && examQuestions.some((q) => q.correctOption);
+
+      let totalNet = 0;
+      let score = 0;
+      let gradingStatus = 'pending_grading';
+
+      // Per-lesson, per-topic analysis maps
+      type LessonStats = {
+        lessonName: string;
+        correct: number;
+        wrong: number;
+        empty: number;
+        topics: Record<string, { topicName: string; correct: number; wrong: number; empty: number }>;
+      };
+      const lessonMap = new Map<string, LessonStats>();
+
+      if (hasAnswerKey) {
+        let correct = 0;
+        let wrong = 0;
+        const empty = 0;
+
+        for (const q of examQuestions) {
+          const studentAnswer = answers[String(q.questionNumber)];
+          const correctAnswer = q.correctOption?.toUpperCase();
+          const lessonKey = q.lessonName;
+          const topicKey = q.topicName;
+
+          if (!lessonMap.has(lessonKey)) {
+            lessonMap.set(lessonKey, { lessonName: lessonKey, correct: 0, wrong: 0, empty: 0, topics: {} });
+          }
+          const ls = lessonMap.get(lessonKey)!;
+
+          if (!ls.topics[topicKey]) {
+            ls.topics[topicKey] = { topicName: topicKey, correct: 0, wrong: 0, empty: 0 };
+          }
+          const ts = ls.topics[topicKey];
+
+          if (!studentAnswer) {
+            ls.empty++;
+            ts.empty++;
+          } else if (correctAnswer && studentAnswer.toUpperCase() === correctAnswer) {
+            correct++;
+            ls.correct++;
+            ts.correct++;
+          } else if (correctAnswer) {
+            wrong++;
+            ls.wrong++;
+            ts.wrong++;
+          }
+        }
+
+        totalNet = Math.max(0, correct - wrong * 0.25);
+        // Simple 0-100 score based on total net out of question count
+        score = examQuestions.length > 0 ? (totalNet / examQuestions.length) * 100 : 0;
+        gradingStatus = 'auto_graded';
+      }
+
+      // Upsert ExamResult
+      const existing = await prisma.examResult.findUnique({
+        where: { studentId_examId: { studentId, examId } },
+      });
+
+      let examResultId: number;
+
       if (existing) {
-        // Update existing with new answers (allow re-submit if not strictly locked?)
-        // For now, allow update
+        // Delete old details so we can recreate them
+        await prisma.examResultDetail.deleteMany({ where: { examResultId: existing.id } });
         await prisma.examResult.update({
           where: { studentId_examId: { studentId, examId } },
           data: {
             answers: answers as any,
-            gradingStatus: 'pending_grading', // Mark for teacher review/grading
-            // We don't change score yet as we don't have key
+            gradingStatus,
+            ...(hasAnswerKey ? { totalNet, score, percentile: 0 } : {}),
           },
         });
+        examResultId = existing.id;
       } else {
-        // Create new result with 0 score (ungraded)
-        await prisma.examResult.create({
+        const created = await prisma.examResult.create({
           data: {
             studentId,
             examId,
-            score: 0,
-            totalNet: 0,
+            score,
+            totalNet,
             percentile: 0,
             answers: answers as any,
-            gradingStatus: 'pending_grading',
+            gradingStatus,
           },
         });
+        examResultId = created.id;
       }
 
-      return res.json({ success: true, message: 'Cevaplarınız kaydedildi.' });
+      // Create ExamResultDetail + TopicAnalysis if auto-graded
+      if (hasAnswerKey && lessonMap.size > 0) {
+        for (const [, ls] of lessonMap) {
+          // Find or create Subject
+          let subject = await prisma.subject.findFirst({ where: { name: ls.lessonName } });
+          if (!subject) {
+            subject = await prisma.subject.create({ data: { name: ls.lessonName } });
+          }
+
+          const detail = await prisma.examResultDetail.create({
+            data: {
+              examResultId,
+              lessonId: subject.id,
+              lessonName: ls.lessonName,
+              correct: ls.correct,
+              wrong: ls.wrong,
+              empty: ls.empty,
+              net: Math.max(0, ls.correct - ls.wrong * 0.25),
+            },
+          });
+
+          // Create TopicAnalysis for each topic
+          for (const [, ts] of Object.entries(ls.topics)) {
+            const topicNet = Math.max(0, ts.correct - ts.wrong * 0.25);
+            const totalQ = ts.correct + ts.wrong + ts.empty;
+            const errorRate = totalQ > 0 ? ts.wrong / totalQ : 0;
+
+            // Find or create Topic
+            let topic = await prisma.topic.findFirst({ where: { name: ts.topicName } });
+            if (!topic) {
+              topic = await prisma.topic.create({ data: { name: ts.topicName } });
+            }
+
+            await prisma.topicAnalysis.create({
+              data: {
+                examResultDetailId: detail.id,
+                topicId: topic.id,
+                topicName: ts.topicName,
+                totalQuestion: totalQ,
+                correct: ts.correct,
+                wrong: ts.wrong,
+                empty: ts.empty,
+                net: topicNet,
+                priorityLevel: errorRate >= 0.5 ? 'ONE' : errorRate >= 0.25 ? 'TWO' : 'THREE',
+                lostPoints: ts.wrong * 0.25,
+              },
+            });
+          }
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: hasAnswerKey
+          ? `Sınav tamamlandı! Net: ${totalNet.toFixed(2)}`
+          : 'Cevaplarınız kaydedildi. Sonuçlar öğretmen değerlendirmesinden sonra açıklanacaktır.',
+        autoGraded: hasAnswerKey,
+        totalNet: hasAnswerKey ? totalNet : null,
+        score: hasAnswerKey ? score : null,
+      });
     } catch (error) {
       console.error('Error submitting exam answers:', error);
       return res.status(500).json({ error: 'Cevaplar kaydedilemedi' });
@@ -1898,8 +2021,16 @@ router.post(
       },
     });
 
-    // Admin bildirimleri
-    const admins = await prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
+    // Aynı kurumdaki admin'lere bildirimler
+    const institutionName = (req.user as any)?.institutionName
+      ? String((req.user as any).institutionName).trim()
+      : undefined;
+    const admins = await prisma.user.findMany({
+      where: institutionName
+        ? ({ role: 'admin', institutionName } as any)
+        : ({ role: 'admin' } as any),
+      select: { id: true },
+    });
     if (admins.length > 0) {
       await prisma.notification.createMany({
         data: admins.map((a) => ({
@@ -2519,6 +2650,45 @@ router.get(
         toUserName: userMap.get(m.toUserId) ?? m.toUserId,
       })),
     );
+  },
+);
+
+// Tekil mesaj detayı (bildirim modalında içerik göstermek için)
+router.get(
+  '/messages/:id',
+  authenticate('student'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const userId = req.user!.id;
+    const messageId = String(req.params.id);
+
+    const message = await prisma.message.findUnique({ where: { id: messageId } });
+    if (!message) {
+      return res.status(404).json({ error: 'Mesaj bulunamadı' });
+    }
+    if (message.fromUserId !== userId && message.toUserId !== userId) {
+      return res.status(403).json({ error: 'Bu mesaja erişim yetkiniz yok' });
+    }
+
+    const users = await prisma.user.findMany({
+      where: { id: { in: [message.fromUserId, message.toUserId] } },
+      select: { id: true, name: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u.name]));
+
+    return res.json({
+      id: message.id,
+      fromUserId: message.fromUserId,
+      toUserId: message.toUserId,
+      studentId: message.studentId ?? undefined,
+      subject: message.subject ?? undefined,
+      text: message.text,
+      attachments: message.attachments ?? undefined,
+      read: message.read,
+      readAt: message.readAt?.toISOString(),
+      createdAt: message.createdAt.toISOString(),
+      fromUserName: userMap.get(message.fromUserId) ?? message.fromUserId,
+      toUserName: userMap.get(message.toUserId) ?? message.toUserId,
+    });
   },
 );
 

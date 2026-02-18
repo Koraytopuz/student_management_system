@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Award, BookOpen, Calendar, CalendarCheck, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { BookOpen, Calendar, CalendarCheck, ClipboardList, FileText, ListChecks, Maximize2, Minimize2, Target, Video, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { useReadingMode } from './ReadingModeContext';
 import {
@@ -30,8 +31,10 @@ import {
   getStudentBadges,
   recordFocusSession,
   resolveContentUrl,
+  getStudentMessageById,
   type ProgressCharts,
   type ProgressOverview,
+  type Message,
   type StudentAssignment,
   type StudentContent,
   type StudentDashboardSummary,
@@ -43,7 +46,7 @@ import {
   type StudentCoachingSession,
   type StudentBadgeProgress,
   getStudentExamDetail,
-
+  submitStudentExamAnswers,
   getStudentLessonScheduleEntries,
   type LessonScheduleEntryDto,
 } from './api';
@@ -59,7 +62,7 @@ import { StudentQuestionBankTab } from './StudentQuestionBankTab';
 import { StudentBadgesTab } from './StudentBadges';
 import { FocusZone } from './components/FocusZone';
 import { NotificationDetailModal, type NotificationDetailModalData } from './components/NotificationDetailModal';
-import { ExamOpticalFormOverlay, type ExamSimple } from './ExamOpticalFormOverlay';
+import { ExamOpticalFormOverlay } from './ExamOpticalFormOverlay';
 import { type ExamSimple } from './api';
 import { StudentExamList } from './pages/student/StudentExamList';
 import { LessonScheduleTab } from './LessonScheduleTab';
@@ -173,17 +176,21 @@ export const StudentDashboard: React.FC = () => {
       try {
         const data = await getStudentBadges(token);
         if (cancelled) return;
-        setBadges(data);
+        console.log('[StudentDashboard] Badges loaded:', data?.length || 0, 'badges');
+        setBadges(data || []);
       } catch (error) {
         if (cancelled) return;
-        setBadgesError(
-          error instanceof Error ? error.message : 'Rozetler yüklenemedi',
-        );
+        const errorMessage = error instanceof Error ? error.message : 'Rozetler yüklenemedi';
+        console.error('[StudentDashboard] Failed to load badges:', error);
+        setBadgesError(errorMessage);
+        setBadges([]); // Clear badges on error
       } finally {
         if (!cancelled) setBadgesLoading(false);
       }
     };
-    load().catch(() => {});
+    load().catch((err) => {
+      console.error('[StudentDashboard] Unhandled error loading badges:', err);
+    });
     return () => {
       cancelled = true;
     };
@@ -268,12 +275,60 @@ export const StudentDashboard: React.FC = () => {
   const activeNotification =
     notifications.find((n) => n.id === activeNotificationId) ?? null;
 
+  const [activeNotificationMessage, setActiveNotificationMessage] = useState<Message | null>(null);
+  const [activeNotificationMessageLoading, setActiveNotificationMessageLoading] = useState(false);
+  const [activeNotificationMessageError, setActiveNotificationMessageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const shouldLoad =
+      notificationDetailOpen &&
+      !!token &&
+      !!activeNotification &&
+      activeNotification.relatedEntityType === 'message' &&
+      !!activeNotification.relatedEntityId;
+
+    if (!shouldLoad) {
+      setActiveNotificationMessage(null);
+      setActiveNotificationMessageLoading(false);
+      setActiveNotificationMessageError(null);
+      return;
+    }
+
+    setActiveNotificationMessage(null);
+    setActiveNotificationMessageLoading(true);
+    setActiveNotificationMessageError(null);
+
+    getStudentMessageById(token!, activeNotification!.relatedEntityId!)
+      .then((msg) => {
+        if (cancelled) return;
+        setActiveNotificationMessage(msg);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setActiveNotificationMessageError(e instanceof Error ? e.message : 'Mesaj içeriği yüklenemedi.');
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setActiveNotificationMessageLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [notificationDetailOpen, token, activeNotificationId, activeNotification]);
+
   useEffect(() => {
     const notif = searchParams.get('notifications');
     const notificationId = searchParams.get('notificationId');
+    const tab = searchParams.get('tab');
     if (notif === '1') {
       setActiveTab('notifications');
       if (notificationId) setFocusedNotificationId(notificationId);
+      setSearchParams({}, { replace: true });
+    } else if (tab === 'badges') {
+      setActiveTab('badges');
       setSearchParams({}, { replace: true });
     }
   }, [searchParams, setSearchParams]);
@@ -298,6 +353,7 @@ export const StudentDashboard: React.FC = () => {
         token,
       );
       setNotifications(data);
+      window.dispatchEvent(new Event('notifications-updated'));
     } catch {
       // ignore
     } finally {
@@ -385,7 +441,7 @@ export const StudentDashboard: React.FC = () => {
   };
 
   const [activeExamToSolve, setActiveExamToSolve] = useState<ExamSimple | null>(null);
-  // const [_examSubmitting, _setExamSubmitting] = useState(false);
+  const [examSubmitting, setExamSubmitting] = useState(false);
 
   const handleSolveExam = async (examId: number) => {
     if (!token) return;
@@ -407,27 +463,24 @@ export const StudentDashboard: React.FC = () => {
     }
   };
 
-  
-  /*
-  const _submitExamAnswers = async (answers: Record<number, string>) => {
-    if (!token || !activeExamToSolve) return;
-    _setExamSubmitting(true);
-    try {
-       const answersStr = Object.fromEntries(
-           Object.entries(answers).map(([k,v]) => [String(k), v])
-       );
-       await submitStudentExamAnswers(token, activeExamToSolve.id, answersStr);
-       // eslint-disable-next-line no-alert
-       alert('Sınav başarıyla tamamlandı.');
-       setActiveExamToSolve(null);
-    } catch(e) {
-       // eslint-disable-next-line no-alert
-       alert('Gönderim başarısız: ' + (e instanceof Error ? e.message : ''));
-    } finally {
-       _setExamSubmitting(false);
-    }
-  };
-  */
+  const submitExamAnswers = useCallback(
+    async (answers: Record<number, string>) => {
+      if (!token || !activeExamToSolve) return;
+      setExamSubmitting(true);
+      try {
+        const answersStr = Object.fromEntries(
+          Object.entries(answers).map(([k, v]) => [String(k), v])
+        );
+        await submitStudentExamAnswers(token, activeExamToSolve.id, answersStr);
+        // Overlay handles the success screen; it will call onClose() when dismissed
+      } catch (e) {
+        throw e;
+      } finally {
+        setExamSubmitting(false);
+      }
+    },
+    [token, activeExamToSolve]
+  );
 
   const [activeTest, setActiveTest] = useState<StudentAssignmentDetail | null>(null);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
@@ -781,17 +834,6 @@ export const StudentDashboard: React.FC = () => {
         },
       },
       {
-        id: 'badges',
-        label: 'Rozetler',
-        icon: <Award size={18} />,
-        description: 'Başarılarım',
-        active: activeTab === 'badges',
-        onClick: () => {
-          setActiveTest(null);
-          setActiveTab('badges');
-        },
-      },
-      {
         id: 'liveclasses',
         label: 'Canlı Dersler',
         icon: <Video size={18} />,
@@ -865,11 +907,27 @@ export const StudentDashboard: React.FC = () => {
     [activeTab, assignments.length, plannerTodos.length, derslerimSubItems],
   );
 
+  if (activeExamToSolve && token && typeof document !== 'undefined') {
+    return (
+      <>
+        {createPortal(
+          <ExamOpticalFormOverlay
+            exam={activeExamToSolve as unknown as ExamSimple}
+            token={token}
+            onClose={() => setActiveExamToSolve(null)}
+            onSubmit={submitExamAnswers}
+            submitting={examSubmitting}
+          />,
+          document.body
+        )}
+      </>
+    );
+  }
+
   return (
     <DashboardLayout
       accent="indigo"
-      brand="SKY"
-      brandSuffix="ANALİZ"
+      brand={user?.institutionName ?? 'SKYANALİZ'}
       tagline={user?.name ?? 'Öğrenci'}
       title={
         activeTab === 'overview'
@@ -1319,36 +1377,119 @@ export const StudentDashboard: React.FC = () => {
             : null
         }
         onClose={() => setNotificationDetailOpen(false)}
-        actions={
-          activeNotification && !activeNotification.read && token ? (
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={async () => {
-                if (!token) return;
-                try {
-                  await apiRequest(`/student/notifications/${activeNotification.id}/read`, { method: 'PUT' }, token);
-                  await loadNotifications();
-                } catch {
-                  // ignore
-                }
+        details={
+          activeNotification?.relatedEntityType === 'message' && activeNotification.relatedEntityId ? (
+            <div
+              style={{
+                padding: '0.85rem 0.9rem',
+                borderRadius: 14,
+                border: '1px solid var(--color-border-subtle)',
+                background: 'var(--color-surface)',
               }}
             >
-              Okundu
-            </button>
+              <div style={{ fontWeight: 800, marginBottom: '0.5rem' }}>Mesaj İçeriği</div>
+              {activeNotificationMessageLoading ? (
+                <div style={{ color: 'var(--color-text-muted)' }}>Yükleniyor…</div>
+              ) : activeNotificationMessageError ? (
+                <div style={{ color: '#ef4444' }}>{activeNotificationMessageError}</div>
+              ) : activeNotificationMessage ? (
+                <div style={{ display: 'grid', gap: '0.35rem' }}>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                    {activeNotificationMessage.fromUserName ?? activeNotificationMessage.fromUserId} →{' '}
+                    {activeNotificationMessage.toUserName ?? activeNotificationMessage.toUserId}
+                  </div>
+                  {activeNotificationMessage.subject ? (
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>
+                      Konu: {activeNotificationMessage.subject}
+                    </div>
+                  ) : null}
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{activeNotificationMessage.text}</div>
+                </div>
+              ) : (
+                <div style={{ color: 'var(--color-text-muted)' }}>Mesaj bulunamadı.</div>
+              )}
+            </div>
           ) : null
+        }
+        actions={
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Canlı ders bildirimleri için "Canlı Derse Katıl" butonu */}
+            {activeNotification &&
+              activeNotification.relatedEntityType === 'meeting' &&
+              activeNotification.relatedEntityId &&
+              token && (
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={async () => {
+                    if (!token || !activeNotification.relatedEntityId) return;
+                    try {
+                      // Bildirimi okundu olarak işaretle
+                      try {
+                        await apiRequest(`/student/notifications/${activeNotification.id}/read`, { method: 'PUT' }, token);
+                        await loadNotifications();
+                      } catch {
+                        // ignore
+                      }
+                      // Canlı derse katıl
+                      await handleJoinMeeting(activeNotification.relatedEntityId);
+                      setNotificationDetailOpen(false);
+                    } catch (error) {
+                      const message =
+                        error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase();
+                      if (message.includes('not started') || message.includes('başlatılmadı') || message.includes('başlatılmamış')) {
+                        setJoinMeetingHint('Canlı dersiniz öğretmen tarafından başlatılmamıştır.');
+                      } else {
+                        setJoinMeetingHint(
+                          error instanceof Error
+                            ? `Canlı derse katılamadın: ${error.message}`
+                            : 'Canlı derse katılırken bir hata oluştu.',
+                        );
+                      }
+                    }
+                  }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                >
+                  <Video size={14} />
+                  Canlı Derse Katıl
+                </button>
+              )}
+            {/* Okundu butonu - sadece okunmamış bildirimler için */}
+            {activeNotification && !activeNotification.read && token ? (
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={async () => {
+                  if (!token) return;
+                  try {
+                    await apiRequest(`/student/notifications/${activeNotification.id}/read`, { method: 'PUT' }, token);
+                    await loadNotifications();
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                Okundu
+              </button>
+            ) : null}
+          </div>
         }
       />
       {activeTab === 'complaints' && (
         <StudentComplaints token={token} />
       )}
-      {activeExamToSolve && activeTab === 'exam-analysis' && token && (
-        <ExamOpticalFormOverlay
-          exam={activeExamToSolve as unknown as ExamSimple}
-          token={token}
-          onClose={() => setActiveExamToSolve(null)}
-          onSubmit={submitExamAnswers}
-          submitting={examSubmitting}
+      {activeTab === 'exam-analysis' && user && (
+        <StudentExamList
+          token={token ?? ''}
+          user={{ 
+            id: user.id ?? '', 
+            name: user.name ?? 'Öğrenci', 
+            email: user.email ?? '' 
+          }}
+          onSolveExam={(examId) => {
+            setActiveTab('exam-analysis');
+            handleSolveExam(examId);
+          }}
         />
       )}
       {activeTest && (
@@ -1725,13 +1866,6 @@ export const StudentDashboard: React.FC = () => {
           </div>
         </div>
       )}
-      {activeTab === 'exam-analysis' && user && token && (
-        <StudentExamList
-          token={token}
-          user={{ id: user.id || '', name: user.name || '', email: user.email || '' }}
-          onSolveExam={handleSolveExam}
-        />
-      )}
     </DashboardLayout>
   );
 };
@@ -1771,9 +1905,21 @@ const TestSolveOverlay: React.FC<{
   const [askTeacherQuestionId, setAskTeacherQuestionId] = useState<string | null>(null);
   const [askTeacherMessage, setAskTeacherMessage] = useState('');
   const [drawingTool, setDrawingTool] = useState<'pen' | 'line' | 'rect' | 'triangle' | 'eraser'>('pen');
-  const [drawingColor, setDrawingColor] = useState<string>('#111827');
+  const [drawingColor, setDrawingColor] = useState<string>(() => {
+    if (typeof window === 'undefined') return '#111827';
+    const cssVar = getComputedStyle(document.documentElement).getPropertyValue('--color-text-main').trim();
+    return cssVar || '#111827';
+  });
   const [drawingLineWidth, setDrawingLineWidth] = useState<number>(3);
   const [eraserWidth, setEraserWidth] = useState<number>(18);
+  const [showDrawingControls, setShowDrawingControls] = useState<boolean>(false);
+  const [navInfoMessage, setNavInfoMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!navInfoMessage) return;
+    const timeout = window.setTimeout(() => setNavInfoMessage(null), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [navInfoMessage]);
 
   // ESC ile kapatma (Full screen çıkış)
   useEffect(() => {
@@ -1783,6 +1929,16 @@ const TestSolveOverlay: React.FC<{
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
   }, [onClose]);
+
+  // Fullscreen overlay açıkken arkaplan scroll'unu kilitle
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
 
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
   const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
@@ -1795,18 +1951,22 @@ const TestSolveOverlay: React.FC<{
   const handleNext = () => {
     if (currentIndex < questions.length - 1) {
       onChangeIndex(currentIndex + 1);
+      setNavInfoMessage(null);
+    } else {
+      setNavInfoMessage('Son soruya geldiniz.');
     }
   };
 
   const handlePrev = () => {
     if (currentIndex > 0) {
       onChangeIndex(currentIndex - 1);
+      setNavInfoMessage(null);
     }
   };
 
   const answerValue = answers[question.id] ?? '';
 
-  return (
+  const overlay = (
     <div
       style={{
         position: 'fixed',
@@ -1816,7 +1976,10 @@ const TestSolveOverlay: React.FC<{
         padding: 0,
         display: 'flex',
         flexDirection: 'column',
+        overflow: 'hidden',
       }}
+      role="dialog"
+      aria-modal="true"
     >
       <div
         style={{
@@ -1838,8 +2001,8 @@ const TestSolveOverlay: React.FC<{
             position: 'absolute',
             top: '1.5rem',
             right: '1.5rem',
-            background: 'var(--color-surface-soft, rgba(0,0,0,0.05))',
-            border: '1px solid var(--color-border-subtle)',
+            background: 'var(--ui-control-bg)',
+            border: '1px solid var(--ui-control-border)',
             borderRadius: '50%',
             width: 44,
             height: 44,
@@ -1856,7 +2019,15 @@ const TestSolveOverlay: React.FC<{
           <X size={24} />
         </button>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '0.75rem',
+            }}
+          >
             <div>
               <Breadcrumb
                 items={[
@@ -1883,12 +2054,17 @@ const TestSolveOverlay: React.FC<{
                 <div style={{ fontSize: '0.7rem', opacity: 0.7, textTransform: 'uppercase' }}>
                   Kalan süre
                 </div>
-                <div style={{ fontSize: '1.05rem', fontWeight: 700, color: remainingSeconds <= 60 ? '#fb7185' : '#e5e7eb' }}>
+                <div
+                  style={{
+                    fontSize: '1.05rem',
+                    fontWeight: 700,
+                    color: remainingSeconds <= 60 ? 'var(--error)' : 'var(--color-text-main)',
+                  }}
+                >
                   {formatCountdown(remainingSeconds)}
                 </div>
               </div>
             )}
-
           </div>
 
           <div
@@ -2009,7 +2185,6 @@ const TestSolveOverlay: React.FC<{
                   type="button"
                   className="ghost-btn"
                   onClick={handleNext}
-                  disabled={currentIndex === questions.length - 1}
                 >
                   Sonraki
                 </button>
@@ -2023,6 +2198,17 @@ const TestSolveOverlay: React.FC<{
                 {submitting ? 'Gönderiliyor...' : 'Testi Bitir ve Gönder'}
               </button>
             </div>
+            {navInfoMessage && (
+              <div
+                style={{
+                  marginTop: '0.5rem',
+                  fontSize: '0.85rem',
+                  color: 'var(--color-accent)',
+                }}
+              >
+                {navInfoMessage}
+              </div>
+            )}
             <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-start', gap: '0.6rem', flexWrap: 'wrap' }}>
               <button
                 type="button"
@@ -2098,7 +2284,7 @@ const TestSolveOverlay: React.FC<{
                   fontWeight: 600,
                   letterSpacing: '0.04em',
                   textTransform: 'uppercase',
-                  color: '#a5b4fc',
+                  color: 'var(--color-accent)',
                   marginBottom: '0.35rem',
                 }}
               >
@@ -2133,96 +2319,115 @@ const TestSolveOverlay: React.FC<{
                 </ul>
               )}
             </div>
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '0.5rem',
-                marginBottom: '0.5rem',
-              }}
-            >
-              {[
-                { id: 'pen', label: 'Serbest' },
-                { id: 'line', label: 'Düz Çizgi' },
-                { id: 'rect', label: 'Dikdörtgen' },
-                { id: 'triangle', label: 'Dik Üçgen' },
-                { id: 'eraser', label: 'Silgi' },
-              ].map((tool) => (
-                <button
-                  key={tool.id}
-                  type="button"
-                  className={drawingTool === tool.id ? 'primary-btn' : 'ghost-btn'}
-                  onClick={() => setDrawingTool(tool.id as any)}
-                >
-                  {tool.label}
-                </button>
-              ))}
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '0.4rem',
-                marginBottom: '0.5rem',
-                alignItems: 'center',
-              }}
-            >
-              <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Renk:</span>
-              {['#111827', '#1d4ed8', '#be123c', '#047857', '#eab308'].map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setDrawingColor(c)}
+            {showDrawingControls && (
+              <>
+                <div
                   style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: '999px',
-                    border:
-                      drawingColor === c
-                        ? '2px solid #e5e7eb'
-                        : '1px solid rgba(148,163,184,0.8)',
-                    background: c,
-                    padding: 0,
-                    cursor: 'pointer',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '0.5rem',
+                    marginBottom: '0.5rem',
                   }}
-                />
-              ))}
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '0.75rem',
-                marginBottom: '0.5rem',
-                alignItems: 'center',
-              }}
-            >
-              <label style={{ fontSize: '0.8rem', opacity: 0.85 }}>
-                Çizgi:
-                <input
-                  type="range"
-                  min={1}
-                  max={10}
-                  value={drawingLineWidth}
-                  onChange={(event) => setDrawingLineWidth(Number(event.target.value))}
-                  style={{ marginLeft: 8, verticalAlign: 'middle' }}
-                />
-              </label>
-              <label style={{ fontSize: '0.8rem', opacity: 0.85 }}>
-                Silgi:
-                <input
-                  type="range"
-                  min={8}
-                  max={40}
-                  value={eraserWidth}
-                  onChange={(event) => setEraserWidth(Number(event.target.value))}
-                  style={{ marginLeft: 8, verticalAlign: 'middle' }}
-                />
-              </label>
+                >
+                  {[
+                    { id: 'pen', label: 'Serbest' },
+                    { id: 'line', label: 'Düz Çizgi' },
+                    { id: 'rect', label: 'Dikdörtgen' },
+                    { id: 'triangle', label: 'Dik Üçgen' },
+                    { id: 'eraser', label: 'Silgi' },
+                  ].map((tool) => (
+                    <button
+                      key={tool.id}
+                      type="button"
+                      className={drawingTool === tool.id ? 'primary-btn' : 'ghost-btn'}
+                      onClick={() => setDrawingTool(tool.id as any)}
+                    >
+                      {tool.label}
+                    </button>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '0.4rem',
+                    marginBottom: '0.5rem',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>Renk:</span>
+                  {['#111827', '#e5e7eb', '#1d4ed8', '#be123c', '#047857', '#eab308'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setDrawingColor(c)}
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: '999px',
+                        border:
+                          drawingColor === c
+                            ? '2px solid var(--color-primary-strong)'
+                            : '1px solid var(--ui-control-border)',
+                        background: c,
+                        padding: 0,
+                        cursor: 'pointer',
+                      }}
+                    />
+                  ))}
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '0.75rem',
+                    marginBottom: '0.5rem',
+                    alignItems: 'center',
+                  }}
+                >
+                  <label style={{ fontSize: '0.8rem', opacity: 0.85 }}>
+                    Çizgi:
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={drawingLineWidth}
+                      onChange={(event) => setDrawingLineWidth(Number(event.target.value))}
+                      style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                    />
+                  </label>
+                  <label style={{ fontSize: '0.8rem', opacity: 0.85 }}>
+                    Silgi:
+                    <input
+                      type="range"
+                      min={8}
+                      max={40}
+                      value={eraserWidth}
+                      onChange={(event) => setEraserWidth(Number(event.target.value))}
+                      style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                    />
+                  </label>
+                </div>
+              </>
+            )}
+            <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setShowDrawingControls((prev) => !prev)}
+              >
+                {showDrawingControls ? 'Araçları Gizle' : 'Araçları Göster'}
+              </button>
             </div>
             <div
               className="ui-panel"
-              style={{ flex: 1, minHeight: 0, padding: '0.5rem' }}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                padding: '0.5rem',
+                overflow: 'hidden',
+                position: 'relative',
+              }}
             >
               <DrawingCanvas
                 width={canvasWidth}
@@ -2234,6 +2439,22 @@ const TestSolveOverlay: React.FC<{
                 lineWidth={drawingLineWidth}
                 eraserWidth={eraserWidth}
               />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  left: 10,
+                  fontSize: '0.8rem',
+                  opacity: 0.9,
+                  padding: '0.1rem 0.4rem',
+                  borderRadius: 999,
+                  background: 'color-mix(in srgb, var(--glass-bg) 80%, rgba(15,23,42,0.55))',
+                  color: 'var(--color-text-main)',
+                  pointerEvents: 'none',
+                }}
+              >
+                Çizim alanı
+              </div>
             </div>
           </div>
         </div>
@@ -2288,6 +2509,9 @@ const TestSolveOverlay: React.FC<{
       )}
     </div>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(overlay, document.body);
 };
 
 const SAVE_PROGRESS_INTERVAL_MS = 10000;
