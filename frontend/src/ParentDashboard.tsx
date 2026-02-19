@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, BookOpen, CalendarCheck, ClipboardList, MessageSquare, BarChart3, Video, Maximize2, Minimize2, Send } from 'lucide-react';
+import { Bell, CalendarCheck, ClipboardList, MessageSquare, BarChart3, Maximize2, Minimize2, Send } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import {
   apiRequest,
@@ -13,6 +13,7 @@ import {
   getParentMeetings,
   getParentNotifications,
   getParentConversation,
+  getParentMessageById,
   markParentMessageRead,
   sendParentMessage,
   getParentStudentAttendance,
@@ -55,11 +56,6 @@ const formatShortDate = (iso?: string) => {
   return new Date(iso).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' });
 };
 
-const formatTime = (iso?: string) => {
-  if (!iso) return '-';
-  return new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-};
-
 export const ParentDashboard: React.FC = () => {
   const { token, user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<ParentTab>('overview');
@@ -98,6 +94,9 @@ export const ParentDashboard: React.FC = () => {
   const [notificationDetailOpen, setNotificationDetailOpen] = useState(false);
   const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
   const activeNotification = (notificationsState.data ?? []).find((n) => n.id === activeNotificationId) ?? null;
+  const [activeNotificationMessage, setActiveNotificationMessage] = useState<Message | null>(null);
+  const [activeNotificationMessageLoading, setActiveNotificationMessageLoading] = useState(false);
+  const [activeNotificationMessageError, setActiveNotificationMessageError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -157,6 +156,46 @@ export const ParentDashboard: React.FC = () => {
       })
       .catch((err) => messagesState.setError(err instanceof Error ? err.message : 'Mesajlar yüklenemedi'));
   }, [token, selectedConversationId, user]);
+
+  // Bildirim detayında mesaj içeriğini yükle
+  useEffect(() => {
+    let cancelled = false;
+    const shouldLoad =
+      notificationDetailOpen &&
+      !!token &&
+      !!activeNotification &&
+      activeNotification.relatedEntityType === 'message' &&
+      !!activeNotification.relatedEntityId;
+
+    if (!shouldLoad) {
+      setActiveNotificationMessage(null);
+      setActiveNotificationMessageLoading(false);
+      setActiveNotificationMessageError(null);
+      return;
+    }
+
+    setActiveNotificationMessage(null);
+    setActiveNotificationMessageLoading(true);
+    setActiveNotificationMessageError(null);
+
+    getParentMessageById(token!, activeNotification!.relatedEntityId!)
+      .then((msg) => {
+        if (cancelled) return;
+        setActiveNotificationMessage(msg);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setActiveNotificationMessageError(e instanceof Error ? e.message : 'Mesaj içeriği yüklenemedi.');
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setActiveNotificationMessageLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [notificationDetailOpen, token, activeNotification?.id, activeNotification?.relatedEntityType, activeNotification?.relatedEntityId]);
 
   const selectedChild = dashboardState.data?.children.find((child) => child.studentId === selectedStudentId);
   const activeConversation = conversationsState.data?.find((conv) => conv.userId === selectedConversationId);
@@ -415,6 +454,40 @@ export const ParentDashboard: React.FC = () => {
             : null
         }
         onClose={() => setNotificationDetailOpen(false)}
+        details={
+          activeNotification?.relatedEntityType === 'message' && activeNotification.relatedEntityId ? (
+            <div
+              style={{
+                padding: '0.85rem 0.9rem',
+                borderRadius: 14,
+                border: '1px solid var(--color-border-subtle)',
+                background: 'var(--color-surface)',
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: '0.5rem' }}>Mesaj İçeriği</div>
+              {activeNotificationMessageLoading ? (
+                <div style={{ color: 'var(--color-text-muted)' }}>Yükleniyor…</div>
+              ) : activeNotificationMessageError ? (
+                <div style={{ color: '#ef4444' }}>{activeNotificationMessageError}</div>
+              ) : activeNotificationMessage ? (
+                <div style={{ display: 'grid', gap: '0.35rem' }}>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                    {activeNotificationMessage.fromUserName ?? activeNotificationMessage.fromUserId} →{' '}
+                    {activeNotificationMessage.toUserName ?? activeNotificationMessage.toUserId}
+                  </div>
+                  {activeNotificationMessage.subject ? (
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>
+                      Konu: {activeNotificationMessage.subject}
+                    </div>
+                  ) : null}
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{activeNotificationMessage.text}</div>
+                </div>
+              ) : (
+                <div style={{ color: 'var(--color-text-muted)' }}>Mesaj bulunamadı.</div>
+              )}
+            </div>
+          ) : null
+        }
         actions={
           activeNotification && !activeNotification.read && token ? (
             <button
@@ -730,35 +803,12 @@ const ParentOverview: React.FC<{
   );
 };
 
-const getEventIcon = (event: CalendarEvent) => {
-  const t = (event.type || '').toLowerCase();
-  const title = (event.title || '').toLowerCase();
-  if (t.includes('test') || title.includes('test')) return <ClipboardList size={14} />;
-  if (t.includes('meeting') || t.includes('live') || title.includes('canlı')) return <Video size={14} />;
-  if (t.includes('lesson') || t.includes('ders')) return <BookOpen size={14} />;
-  return <CalendarCheck size={14} />;
-};
-
 const ParentCalendar: React.FC<{
   events: CalendarEvent[];
   attendance: ParentAttendanceRecord[];
   loading: boolean;
   attendanceLoading: boolean;
-}> = ({ events, attendance, loading, attendanceLoading }) => {
-  const byDay = events.reduce<Record<string, CalendarEvent[]>>((acc, event) => {
-    const day = formatShortDate(event.startDate);
-    if (!acc[day]) acc[day] = [];
-    acc[day].push(event);
-    return acc;
-  }, {});
-
-  const sortedDays = Object.keys(byDay).sort((a, b) => {
-    const [da, ma] = a.split(' ');
-    const [db, mb] = b.split(' ');
-    const months: Record<string, number> = { Oca: 1, Şub: 2, Mar: 3, Nis: 4, May: 5, Haz: 6, Tem: 7, Ağu: 8, Eyl: 9, Eki: 10, Kas: 11, Ara: 12 };
-    return (months[ma] ?? 0) * 100 + parseInt(da, 10) - ((months[mb] ?? 0) * 100 + parseInt(db, 10));
-  });
-
+}> = ({ attendance, attendanceLoading }) => {
   const absentCount = attendance.filter((r) => !r.present).length;
   const presentCount = attendance.filter((r) => r.present).length;
 
@@ -805,6 +855,12 @@ const ParentCalendar: React.FC<{
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
                     <span style={{ fontWeight: 600 }}>{record.classGroupName}</span>
+                    {record.lessonNumber != null && (
+                      <>
+                        {' · '}
+                        <span>{record.lessonNumber}. Ders</span>
+                      </>
+                    )}
                     {' · '}
                     <span>Yoklamayı alan: {record.teacherName}</span>
                   </div>
@@ -829,29 +885,6 @@ const ParentCalendar: React.FC<{
             ))}
           </div>
         )}
-      </GlassCard>
-
-      <GlassCard title="Haftalık Takvim" subtitle="Etüt ve toplantılar">
-        {loading && <div className="empty-state">Takvim yükleniyor...</div>}
-        {!loading && events.length === 0 && <div className="empty-state">Takvimde kayıt bulunamadı.</div>}
-        <div className="calendar-grid calendar-modern">
-          {sortedDays.map((day) => (
-            <div key={day} className="calendar-day">
-              <div className="calendar-day-header">{day}</div>
-              <div className="calendar-day-events">
-                {byDay[day].map((event) => (
-                  <div key={event.id} className="calendar-event">
-                    <span className="calendar-event-icon">{getEventIcon(event)}</span>
-                    <span className="calendar-event-title">{event.title}</span>
-                    {event.startDate && (
-                      <span className="calendar-event-time">{formatTime(event.startDate)}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
       </GlassCard>
     </>
   );

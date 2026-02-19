@@ -32,36 +32,9 @@ router.get('/exams', async (_req, res, next) => {
     }
 });
 /**
- * GET /api/analysis/:studentId/:examId
- * Öğrenci ve sınav için analiz verisini JSON olarak döner (grafikler için).
- */
-router.get('/analysis/:studentId/:examId', async (req, res, next) => {
-    try {
-        const studentId = req.params.studentId;
-        const examId = Number(req.params.examId);
-        if (!studentId || isNaN(examId)) {
-            res.status(400).json({ error: 'Geçersiz studentId veya examId' });
-            return;
-        }
-        const analysis = await (0, analysisService_1.getExamAnalysisForStudent)(studentId, examId);
-        if (!analysis) {
-            res.status(404).json({ error: 'Analiz bulunamadı', message: 'Bu öğrenci için bu sınavda sonuç yok.' });
-            return;
-        }
-        const projection = (0, analysisService_1.simulateImprovement)(analysis.score, analysis.priorityCounts.one, analysis.priorityCounts.two, analysis.priorityCounts.three);
-        res.json({
-            ...analysis,
-            projection,
-            date: analysis.date instanceof Date ? analysis.date.toISOString() : analysis.date,
-        });
-    }
-    catch (err) {
-        next(err);
-    }
-});
-/**
  * GET /api/analysis/:studentId/progress
  * Son N sınavın kümülatif analizi (gelişim grafiği).
+ * Not: Bu route /analysis/:studentId/:examId'dan ÖNCE tanımlanmalı, yoksa "progress" examId olarak yakalanır.
  */
 router.get('/analysis/:studentId/progress', async (req, res, next) => {
     try {
@@ -78,6 +51,37 @@ router.get('/analysis/:studentId/progress', async (req, res, next) => {
                 ...e,
                 date: e.date instanceof Date ? e.date.toISOString() : e.date,
             })),
+        });
+    }
+    catch (err) {
+        next(err);
+    }
+});
+/**
+ * GET /api/analysis/:studentId/:examId
+ * Öğrenci ve sınav için analiz verisini JSON olarak döner (grafikler için).
+ */
+router.get('/analysis/:studentId/:examId', async (req, res, next) => {
+    try {
+        const rawStudentId = req.params.studentId;
+        const studentId = typeof rawStudentId === 'string' ? rawStudentId.trim() : '';
+        const examId = Number(req.params.examId);
+        const invalidStudentId = !studentId || studentId === 'undefined' || studentId === 'null';
+        const invalidExamId = !Number.isInteger(examId) || isNaN(examId) || examId <= 0;
+        if (invalidStudentId || invalidExamId) {
+            res.status(400).json({ error: 'Geçersiz studentId veya examId' });
+            return;
+        }
+        const analysis = await (0, analysisService_1.getExamAnalysisForStudent)(studentId, examId);
+        if (!analysis) {
+            res.status(404).json({ error: 'Analiz bulunamadı', message: 'Bu öğrenci için bu sınavda sonuç yok.' });
+            return;
+        }
+        const projection = (0, analysisService_1.simulateImprovement)(analysis.score, analysis.priorityCounts.one, analysis.priorityCounts.two, analysis.priorityCounts.three);
+        res.json({
+            ...analysis,
+            projection,
+            date: analysis.date instanceof Date ? analysis.date.toISOString() : analysis.date,
         });
     }
     catch (err) {

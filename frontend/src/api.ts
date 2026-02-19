@@ -768,6 +768,10 @@ export function sendParentMessage(
   );
 }
 
+export function getParentMessageById(token: string, messageId: string) {
+  return apiRequest<Message>(`/parent/messages/${messageId}`, {}, token);
+}
+
 export function markParentMessageRead(token: string, messageId: string) {
   return apiRequest(`/parent/messages/${messageId}/read`, { method: 'PUT' }, token);
 }
@@ -778,6 +782,10 @@ export function markTeacherMessageRead(token: string, messageId: string) {
 
 export function getStudentMessageById(token: string, messageId: string) {
   return apiRequest<Message>(`/student/messages/${messageId}`, {}, token);
+}
+
+export function getAdminMessageById(token: string, messageId: string) {
+  return apiRequest<Message>(`/admin/messages/${messageId}`, {}, token);
 }
 
 export function getParentCalendar(token: string, startDate: string, endDate: string) {
@@ -1747,6 +1755,7 @@ export interface AttendanceRecord {
   studentName: string;
   date: string;
   present: boolean;
+  lessonNumber: number | null;
   notes: string | null;
   createdAt: string;
 }
@@ -1761,6 +1770,7 @@ export interface ParentAttendanceRecord {
   classGroupName: string;
   date: string;
   present: boolean;
+  lessonNumber: number | null;
   notes: string | null;
   createdAt: string;
 }
@@ -1895,12 +1905,13 @@ export function submitClassAttendance(
   classGroupId: string,
   date: string,
   attendance: Array<{ studentId: string; present: boolean; notes?: string }>,
+  lessonNumber?: number,
 ) {
   return apiRequest<{ success: boolean; saved: number; attendance: Array<{ studentId: string; present: boolean }> }>(
     '/teacher/attendance/submit',
     {
       method: 'POST',
-      body: JSON.stringify({ classGroupId, date, attendance }),
+      body: JSON.stringify({ classGroupId, date, attendance, lessonNumber }),
     },
     token,
   );

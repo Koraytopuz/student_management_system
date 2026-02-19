@@ -752,6 +752,45 @@ router.get(
   },
 );
 
+// Tekil mesaj detayı (bildirim modalında içerik göstermek için)
+router.get(
+  '/messages/:id',
+  authenticate('parent'),
+  async (req: AuthenticatedRequest, res: express.Response) => {
+    const userId = req.user!.id;
+    const messageId = String(req.params.id);
+
+    const message = await prisma.message.findUnique({ where: { id: messageId } });
+    if (!message) {
+      return res.status(404).json({ error: 'Mesaj bulunamadı' });
+    }
+    if (message.fromUserId !== userId && message.toUserId !== userId) {
+      return res.status(403).json({ error: 'Bu mesaja erişim yetkiniz yok' });
+    }
+
+    const users = await prisma.user.findMany({
+      where: { id: { in: [message.fromUserId, message.toUserId] } },
+      select: { id: true, name: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u.name]));
+
+    return res.json({
+      id: message.id,
+      fromUserId: message.fromUserId,
+      toUserId: message.toUserId,
+      studentId: message.studentId ?? undefined,
+      subject: message.subject ?? undefined,
+      text: message.text,
+      attachments: message.attachments ?? undefined,
+      read: message.read,
+      readAt: message.readAt?.toISOString(),
+      createdAt: message.createdAt.toISOString(),
+      fromUserName: userMap.get(message.fromUserId) ?? message.fromUserId,
+      toUserName: userMap.get(message.toUserId) ?? message.toUserId,
+    });
+  },
+);
+
 // Velinin iletişim kurabileceği öğretmen listesi (şikayet/öneri seçimi için de kullanılabilir)
 router.get(
   '/teachers',
@@ -1997,6 +2036,7 @@ router.get(
           classGroupName: r.classGroup.name,
           date: r.date.toISOString(),
           present: r.present,
+          lessonNumber: r.lessonNumber,
           notes: r.notes,
           createdAt: r.createdAt.toISOString(),
         })),

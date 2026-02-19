@@ -490,8 +490,11 @@ router.post('/exams/:id/results', async (req, res) => {
 // GET /api/student/assigned-exams/:studentId - Öğrencinin sınıfına atanmış sınavlar (sonuç girilmemiş)
 router.get('/student/assigned-exams/:studentId', async (req, res) => {
     try {
-        const { studentId } = req.params;
-        const sid = studentId;
+        const rawStudentId = req.params.studentId;
+        const sid = typeof rawStudentId === 'string' ? rawStudentId.trim() : '';
+        if (!sid || sid === 'undefined' || sid === 'null') {
+            return res.json([]);
+        }
         // Öğrencinin sınıf ID'lerini bul (ClassGroupStudent + User.classId)
         const inClassGroup = await db_1.prisma.classGroupStudent.findMany({
             where: { studentId: sid },
@@ -530,7 +533,7 @@ router.get('/student/assigned-exams/:studentId', async (req, res) => {
                     id: e.id,
                     name: e.name,
                     type: e.type,
-                    date: e.date,
+                    date: e.date instanceof Date ? e.date.toISOString() : e.date,
                     questionCount: e.questionCount,
                 });
             }
@@ -545,9 +548,13 @@ router.get('/student/assigned-exams/:studentId', async (req, res) => {
 // GET /api/student/exam-results/:studentId - Öğrencinin tüm sınav sonuçları
 router.get('/student/exam-results/:studentId', async (req, res) => {
     try {
-        const { studentId } = req.params;
+        const rawStudentId = req.params.studentId;
+        const studentId = typeof rawStudentId === 'string' ? rawStudentId.trim() : '';
+        if (!studentId || studentId === 'undefined' || studentId === 'null') {
+            return res.status(400).json({ error: 'Geçersiz öğrenci kimliği' });
+        }
         const results = await db_1.prisma.examResult.findMany({
-            where: { studentId: studentId },
+            where: { studentId },
             include: {
                 exam: {
                     select: {
@@ -564,7 +571,17 @@ router.get('/student/exam-results/:studentId', async (req, res) => {
                 }
             }
         });
-        res.json(results);
+        res.json(results.map((r) => ({
+            ...r,
+            exam: r.exam
+                ? {
+                    id: r.exam.id,
+                    name: r.exam.name,
+                    type: r.exam.type,
+                    date: r.exam.date instanceof Date ? r.exam.date.toISOString() : r.exam.date,
+                }
+                : undefined,
+        })));
     }
     catch (error) {
         console.error('Error fetching student exam results:', error);

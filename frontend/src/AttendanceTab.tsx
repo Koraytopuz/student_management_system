@@ -26,6 +26,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token, allowedGrad
   const [attendanceDate, setAttendanceDate] = useState<string>(
     new Date().toISOString().split('T')[0],
   );
+  const [lessonNumber, setLessonNumber] = useState<number | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +127,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token, allowedGrad
         notes: attendanceNotes[s.id]?.trim() || undefined,
       }));
 
-      await submitClassAttendance(token, selectedClassId, attendanceDate, attendanceList);
+      await submitClassAttendance(token, selectedClassId, attendanceDate, attendanceList, lessonNumber);
       setError(null);
       setSaveSuccessMessage('Yoklama başarıyla kaydedildi.');
       loadRecords();
@@ -216,37 +217,77 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token, allowedGrad
 
         {/* Tarih Seçimi */}
         {selectedClassId && (
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label
-              style={{
-                display: 'block',
-                marginBottom: '0.5rem',
-                fontSize: '0.9rem',
-                fontWeight: 500,
-                color: 'var(--color-text-main)',
-              }}
-            >
-              Yoklama Tarihi
-            </label>
-            <input
-              type="date"
-              value={attendanceDate}
-              onChange={(e) => setAttendanceDate(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '0.6rem 0.9rem',
-                borderRadius: 999,
-                border:
-                  '1px solid color-mix(in srgb, var(--accent-color) 48%, var(--ui-control-border))',
-                background:
-                  'radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent-color) 18%, transparent), transparent 55%), var(--glass-bg)',
-                color: 'var(--color-text-main)',
-                fontSize: '0.9rem',
-                boxShadow: '0 16px 42px rgba(15,23,42,0.18)',
-                backdropFilter: 'blur(18px)',
-              }}
-            />
-          </div>
+          <>
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label
+                style={{
+                  display: 'block',
+                  marginBottom: '0.5rem',
+                  fontSize: '0.9rem',
+                  fontWeight: 500,
+                  color: 'var(--color-text-main)',
+                }}
+              >
+                Yoklama Tarihi
+              </label>
+              <input
+                type="date"
+                value={attendanceDate}
+                onChange={(e) => setAttendanceDate(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.6rem 0.9rem',
+                  borderRadius: 999,
+                  border:
+                    '1px solid color-mix(in srgb, var(--accent-color) 48%, var(--ui-control-border))',
+                  background:
+                    'radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent-color) 18%, transparent), transparent 55%), var(--glass-bg)',
+                  color: 'var(--color-text-main)',
+                  fontSize: '0.9rem',
+                  boxShadow: '0 16px 42px rgba(15,23,42,0.18)',
+                  backdropFilter: 'blur(18px)',
+                }}
+              />
+            </div>
+            {/* Ders Seçimi */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label
+                style={{
+                  display: 'block',
+                  marginBottom: '0.5rem',
+                  fontSize: '0.9rem',
+                  fontWeight: 500,
+                  color: 'var(--color-text-main)',
+                }}
+              >
+                Ders
+              </label>
+              <select
+                value={lessonNumber ?? ''}
+                onChange={(e) => setLessonNumber(e.target.value ? Number(e.target.value) : undefined)}
+                style={{
+                  width: '100%',
+                  padding: '0.6rem 0.9rem',
+                  borderRadius: 999,
+                  border:
+                    '1px solid color-mix(in srgb, var(--accent-color) 48%, var(--ui-control-border))',
+                  background:
+                    'radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent-color) 18%, transparent), transparent 55%), var(--glass-bg)',
+                  color: 'var(--color-text-main)',
+                  fontSize: '0.9rem',
+                  boxShadow: '0 16px 42px rgba(15,23,42,0.18)',
+                  backdropFilter: 'blur(18px)',
+                }}
+              >
+                <option value="">Ders seçin...</option>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
+                  <option key={num} value={num}>
+                    {num}. Ders
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
         )}
 
         {/* Öğrenci Listesi */}
@@ -437,6 +478,7 @@ export const AttendanceTab: React.FC<AttendanceTabProps> = ({ token, allowedGrad
                     <div style={{ fontWeight: 500, fontSize: '0.95rem' }}>{record.studentName}</div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
                       {new Date(record.date).toLocaleDateString('tr-TR')} · {record.classGroupName}
+                      {record.lessonNumber && ` · ${record.lessonNumber}. Ders`}
                     </div>
                     {record.notes && (
                       <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.25rem', fontStyle: 'italic' }}>

@@ -1083,10 +1083,11 @@ router.post(
   authenticate('teacher'),
   async (req: AuthenticatedRequest, res: express.Response) => {
     const teacherId = req.user!.id;
-    const { classGroupId, date, attendance } = req.body as {
+    const { classGroupId, date, attendance, lessonNumber } = req.body as {
       classGroupId?: string;
       date?: string;
       attendance?: Array<{ studentId: string; present: boolean; notes?: string }>;
+      lessonNumber?: number;
     };
 
     if (!classGroupId || !date) {
@@ -1112,6 +1113,7 @@ router.post(
         where: { id: classGroupId },
         include: {
           students: { select: { studentId: true } },
+          teacher: { select: { institutionName: true } },
         },
       });
 
@@ -1148,10 +1150,12 @@ router.post(
             studentId,
             date: attendanceDate,
             present,
+            lessonNumber: lessonNumber && lessonNumber >= 1 && lessonNumber <= 8 ? lessonNumber : null,
             notes: notes?.trim() || null,
           },
           update: {
             present,
+            lessonNumber: lessonNumber && lessonNumber >= 1 && lessonNumber <= 8 ? lessonNumber : null,
             notes: notes?.trim() || null,
           },
         });
@@ -1173,16 +1177,48 @@ router.post(
 
             if (parentLinks.length > 0) {
               const dateLabel = attendanceDate.toLocaleDateString('tr-TR');
+              const lessonText = lessonNumber && lessonNumber >= 1 && lessonNumber <= 8 ? ` ${lessonNumber}. derse` : '';
               await prisma.notification.createMany({
                 data: parentLinks.map((ps) => ({
                   userId: ps.parentId,
                   type: 'live_class_attendance',
                   title: 'Devamsızlık Bildirimi',
-                  body: `${student?.name || 'Öğrenci'} ${dateLabel} tarihinde ${classGroup.name} sınıfına gelmedi.`,
+                  body: `${student?.name || 'Öğrenci'} ${dateLabel} tarihinde ${classGroup.name} sınıfına${lessonText} gelmedi.`,
                   relatedEntityType: 'attendance',
-                  relatedEntityId: JSON.stringify({ classGroupId, studentId, date: attendanceDate.toISOString() }),
+                  relatedEntityId: JSON.stringify({ classGroupId, studentId, date: attendanceDate.toISOString(), lessonNumber }),
                 })),
               });
+            }
+
+            // Admin'e bildirim gönder (kurum admin'i varsa)
+            if ((classGroup.teacher as any)?.institutionName) {
+              try {
+                const institutionName = (classGroup.teacher as any).institutionName;
+                const adminUsers = await prisma.user.findMany({
+                  where: {
+                    role: 'admin',
+                    institutionName,
+                  },
+                  select: { id: true },
+                });
+
+                if (adminUsers.length > 0) {
+                  const dateLabel = attendanceDate.toLocaleDateString('tr-TR');
+                  const lessonText = lessonNumber && lessonNumber >= 1 && lessonNumber <= 8 ? ` ${lessonNumber}. derse` : '';
+                  await prisma.notification.createMany({
+                    data: adminUsers.map((admin) => ({
+                      userId: admin.id,
+                      type: 'live_class_attendance',
+                      title: 'Devamsızlık Bildirimi',
+                      body: `${student?.name || 'Öğrenci'} ${dateLabel} tarihinde ${classGroup.name} sınıfına${lessonText} gelmedi.`,
+                      relatedEntityType: 'attendance',
+                      relatedEntityId: JSON.stringify({ classGroupId, studentId, date: attendanceDate.toISOString(), lessonNumber }),
+                    })),
+                  });
+                }
+              } catch (adminNotifErr) {
+                console.error('[attendance] Admin bildirim gönderimi hatası:', adminNotifErr);
+              }
             }
           } catch (notifErr) {
             console.error('[attendance] Bildirim gönderimi hatası:', notifErr);
@@ -1276,6 +1312,7 @@ router.get(
           studentName: r.student.name,
           date: r.date.toISOString(),
           present: r.present,
+          lessonNumber: r.lessonNumber,
           notes: r.notes,
           createdAt: r.createdAt.toISOString(),
         })),

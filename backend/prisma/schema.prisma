@@ -632,6 +632,7 @@ model ClassAttendance {
   studentId    String   @map("student_id")
   date         DateTime // Yoklama tarihi
   present      Boolean  @default(true) // Geldi/Gelmedi
+  lessonNumber Int?     @map("lesson_number") // Kaçıncı ders (1-8)
   notes        String? // İsteğe bağlı not
   createdAt    DateTime @default(now()) @map("created_at")
 

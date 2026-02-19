@@ -12,7 +12,7 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
-import { apiRequest, getAdminNotifications, markAdminNotificationRead, type AdminNotification, getSubjectsList, uploadAdminStudentImage, resolveContentUrl } from './api';
+import { apiRequest, getAdminNotifications, getAdminMessageById, markAdminNotificationRead, type AdminNotification, getSubjectsList, uploadAdminStudentImage, resolveContentUrl, type Message } from './api';
 import { useAuth } from './AuthContext';
 import {
   DashboardLayout,
@@ -363,6 +363,9 @@ export const AdminDashboard: React.FC = () => {
   const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null);
   const activeNotification =
     adminNotifications.find((n) => n.id === activeNotificationId) ?? null;
+  const [activeNotificationMessage, setActiveNotificationMessage] = useState<Message | null>(null);
+  const [activeNotificationMessageLoading, setActiveNotificationMessageLoading] = useState(false);
+  const [activeNotificationMessageError, setActiveNotificationMessageError] = useState<string | null>(null);
   const [activeComplaintId, setActiveComplaintId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -372,6 +375,46 @@ export const AdminDashboard: React.FC = () => {
       setSearchParams({}, { replace: true });
     }
   }, [searchParams, setSearchParams]);
+
+  // Bildirim detayında mesaj içeriğini yükle
+  useEffect(() => {
+    let cancelled = false;
+    const shouldLoad =
+      notificationDetailOpen &&
+      !!token &&
+      !!activeNotification &&
+      activeNotification.relatedEntityType === 'message' &&
+      !!activeNotification.relatedEntityId;
+
+    if (!shouldLoad) {
+      setActiveNotificationMessage(null);
+      setActiveNotificationMessageLoading(false);
+      setActiveNotificationMessageError(null);
+      return;
+    }
+
+    setActiveNotificationMessage(null);
+    setActiveNotificationMessageLoading(true);
+    setActiveNotificationMessageError(null);
+
+    getAdminMessageById(token!, activeNotification!.relatedEntityId!)
+      .then((msg) => {
+        if (cancelled) return;
+        setActiveNotificationMessage(msg);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setActiveNotificationMessageError(e instanceof Error ? e.message : 'Mesaj içeriği yüklenemedi.');
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setActiveNotificationMessageLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [notificationDetailOpen, token, activeNotification?.id, activeNotification?.relatedEntityType, activeNotification?.relatedEntityId]);
 
   const handleEditTeacher = (teacher: Teacher) => {
     setEditingTeacherId(teacher.id);
@@ -1128,6 +1171,40 @@ export const AdminDashboard: React.FC = () => {
             : null
         }
         onClose={() => setNotificationDetailOpen(false)}
+        details={
+          activeNotification?.relatedEntityType === 'message' && activeNotification.relatedEntityId ? (
+            <div
+              style={{
+                padding: '0.85rem 0.9rem',
+                borderRadius: 14,
+                border: '1px solid var(--color-border-subtle)',
+                background: 'var(--color-surface)',
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: '0.5rem' }}>Mesaj İçeriği</div>
+              {activeNotificationMessageLoading ? (
+                <div style={{ color: 'var(--color-text-muted)' }}>Yükleniyor…</div>
+              ) : activeNotificationMessageError ? (
+                <div style={{ color: '#ef4444' }}>{activeNotificationMessageError}</div>
+              ) : activeNotificationMessage ? (
+                <div style={{ display: 'grid', gap: '0.35rem' }}>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                    {activeNotificationMessage.fromUserName ?? activeNotificationMessage.fromUserId} →{' '}
+                    {activeNotificationMessage.toUserName ?? activeNotificationMessage.toUserId}
+                  </div>
+                  {activeNotificationMessage.subject ? (
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>
+                      Konu: {activeNotificationMessage.subject}
+                    </div>
+                  ) : null}
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{activeNotificationMessage.text}</div>
+                </div>
+              ) : (
+                <div style={{ color: 'var(--color-text-muted)' }}>Mesaj bulunamadı.</div>
+              )}
+            </div>
+          ) : null
+        }
         actions={
           activeNotification && !activeNotification.read && token ? (
             <button

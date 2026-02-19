@@ -23,6 +23,8 @@ export interface ExamAnalysis {
         two: number;
         three: number;
     };
+    /** Konu bazlı (TopicAnalysis) veri var mı; false ise yalnızca ders özeti kullanıldı */
+    hasDetailedAnalysis: boolean;
 }
 export interface BranchNetLessonStats {
     lessonName: string;

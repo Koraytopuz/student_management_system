@@ -75,6 +75,7 @@ function inferTopicGroup(lessonName, topicName) {
  * hesaplar ve döner.
  */
 async function getExamAnalysisForStudent(studentId, examId) {
+    var _a, _b, _c, _d, _e;
     const sid = typeof studentId === 'number' ? String(studentId) : studentId;
     const examResult = await db_1.prisma.examResult.findFirst({
         where: { studentId: sid, examId },
@@ -96,9 +97,11 @@ async function getExamAnalysisForStudent(studentId, examId) {
         return null;
     }
     const topicPriorities = [];
+    let hadTopicAnalyses = false;
     // Önce tüm konuları toplayalım; başarı oranı ve hata oranını hesaplayalım.
     for (const detail of examResult.details) {
         for (const ta of detail.topicAnalyses) {
+            hadTopicAnalyses = true;
             const totalQ = ta.totalQuestion || 0;
             const successRatio = calculateTopicSuccessRatio(ta.correct, totalQ);
             const errorRatio = totalQ > 0 ? ((ta.wrong + ta.empty) / totalQ) * 100 : 0;
@@ -111,7 +114,26 @@ async function getExamAnalysisForStudent(studentId, examId) {
                 wrong: ta.wrong,
                 empty: ta.empty,
                 net,
-                // Şimdilik geçici – birazdan gerçek öncelik seviyesini hata oranına göre atayacağız
+                priorityLevel: getPriorityLevelFromRatio(successRatio),
+            });
+            topicPriorities[topicPriorities.length - 1].errorRatio = errorRatio;
+        }
+    }
+    // Konu analizi yoksa ama ders detayı varsa: ders bazlı özeti konu gibi kullan (gerçek veri)
+    if (topicPriorities.length === 0 && ((_a = examResult.details) === null || _a === void 0 ? void 0 : _a.length) > 0) {
+        for (const detail of examResult.details) {
+            const totalQ = detail.correct + detail.wrong + detail.empty;
+            const successRatio = calculateTopicSuccessRatio(detail.correct, totalQ);
+            const errorRatio = totalQ > 0 ? ((detail.wrong + detail.empty) / totalQ) * 100 : 0;
+            const lessonName = (_d = (_c = (_b = detail.lesson) === null || _b === void 0 ? void 0 : _b.name) !== null && _c !== void 0 ? _c : detail.lessonName) !== null && _d !== void 0 ? _d : 'Genel';
+            topicPriorities.push({
+                lessonName,
+                topicName: lessonName,
+                totalQuestion: totalQ,
+                correct: detail.correct,
+                wrong: detail.wrong,
+                empty: detail.empty,
+                net: (_e = detail.net) !== null && _e !== void 0 ? _e : Math.max(0, detail.correct - detail.wrong * 0.25),
                 priorityLevel: getPriorityLevelFromRatio(successRatio),
             });
             topicPriorities[topicPriorities.length - 1].errorRatio = errorRatio;
@@ -160,6 +182,7 @@ async function getExamAnalysisForStudent(studentId, examId) {
             two: twoCount,
             three: threeCount,
         },
+        hasDetailedAnalysis: hadTopicAnalyses,
     };
 }
 /**
