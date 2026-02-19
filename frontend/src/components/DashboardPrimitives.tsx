@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, LogOut, Menu } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, LogOut, Menu, X } from 'lucide-react';
 import { useDashboardSidebar } from '../DashboardSidebarContext';
 
 export type BreadcrumbItem = {
@@ -233,6 +233,17 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               )}
             </h1>
           </div>
+          {/* Mobil: Menüyü kapat (overlay kapatma) */}
+          {isMobile && (
+            <button
+              type="button"
+              className="sidebar-close-btn"
+              onClick={closeSidebar}
+              aria-label="Menüyü kapat"
+            >
+              <X size={22} strokeWidth={2} />
+            </button>
+          )}
           {/* Desktop: Toggle collapsed/expanded */}
           {!isMobile && (
             <button

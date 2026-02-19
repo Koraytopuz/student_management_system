@@ -43,15 +43,19 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchExamResults();
-    fetchAssignedExams();
-  }, [token, user.id]);
+    const uid = user?.id;
+    if (!token || !uid || String(uid).trim() === '') {
+      setLoading(false);
+      return;
+    }
+    fetchExamResults(uid);
+    fetchAssignedExams(uid);
+  }, [token, user?.id]);
 
-  const fetchAssignedExams = async () => {
+  const fetchAssignedExams = async (studentId: string) => {
     try {
       const response = await fetch(
-        // Backend route: /api/student/assigned-exams/:studentId (examRoutes)
-        `${API_BASE}/api/student/assigned-exams/${user.id}`,
+        `${API_BASE}/api/student/assigned-exams/${encodeURIComponent(studentId)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.ok) {
@@ -60,6 +64,7 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
         setAssignedExams(list);
       } else {
         console.error('Failed to fetch assigned exams:', response.status, response.statusText);
+        setAssignedExams([]);
       }
     } catch (error) {
       console.error('Error fetching assigned exams:', error);
@@ -67,18 +72,21 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
     }
   };
 
-  const fetchExamResults = async () => {
+  const fetchExamResults = async (studentId: string) => {
     try {
       const response = await fetch(
-        `${API_BASE}/api/student/exam-results/${user.id}`,
+        `${API_BASE}/api/student/exam-results/${encodeURIComponent(studentId)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.ok) {
         const data = await response.json();
-        setExamResults(data);
+        setExamResults(Array.isArray(data) ? data : []);
+      } else {
+        setExamResults([]);
       }
     } catch (error) {
       console.error('Error fetching exam results:', error);
+      setExamResults([]);
     } finally {
       setLoading(false);
     }
@@ -142,10 +150,13 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {examResults.map((result) => (
+          {examResults.map((result) => {
+            const examId = result.exam?.id;
+            const validExamId = examId != null && !isNaN(Number(examId)) && Number(examId) > 0;
+            return (
             <div
               key={result.id}
-              onClick={() => navigate(`/student/analysis/${result.exam.id}`)}
+              onClick={() => validExamId && navigate(`/student/analysis/${examId}`)}
               className="cursor-pointer hover:border-blue-500/50 transition-colors"
             >
               <GlassCard>
@@ -191,7 +202,8 @@ export const StudentExamList: React.FC<StudentExamListProps> = ({ token, user, o
                 </div>
               </GlassCard>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       </div>

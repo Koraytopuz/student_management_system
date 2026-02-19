@@ -240,11 +240,6 @@ export const StudentDashboard: React.FC = () => {
         value: `${summary?.pendingAssignmentsCount ?? 0}`,
         helper: 'Aktif görevler',
       },
-      {
-        label: 'İzlenen İçerik',
-        value: `${summary?.lastWatchedContents?.length ?? 0}`,
-        helper: 'Son içerikler',
-      },
     ];
   }, [dashboardState.data, assignments.length]);
 
@@ -1027,30 +1022,48 @@ export const StudentDashboard: React.FC = () => {
                   <span>Henüz öğretmenin tarafından atanmış bir program bulunmuyor.</span>
                 </div>
               ) : (
-                <div className="student-schedule-premium-hint student-schedule-teacher-programs">
-                  <div className="student-schedule-teacher-programs-list">
-                    {(['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'] as const).map((dayName, dayIndex) => {
-                      const dayEntries = teacherScheduleEntries
-                        .filter((e) => e.dayOfWeek === dayIndex)
-                        .sort((a, b) => a.hour - b.hour);
-                      if (dayEntries.length === 0) return null;
-                      return (
-                        <div key={dayName} style={{ marginBottom: '0.75rem' }}>
-                          <span className="student-schedule-teacher-label" style={{ display: 'block', marginBottom: '0.25rem' }}>
-                            {dayName}
-                          </span>
-                          {dayEntries.map((e) => (
-                            <div key={e.id} className="student-schedule-teacher-program-item">
-                              <div className="student-schedule-teacher-title">
-                                {e.hour}:00 – {e.subjectName}
-                                {e.topic ? ` · ${e.topic}` : ''}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
+                <div className="student-schedule-teacher-table-wrapper">
+                  <table className="student-schedule-teacher-table">
+                    <thead>
+                      <tr>
+                        <th className="student-schedule-teacher-table-hour-col">Saat</th>
+                        {['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'].map((dayName) => (
+                          <th key={dayName} className="student-schedule-teacher-table-day-col">{dayName}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const hours = [...new Set(teacherScheduleEntries.map((e) => e.hour))].sort((a, b) => a - b);
+                        const getEntries = (hour: number, dayIndex: number) =>
+                          teacherScheduleEntries.filter((e) => e.hour === hour && e.dayOfWeek === dayIndex);
+                        return hours.map((hour) => (
+                          <tr key={hour}>
+                            <td className="student-schedule-teacher-table-hour-col">{hour}:00</td>
+                            {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
+                              const entries = getEntries(hour, dayIndex);
+                              return (
+                                <td key={dayIndex} className="student-schedule-teacher-table-cell">
+                                  {entries.length === 0 ? (
+                                    <span className="student-schedule-teacher-table-empty">—</span>
+                                  ) : (
+                                    <div className="student-schedule-teacher-table-cell-entries">
+                                      {entries.map((e) => (
+                                        <div key={e.id} className="student-schedule-teacher-table-entry">
+                                          {e.subjectName}
+                                          {e.topic ? ` · ${e.topic}` : ''}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

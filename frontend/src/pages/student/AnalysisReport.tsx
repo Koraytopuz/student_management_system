@@ -49,22 +49,25 @@ export const AnalysisReportPage: React.FC = () => {
   const [downloading, setDownloading] = useState(false);
   const [accordionOpen, setAccordionOpen] = useState<string | null>('ONE');
 
-  const studentId = user?.id;
-  const examIdNum = examId ? parseInt(examId, 10) : NaN;
+  const studentId = user?.id != null ? String(user.id).trim() : '';
+  const examIdNum = examId != null && examId !== '' ? parseInt(examId, 10) : NaN;
+  const validParams = Boolean(token && studentId && !isNaN(examIdNum) && examIdNum > 0);
 
   useEffect(() => {
-    if (!token || !studentId || isNaN(examIdNum)) {
+    if (!validParams) {
       setLoading(false);
       if (!user) setError('Oturum açmanız gerekiyor.');
-      else if (!examId || isNaN(examIdNum)) setError('Geçerli bir sınav numarası gerekli.');
+      else if (!examId || examId === 'undefined' || examId === 'null' || isNaN(examIdNum) || examIdNum <= 0)
+        setError('Geçerli bir sınav numarası gerekli. Panele dönüp sınav kartına tıklayarak tekrar deneyin.');
+      else if (!studentId) setError('Öğrenci bilgisi yüklenemedi. Çıkış yapıp tekrar giriş yapın.');
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError(null);
     Promise.all([
-      getExamAnalysis(token, studentId, examIdNum),
-      getAnalysisProgress(token, studentId, 5),
+      getExamAnalysis(token!, studentId, examIdNum),
+      getAnalysisProgress(token!, studentId, 5),
     ])
       .then(([analysisRes, progressRes]) => {
         if (!cancelled) {
@@ -73,16 +76,23 @@ export const AnalysisReportPage: React.FC = () => {
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Veri yüklenemedi');
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : 'Veri yüklenemedi';
+          const friendly =
+            msg.includes('studentId') || msg.includes('examId')
+              ? 'Bu sınav için analiz bulunamadı veya bağlantı geçersiz. Panele dönüp tekrar deneyin.'
+              : msg;
+          setError(friendly);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [token, studentId, examIdNum]);
+  }, [token, studentId, examIdNum, validParams, user, examId]);
 
   const handleDownloadPdf = async () => {
-    if (!token || !studentId || isNaN(examIdNum)) return;
+    if (!token || !studentId || isNaN(examIdNum) || examIdNum <= 0) return;
     setDownloading(true);
     try {
       await downloadAnalysisPdf(token, studentId, examIdNum);
@@ -159,8 +169,15 @@ export const AnalysisReportPage: React.FC = () => {
     year: 'numeric',
   });
 
+  const hasNoDetailedData =
+    data.topicPriorities.length === 0 ||
+    (data.hasDetailedAnalysis === false && data.priorityCounts.one + data.priorityCounts.two + data.priorityCounts.three === 0);
+  const totalPriorityCount = data.priorityCounts.one + data.priorityCounts.two + data.priorityCounts.three;
+  const showPercentile = !hasNoDetailedData || data.percentile > 0;
+  const showPriorityCount = !hasNoDetailedData || totalPriorityCount > 0;
+
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="analysis-report-page p-6 max-w-6xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <Breadcrumb
@@ -169,56 +186,68 @@ export const AnalysisReportPage: React.FC = () => {
               { label: `${data.examName} – Analiz` },
             ]}
           />
-          <h1 className="text-xl font-semibold mt-2">{data.examName}</h1>
-          <p className="text-sm text-slate-400 mt-1">{formattedDate} · {data.examType}</p>
+          <h1 className="analysis-report-title">{data.examName}</h1>
+          <p className="analysis-report-subtitle">{formattedDate} · {data.examType}</p>
         </div>
         <button
           type="button"
           onClick={handleDownloadPdf}
           disabled={downloading}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white font-medium hover:opacity-90 disabled:opacity-60 transition"
+          className="analysis-report-pdf-btn"
         >
-          <Download size={18} />
+          <Download size={20} strokeWidth={2.25} />
           {downloading ? 'İndiriliyor…' : 'PDF Raporu İndir'}
         </button>
       </div>
 
+      {hasNoDetailedData && (
+        <div className="glass-card p-4 mb-6 border-l-4 border-amber-500/80 bg-amber-500/5">
+          <p className="text-sm text-[var(--color-text-main)]">
+            Bu sınav için ders ve konu bazlı detay analizi henüz oluşturulmamış. Aşağıda yalnızca sınav özeti (puan, net) gösterilmektedir. Detaylı analiz için sınavın cevap anahtarı girilmiş olmalı ve sonuç otomatik hesaplanmış olmalıdır.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="glass-card p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Puan</p>
-          <p className="text-2xl font-bold mt-1">{data.score.toFixed(1)}</p>
-          {data.projection && (
-            <p className="text-xs text-emerald-400 mt-1">
+          <p className="analysis-report-label">Puan</p>
+          <p className="analysis-report-value">{data.score.toFixed(1)}</p>
+          {data.projection && totalPriorityCount > 0 && (
+            <p className="analysis-report-hint">
               Tahmini hedef: {data.projection.projectedScore.toFixed(1)}
             </p>
           )}
         </div>
         <div className="glass-card p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Yüzdelik Dilim</p>
-          <p className="text-2xl font-bold mt-1">% {data.percentile.toFixed(2)}</p>
+          <p className="analysis-report-label">Yüzdelik Dilim</p>
+          <p className="analysis-report-value">
+            {showPercentile ? `% ${data.percentile.toFixed(2)}` : '—'}
+          </p>
         </div>
         <div className="glass-card p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Çalışılması Gereken Konu Sayısı</p>
-          <p className="text-2xl font-bold mt-1">
-            {data.priorityCounts.one + data.priorityCounts.two + data.priorityCounts.three}
+          <p className="analysis-report-label">Çalışılması Gereken Konu Sayısı</p>
+          <p className="analysis-report-value">
+            {showPriorityCount ? totalPriorityCount : '—'}
           </p>
-          <div className="flex flex-wrap gap-2 mt-2 text-xs">
-            <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-400">
-              1. Öncelik: {data.priorityCounts.one}
-            </span>
-            <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">
-              2. Öncelik: {data.priorityCounts.two}
-            </span>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
-              3. Öncelik: {data.priorityCounts.three}
-            </span>
-          </div>
+          {(showPriorityCount && totalPriorityCount > 0) && (
+            <div className="flex flex-wrap gap-2 mt-2 text-xs">
+              <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-400">
+                1. Öncelik: {data.priorityCounts.one}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">
+                2. Öncelik: {data.priorityCounts.two}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
+                3. Öncelik: {data.priorityCounts.three}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="glass-card p-4">
-          <h2 className="text-sm font-semibold text-slate-300 mb-4">Ders Bazlı Netler</h2>
+          <h2 className="analysis-report-section-title">Ders Bazlı Netler</h2>
           {lessonNetData.length > 0 ? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -242,14 +271,14 @@ export const AnalysisReportPage: React.FC = () => {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-64 flex items-center justify-center text-slate-400 text-sm">
-              Ders bazlı veri yok
+            <div className="h-64 flex items-center justify-center analysis-report-empty text-center px-4">
+              {hasNoDetailedData ? 'Bu sınav için ders bazlı analiz verisi bulunmuyor.' : 'Ders bazlı veri yok'}
             </div>
           )}
         </div>
 
         <div className="glass-card p-4">
-          <h2 className="text-sm font-semibold text-slate-300 mb-4">Öncelik Dağılımı</h2>
+          <h2 className="analysis-report-section-title">Öncelik Dağılımı</h2>
           {pieData.length > 0 ? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -279,14 +308,14 @@ export const AnalysisReportPage: React.FC = () => {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-64 flex items-center justify-center text-slate-400 text-sm">
-              Konu analizi yok
+            <div className="h-64 flex items-center justify-center analysis-report-empty text-center px-4">
+              {hasNoDetailedData ? 'Bu sınav için konu bazlı analiz verisi bulunmuyor.' : 'Konu analizi yok'}
             </div>
           )}
         </div>
 
         <div className="glass-card p-4">
-          <h2 className="text-sm font-semibold text-slate-300 mb-4">Gelişim Grafiği (Son 5 Sınav)</h2>
+          <h2 className="analysis-report-section-title">Gelişim Grafiği (Son 5 Sınav)</h2>
           {progress && progress.exams.length > 0 ? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -307,15 +336,15 @@ export const AnalysisReportPage: React.FC = () => {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-64 flex items-center justify-center text-slate-400 text-sm">
-              Henüz yeterli sınav verisi yok
+            <div className="h-64 flex items-center justify-center analysis-report-empty text-center px-4">
+              Henüz yeterli sınav verisi yok. Gelişim grafiği için birden fazla sınav sonucu gereklidir.
             </div>
           )}
         </div>
       </div>
 
       <div className="glass-card p-4 mt-6">
-        <h2 className="text-sm font-semibold text-slate-300 mb-4">Öncelikli Konular (Accordion)</h2>
+        <h2 className="analysis-report-section-title">Öncelikli Konular (Accordion)</h2>
         {data.topicPriorities.length > 0 ? (
           <div className="space-y-2">
             {(['ONE', 'TWO', 'THREE'] as const).map((level) => {
@@ -385,7 +414,7 @@ export const AnalysisReportPage: React.FC = () => {
             })}
           </div>
         ) : (
-          <p className="text-slate-400 text-sm">Henüz konu analizi bulunmuyor.</p>
+          <p className="analysis-report-empty">{hasNoDetailedData ? 'Bu sınav için konu bazlı analiz verisi bulunmuyor.' : 'Henüz konu analizi bulunmuyor.'}</p>
         )}
       </div>
     </div>

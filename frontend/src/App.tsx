@@ -1,5 +1,5 @@
-import React from 'react';
-import { Award, Bell, BookOpen, ChevronRight, Moon, Sun } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Award, BarChart3, Bell, BookOpen, ChevronRight, FileSearch, FileText, Moon, Sun } from 'lucide-react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { LoginPage } from './LoginPage';
@@ -16,7 +16,9 @@ import { AnalysisReportPage } from './pages/student/AnalysisReport';
 import { ParentChildHomeworksPage } from './pages/parent/ChildHomeworks';
 import { DashboardSidebarProvider, useDashboardSidebar } from './DashboardSidebarContext';
 import { ReadingModeProvider, useReadingMode } from './ReadingModeContext';
-import { getParentUnreadNotificationCount, getTeacherUnreadNotificationCount, getStudentUnreadNotificationCount, getAdminNotifications } from './api';
+import { getParentUnreadNotificationCount, getTeacherUnreadNotificationCount, getStudentUnreadNotificationCount, getAdminNotifications, resolveContentUrl } from './api';
+import { DashboardLayout } from './components/DashboardPrimitives';
+import type { SidebarItem } from './components/DashboardPrimitives';
 
 const ProtectedRoute: React.FC<{
   children: React.ReactElement;
@@ -30,6 +32,147 @@ const ProtectedRoute: React.FC<{
     return <Navigate to="/login" replace />;
   }
   return children;
+};
+
+/** Sınav analizi sayfasını sidebar ile sarar; topbar menü butonu bu sayfada da çalışır */
+const StudentAnalysisLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const sidebarItems = useMemo<SidebarItem[]>(
+    () => [
+      {
+        id: 'panel',
+        label: 'Öğrenci Paneli',
+        icon: <BookOpen size={18} />,
+        active: false,
+        onClick: () => navigate('/student'),
+      },
+      {
+        id: 'analysis',
+        label: 'Sınav Analizi',
+        icon: <FileText size={18} />,
+        active: true,
+      },
+    ],
+    [navigate],
+  );
+  return (
+    <DashboardLayout
+      accent="indigo"
+      brand={user?.institutionName ?? 'SKYANALİZ'}
+      tagline={user?.name ?? 'Öğrenci'}
+      title="Sınav Analizi"
+      subtitle="Sınav sonuç raporu"
+      breadcrumbs={[
+        { label: 'Öğrenci Paneli', onClick: () => navigate('/student') },
+        { label: 'Sınav Analizi' },
+      ]}
+      sidebarItems={sidebarItems}
+      user={{
+        initials: user?.name?.slice(0, 2).toUpperCase() ?? 'ÖG',
+        name: user?.name ?? 'Öğrenci',
+        subtitle: 'Öğrenci',
+        profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
+      }}
+      onLogout={logout}
+    >
+      {children}
+    </DashboardLayout>
+  );
+};
+
+/** Admin raporlar sayfasını sidebar ile sarar; topbar menü butonu çalışır */
+const AdminReportsLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const sidebarItems = useMemo<SidebarItem[]>(
+    () => [
+      {
+        id: 'admin',
+        label: 'Admin Paneli',
+        icon: <BookOpen size={18} />,
+        active: false,
+        onClick: () => navigate('/admin'),
+      },
+      {
+        id: 'reports',
+        label: 'Raporlar',
+        icon: <BarChart3 size={18} />,
+        active: true,
+      },
+    ],
+    [navigate],
+  );
+  return (
+    <DashboardLayout
+      accent="slate"
+      brand={user?.institutionName ?? 'SKYANALİZ'}
+      tagline={user?.name ?? 'Admin'}
+      title="Yıllık Gelişim Raporları"
+      subtitle="Öğrenci performans raporları"
+      breadcrumbs={[
+        { label: 'Admin Paneli', onClick: () => navigate('/admin') },
+        { label: 'Raporlar' },
+      ]}
+      sidebarItems={sidebarItems}
+      user={{
+        initials: user?.name?.slice(0, 2).toUpperCase() ?? 'AD',
+        name: user?.name ?? 'Admin',
+        subtitle: 'Yönetici',
+        profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
+      }}
+      onLogout={logout}
+    >
+      {children}
+    </DashboardLayout>
+  );
+};
+
+/** Admin soru çözümleyici sayfasını sidebar ile sarar; topbar menü butonu çalışır */
+const AdminQuestionParserLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const sidebarItems = useMemo<SidebarItem[]>(
+    () => [
+      {
+        id: 'admin',
+        label: 'Admin Paneli',
+        icon: <BookOpen size={18} />,
+        active: false,
+        onClick: () => navigate('/admin'),
+      },
+      {
+        id: 'parser',
+        label: 'AI PDF Ayrıştırıcı',
+        icon: <FileSearch size={18} />,
+        active: true,
+      },
+    ],
+    [navigate],
+  );
+  return (
+    <DashboardLayout
+      accent="slate"
+      brand={user?.institutionName ?? 'SKYANALİZ'}
+      tagline={user?.name ?? 'Admin'}
+      title="AI PDF Ayrıştırıcı"
+      subtitle="PDF'den soru çıkarımı"
+      breadcrumbs={[
+        { label: 'Admin Paneli', onClick: () => navigate('/admin') },
+        { label: 'Soru Çözümleyici' },
+      ]}
+      sidebarItems={sidebarItems}
+      user={{
+        initials: user?.name?.slice(0, 2).toUpperCase() ?? 'AD',
+        name: user?.name ?? 'Admin',
+        subtitle: 'Yönetici',
+        profilePictureUrl: resolveContentUrl(user?.profilePictureUrl),
+      }}
+      onLogout={logout}
+    >
+      {children}
+    </DashboardLayout>
+  );
 };
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -355,7 +498,9 @@ const AppRoutes: React.FC = () => {
         element={
           <Layout>
             <ProtectedRoute requiredRole="student">
-              <AnalysisReportPage />
+              <StudentAnalysisLayout>
+                <AnalysisReportPage />
+              </StudentAnalysisLayout>
             </ProtectedRoute>
           </Layout>
         }
@@ -405,7 +550,9 @@ const AppRoutes: React.FC = () => {
         element={
           <Layout>
             <ProtectedRoute requiredRole="admin">
-              <AdminReports />
+              <AdminReportsLayout>
+                <AdminReports />
+              </AdminReportsLayout>
             </ProtectedRoute>
           </Layout>
         }
@@ -415,7 +562,9 @@ const AppRoutes: React.FC = () => {
         element={
           <Layout>
             <ProtectedRoute requiredRole="admin">
-              <QuestionParserPage />
+              <AdminQuestionParserLayout>
+                <QuestionParserPage />
+              </AdminQuestionParserLayout>
             </ProtectedRoute>
           </Layout>
         }

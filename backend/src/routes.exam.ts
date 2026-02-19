@@ -541,8 +541,11 @@ router.post('/exams/:id/results', async (req: Request, res: Response) => {
 // GET /api/student/assigned-exams/:studentId - Öğrencinin sınıfına atanmış sınavlar (sonuç girilmemiş)
 router.get('/student/assigned-exams/:studentId', async (req: Request, res: Response) => {
     try {
-        const { studentId } = req.params;
-        const sid = studentId as string;
+        const rawStudentId = req.params.studentId;
+        const sid = typeof rawStudentId === 'string' ? rawStudentId.trim() : '';
+        if (!sid || sid === 'undefined' || sid === 'null') {
+            return res.json([]);
+        }
 
         // Öğrencinin sınıf ID'lerini bul (ClassGroupStudent + User.classId)
         const inClassGroup = await prisma.classGroupStudent.findMany({
@@ -575,7 +578,7 @@ router.get('/student/assigned-exams/:studentId', async (req: Request, res: Respo
         });
 
         // Sonuç girilmiş sınavları filtrele - sadece henüz sonuç girilmemiş olanları döndür
-        const result: { id: number; name: string; type: string; date: Date; questionCount: number }[] = [];
+        const result: { id: number; name: string; type: string; date: string; questionCount: number }[] = [];
         for (const e of exams) {
             const hasResult = await prisma.examResult.findUnique({
                 where: { studentId_examId: { studentId: sid, examId: e.id } },
@@ -585,7 +588,7 @@ router.get('/student/assigned-exams/:studentId', async (req: Request, res: Respo
                     id: e.id,
                     name: e.name,
                     type: e.type,
-                    date: e.date,
+                    date: e.date instanceof Date ? e.date.toISOString() : e.date,
                     questionCount: e.questionCount,
                 });
             }
@@ -601,10 +604,14 @@ router.get('/student/assigned-exams/:studentId', async (req: Request, res: Respo
 // GET /api/student/exam-results/:studentId - Öğrencinin tüm sınav sonuçları
 router.get('/student/exam-results/:studentId', async (req: Request, res: Response) => {
     try {
-        const { studentId } = req.params;
+        const rawStudentId = req.params.studentId;
+        const studentId = typeof rawStudentId === 'string' ? rawStudentId.trim() : '';
+        if (!studentId || studentId === 'undefined' || studentId === 'null') {
+            return res.status(400).json({ error: 'Geçersiz öğrenci kimliği' });
+        }
 
         const results = await prisma.examResult.findMany({
-            where: { studentId: studentId as string },
+            where: { studentId },
             include: {
                 exam: {
                     select: {
@@ -622,7 +629,17 @@ router.get('/student/exam-results/:studentId', async (req: Request, res: Respons
             }
         });
 
-        res.json(results);
+        res.json(results.map((r) => ({
+            ...r,
+            exam: r.exam
+                ? {
+                    id: r.exam.id,
+                    name: r.exam.name,
+                    type: r.exam.type,
+                    date: r.exam.date instanceof Date ? r.exam.date.toISOString() : r.exam.date,
+                }
+                : undefined,
+        })));
     } catch (error) {
         console.error('Error fetching student exam results:', error);
         res.status(500).json({ error: 'Failed to fetch student exam results' });

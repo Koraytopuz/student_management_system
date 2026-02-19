@@ -33,14 +33,43 @@ router.get('/exams', async (_req, res, next) => {
 });
 
 /**
+ * GET /api/analysis/:studentId/progress
+ * Son N sınavın kümülatif analizi (gelişim grafiği).
+ * Not: Bu route /analysis/:studentId/:examId'dan ÖNCE tanımlanmalı, yoksa "progress" examId olarak yakalanır.
+ */
+router.get('/analysis/:studentId/progress', async (req, res, next) => {
+  try {
+    const studentId = req.params.studentId;
+    const limit = Math.min(parseInt(req.query.limit as string) || 5, 20);
+    if (!studentId) {
+      res.status(400).json({ error: 'Geçersiz studentId' });
+      return;
+    }
+    const data = await getStudentProgress(studentId, limit);
+    res.json({
+      ...data,
+      exams: data.exams.map((e) => ({
+        ...e,
+        date: e.date instanceof Date ? e.date.toISOString() : e.date,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/analysis/:studentId/:examId
  * Öğrenci ve sınav için analiz verisini JSON olarak döner (grafikler için).
  */
 router.get('/analysis/:studentId/:examId', async (req, res, next) => {
   try {
-    const studentId = req.params.studentId;
+    const rawStudentId = req.params.studentId;
+    const studentId = typeof rawStudentId === 'string' ? rawStudentId.trim() : '';
     const examId = Number(req.params.examId);
-    if (!studentId || isNaN(examId)) {
+    const invalidStudentId = !studentId || studentId === 'undefined' || studentId === 'null';
+    const invalidExamId = !Number.isInteger(examId) || isNaN(examId) || examId <= 0;
+    if (invalidStudentId || invalidExamId) {
       res.status(400).json({ error: 'Geçersiz studentId veya examId' });
       return;
     }
@@ -60,31 +89,6 @@ router.get('/analysis/:studentId/:examId', async (req, res, next) => {
       ...analysis,
       projection,
       date: analysis.date instanceof Date ? analysis.date.toISOString() : analysis.date,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * GET /api/analysis/:studentId/progress
- * Son N sınavın kümülatif analizi (gelişim grafiği).
- */
-router.get('/analysis/:studentId/progress', async (req, res, next) => {
-  try {
-    const studentId = req.params.studentId;
-    const limit = Math.min(parseInt(req.query.limit as string) || 5, 20);
-    if (!studentId) {
-      res.status(400).json({ error: 'Geçersiz studentId' });
-      return;
-    }
-    const data = await getStudentProgress(studentId, limit);
-    res.json({
-      ...data,
-      exams: data.exams.map((e) => ({
-        ...e,
-        date: e.date instanceof Date ? e.date.toISOString() : e.date,
-      })),
     });
   } catch (err) {
     next(err);

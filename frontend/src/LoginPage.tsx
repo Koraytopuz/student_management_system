@@ -24,15 +24,15 @@ function isStandardRole(role: LoginRole): role is UserRole {
 }
 
 const roles: { value: LoginRole; label: string }[] = [
-  { value: 'system_admin', label: 'Kontrol Paneli' },
-  { value: 'teacher', label: 'Öğretmen' },
   { value: 'student', label: 'Öğrenci' },
+  { value: 'teacher', label: 'Öğretmen' },
   { value: 'parent', label: 'Veli' },
   { value: 'admin', label: 'Yönetici' },
+  { value: 'system_admin', label: 'Kontrol Paneli' },
 ];
 
 export const LoginPage: React.FC = () => {
-  const [selectedRole, setSelectedRole] = useState<LoginRole>('system_admin');
+  const [selectedRole, setSelectedRole] = useState<LoginRole>('student');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

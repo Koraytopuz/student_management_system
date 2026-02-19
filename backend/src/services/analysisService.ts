@@ -31,6 +31,8 @@ export interface ExamAnalysis {
     two: number;
     three: number;
   };
+  /** Konu bazlı (TopicAnalysis) veri var mı; false ise yalnızca ders özeti kullanıldı */
+  hasDetailedAnalysis: boolean;
 }
 
 // Çoklu sınav için "NETLER VE PUANLAR" tablosu satırı
@@ -171,10 +173,12 @@ export async function getExamAnalysisForStudent(
   }
 
   const topicPriorities: TopicPriority[] = [];
+  let hadTopicAnalyses = false;
 
   // Önce tüm konuları toplayalım; başarı oranı ve hata oranını hesaplayalım.
   for (const detail of examResult.details) {
     for (const ta of detail.topicAnalyses) {
+      hadTopicAnalyses = true;
       const totalQ = ta.totalQuestion || 0;
       const successRatio = calculateTopicSuccessRatio(ta.correct, totalQ);
       const errorRatio =
@@ -189,7 +193,28 @@ export async function getExamAnalysisForStudent(
         wrong: ta.wrong,
         empty: ta.empty,
         net,
-        // Şimdilik geçici – birazdan gerçek öncelik seviyesini hata oranına göre atayacağız
+        priorityLevel: getPriorityLevelFromRatio(successRatio),
+      } as TopicPriority & { errorRatio?: number });
+      (topicPriorities[topicPriorities.length - 1] as any).errorRatio = errorRatio;
+    }
+  }
+
+  // Konu analizi yoksa ama ders detayı varsa: ders bazlı özeti konu gibi kullan (gerçek veri)
+  if (topicPriorities.length === 0 && examResult.details?.length > 0) {
+    for (const detail of examResult.details) {
+      const totalQ = detail.correct + detail.wrong + detail.empty;
+      const successRatio = calculateTopicSuccessRatio(detail.correct, totalQ);
+      const errorRatio =
+        totalQ > 0 ? ((detail.wrong + detail.empty) / totalQ) * 100 : 0;
+      const lessonName = detail.lesson?.name ?? detail.lessonName ?? 'Genel';
+      topicPriorities.push({
+        lessonName,
+        topicName: lessonName,
+        totalQuestion: totalQ,
+        correct: detail.correct,
+        wrong: detail.wrong,
+        empty: detail.empty,
+        net: detail.net ?? Math.max(0, detail.correct - detail.wrong * 0.25),
         priorityLevel: getPriorityLevelFromRatio(successRatio),
       } as TopicPriority & { errorRatio?: number });
       (topicPriorities[topicPriorities.length - 1] as any).errorRatio = errorRatio;
@@ -243,6 +268,7 @@ export async function getExamAnalysisForStudent(
       two: twoCount,
       three: threeCount,
     },
+    hasDetailedAnalysis: hadTopicAnalyses,
   };
 }
 

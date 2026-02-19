@@ -1830,14 +1830,24 @@ export interface AdminAttendanceStudentHistoryResponse {
 }
 
 // Sistem yöneticisi – sadece admin@skytechyazilim.com.tr için kontrol paneli
+export type CreateRootAdminPayload = {
+  name: string;
+  email: string;
+  password: string;
+  institutionName: string;
+};
+export type UpdateRootAdminPayload = {
+  name?: string;
+  email?: string;
+  password?: string;
+  institutionName?: string;
+};
+
 export function getRootAdmins(token: string) {
   return apiRequest<RootAdminUser[]>('/root-admin/admins', {}, token);
 }
 
-export function createRootAdmin(
-  token: string,
-  payload: { name: string; email: string; password: string },
-) {
+export function createRootAdmin(token: string, payload: CreateRootAdminPayload) {
   return apiRequest<RootAdminUser>(
     '/root-admin/admins',
     {
@@ -1848,11 +1858,7 @@ export function createRootAdmin(
   );
 }
 
-export function updateRootAdmin(
-  token: string,
-  id: string,
-  payload: { name?: string; email?: string; password?: string },
-) {
+export function updateRootAdmin(token: string, id: string, payload: UpdateRootAdminPayload) {
   return apiRequest<RootAdminUser>(
     `/root-admin/admins/${id}`,
     {
@@ -2636,6 +2642,8 @@ export interface ExamAnalysisResponse {
   topicPriorities: ExamAnalysisTopic[];
   priorityCounts: { one: number; two: number; three: number };
   projection?: Projection;
+  /** Konu bazlı detay analizi var mı (false ise yalnızca özet veya ders bazlı veri) */
+  hasDetailedAnalysis?: boolean;
 }
 
 export interface ProgressPoint {
